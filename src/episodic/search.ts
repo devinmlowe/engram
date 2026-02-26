@@ -334,16 +334,15 @@ export async function searchEpisodic(
 
   if (mode === "hybrid") {
     const fused = rrfFuse(vectorResults, ftsResults);
+    normalizeMinMaxFloored(fused);
     fusedIds = fused.slice(0, limit).map((r) => r.id);
     scoreMap = new Map(fused.map((r) => [r.id, r.score]));
   } else {
     const items = mode === "vector" ? vectorResults : ftsResults;
-    fusedIds = items.slice(0, limit).map((r) => r.id);
-    // Normalize ranks to 0-1 scores
-    const maxRank = items.length || 1;
-    scoreMap = new Map(
-      items.map((r) => [r.id, 1 - (r.rank - 1) / maxRank]),
-    );
+    const scored = items.map((r) => ({ id: r.id, score: 1 / (60 + r.rank) }));
+    normalizeMinMaxFloored(scored);
+    fusedIds = scored.slice(0, limit).map((r) => r.id);
+    scoreMap = new Map(scored.map((r) => [r.id, r.score]));
   }
 
   // 4. Fetch full exchange data
