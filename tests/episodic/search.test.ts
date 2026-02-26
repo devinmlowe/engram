@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, beforeAll } from "vitest";
 import {
   rrfFuse,
+  normalizeMinMaxFloored,
   budgetResults,
   formatRecallXml,
   searchEpisodic,
@@ -50,6 +51,80 @@ describe("rrfFuse", () => {
     expect(rrfFuse([], [])).toEqual([]);
     expect(rrfFuse([{ id: "a", rank: 1 }], [])).toHaveLength(1);
     expect(rrfFuse([], [{ id: "b", rank: 1 }])).toHaveLength(1);
+  });
+});
+
+describe("normalizeMinMaxFloored", () => {
+  it("normalizes to [floor, 1.0] range", () => {
+    const items = [
+      { id: "a", score: 0.033 },
+      { id: "b", score: 0.020 },
+      { id: "c", score: 0.016 },
+    ];
+
+    normalizeMinMaxFloored(items);
+
+    expect(items[0].score).toBeCloseTo(1.0);
+    expect(items[2].score).toBeCloseTo(0.1);
+    // Middle item should be between floor and 1.0
+    expect(items[1].score).toBeGreaterThan(0.1);
+    expect(items[1].score).toBeLessThan(1.0);
+  });
+
+  it("single result gets 0.85", () => {
+    const items = [{ id: "a", score: 0.016 }];
+
+    normalizeMinMaxFloored(items);
+
+    expect(items[0].score).toBe(0.85);
+  });
+
+  it("all same scores get 0.5", () => {
+    const items = [
+      { id: "a", score: 0.033 },
+      { id: "b", score: 0.033 },
+      { id: "c", score: 0.033 },
+    ];
+
+    normalizeMinMaxFloored(items);
+
+    expect(items[0].score).toBe(0.5);
+    expect(items[1].score).toBe(0.5);
+    expect(items[2].score).toBe(0.5);
+  });
+
+  it("empty results is a no-op", () => {
+    const items: { id: string; score: number }[] = [];
+    normalizeMinMaxFloored(items);
+    expect(items).toEqual([]);
+  });
+
+  it("custom floor value is respected", () => {
+    const items = [
+      { id: "a", score: 0.033 },
+      { id: "b", score: 0.020 },
+      { id: "c", score: 0.016 },
+    ];
+
+    normalizeMinMaxFloored(items, 0.2);
+
+    expect(items[0].score).toBeCloseTo(1.0);
+    expect(items[2].score).toBeCloseTo(0.2);
+  });
+
+  it("preserves ordering", () => {
+    const items = [
+      { id: "a", score: 0.050 },
+      { id: "b", score: 0.033 },
+      { id: "c", score: 0.020 },
+      { id: "d", score: 0.016 },
+    ];
+
+    normalizeMinMaxFloored(items);
+
+    for (let i = 0; i < items.length - 1; i++) {
+      expect(items[i].score).toBeGreaterThan(items[i + 1].score);
+    }
   });
 });
 
