@@ -1,4 +1,9 @@
-import { pipeline, type FeatureExtractionPipeline } from "@xenova/transformers";
+import {
+  pipeline,
+  layer_norm,
+  type FeatureExtractionPipeline,
+  type Tensor,
+} from "@xenova/transformers";
 import type { EngramConfig } from "../core/types.js";
 
 let embeddingPipeline: FeatureExtractionPipeline | null = null;
@@ -29,7 +34,19 @@ export async function initEmbeddings(_config?: EngramConfig): Promise<void> {
 }
 
 /**
- * Truncate to TARGET_DIMS and L2-normalize.
+ * Apply layer_norm → Matryoshka truncation → L2 normalize on a nomic tensor.
+ * Input tensor shape: [batchSize, fullDim] (e.g. [1, 768] or [N, 768]).
+ * Returns tensor of shape [batchSize, TARGET_DIMS].
+ */
+function nomicPostProcess(raw: Tensor): Tensor {
+  const normed = layer_norm(raw, [raw.dims[1]]);
+  const sliced = normed.slice(null, [0, TARGET_DIMS]);
+  return sliced.normalize(2, -1);
+}
+
+/**
+ * Truncate to TARGET_DIMS and L2-normalize (MiniLM fallback only).
+ * MiniLM does not need layer_norm before Matryoshka truncation.
  */
 function truncateAndNormalize(vec: number[]): number[] {
   const sliced = vec.slice(0, TARGET_DIMS);
@@ -41,7 +58,10 @@ function truncateAndNormalize(vec: number[]): number[] {
 }
 
 /**
- * Raw embed — add prefix for nomic, truncate input, MRL truncate output.
+ * Raw embed — add prefix for nomic, truncate input, apply model-specific post-processing.
+ *
+ * nomic path:  normalize: false → layer_norm → slice(256) → L2-normalize
+ * minilm path: normalize: true  → truncateAndNormalize (existing behavior)
  */
 async function embed(text: string, prefix: string): Promise<number[]> {
   if (!embeddingPipeline) await initEmbeddings();
@@ -52,12 +72,22 @@ async function embed(text: string, prefix: string): Promise<number[]> {
       ? `${prefix}${text.substring(0, maxChars)}`
       : text.substring(0, maxChars);
 
-  const output = await embeddingPipeline!(input, {
-    pooling: "mean",
-    normalize: true,
-  });
-
-  return truncateAndNormalize(Array.from(output.data as Float32Array));
+  if (activeModel === "nomic") {
+    // Get raw mean-pooled output WITHOUT premature L2 normalization
+    const output: Tensor = await embeddingPipeline!(input, {
+      pooling: "mean",
+      normalize: false,
+    });
+    const final = nomicPostProcess(output);
+    return Array.from(final.data as Float32Array);
+  } else {
+    // MiniLM: normalize in pipeline, then truncate-and-normalize
+    const output = await embeddingPipeline!(input, {
+      pooling: "mean",
+      normalize: true,
+    });
+    return truncateAndNormalize(Array.from(output.data as Float32Array));
+  }
 }
 
 /**
@@ -72,6 +102,52 @@ export async function embedQuery(text: string): Promise<number[]> {
  */
 export async function embedDocument(text: string): Promise<number[]> {
   return embed(text, "search_document: ");
+}
+
+/**
+ * Embed a batch of documents for storage.
+ * Accepts array of texts, applies `search_document: ` prefix to each,
+ * passes all texts at once to the pipeline for efficiency.
+ * Returns array of 256-dimensional L2-normalized vectors.
+ */
+export async function embedDocumentBatch(
+  texts: string[],
+): Promise<number[][]> {
+  if (texts.length === 0) return [];
+  if (!embeddingPipeline) await initEmbeddings();
+
+  if (activeModel === "nomic") {
+    // Prepare all texts with prefix and truncation
+    const prepared = texts.map(
+      (t) => `search_document: ${t.substring(0, NOMIC_MAX_CHARS)}`,
+    );
+
+    // Batch inference — pipeline accepts string arrays
+    const output: Tensor = await embeddingPipeline!(prepared, {
+      pooling: "mean",
+      normalize: false,
+    });
+
+    // output shape: [batchSize, fullDim]
+    const final = nomicPostProcess(output);
+
+    // Convert [batchSize, TARGET_DIMS] tensor to array of arrays
+    const batchSize = final.dims[0];
+    const dimSize = final.dims[1];
+    const data = final.data as Float32Array;
+    const results: number[][] = [];
+    for (let i = 0; i < batchSize; i++) {
+      results.push(Array.from(data.slice(i * dimSize, (i + 1) * dimSize)));
+    }
+    return results;
+  } else {
+    // MiniLM fallback: process individually (no batch layer_norm needed)
+    const results: number[][] = [];
+    for (const text of texts) {
+      results.push(await embedDocument(text));
+    }
+    return results;
+  }
 }
 
 /**
