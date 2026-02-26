@@ -3,6 +3,7 @@ import {
   initEmbeddings,
   embedQuery,
   embedDocument,
+  embedDocumentBatch,
   embedExchange,
   getActiveDimensions,
   getActiveModel,
@@ -83,5 +84,39 @@ describe("Embeddings", () => {
     // Contextual embedding should differ from plain text
     const sim = cosineSimilarity(vecPlain, vecContextual);
     expect(sim).toBeLessThan(1.0);
+  });
+
+  it("embedDocumentBatch returns correct shapes", async () => {
+    const texts = [
+      "SQLite is a lightweight database engine",
+      "TypeScript adds static types to JavaScript",
+    ];
+    const vectors = await embedDocumentBatch(texts);
+
+    expect(vectors).toHaveLength(2);
+    expect(vectors[0]).toHaveLength(256);
+    expect(vectors[1]).toHaveLength(256);
+  });
+
+  it("batch embedding matches individual embedding", async () => {
+    const text = "How does SQLite WAL mode work?";
+    const [individual] = await Promise.all([embedDocument(text)]);
+    const [batchResult] = await embedDocumentBatch([text]);
+
+    const sim = cosineSimilarity(individual, batchResult);
+    expect(sim).toBeGreaterThan(0.99);
+  });
+
+  it("batch embeddings are L2-normalized", async () => {
+    const texts = [
+      "Rust memory safety guarantees",
+      "PostgreSQL index optimization",
+    ];
+    const vectors = await embedDocumentBatch(texts);
+
+    for (const vec of vectors) {
+      const norm = Math.sqrt(vec.reduce((sum, v) => sum + v * v, 0));
+      expect(norm).toBeCloseTo(1.0, 2);
+    }
   });
 });
