@@ -1,5 +1,8 @@
 # Phase 6: Reflection & Emergence -- Research Document
 
+> **Referenced by:** [spec.md §Phase 6](../../spec.md) | [Phase 6 Implementation Plan](../plans/phase-6-implementation.md)
+> **Related research:** [Codebase Readiness](phase-6-codebase-readiness.md) | [Temporal & Tooling](phase-6-temporal-and-tooling.md) | [Graph Analysis (Phase 4)](graph-analysis-research.md)
+
 **Date:** 2026-02-26
 **Scope:** Community detection, MOC generation, bridge identification, temporal patterns, reflection/metacognition
 **Target stack:** TypeScript, Node.js (>=22), SQLite (better-sqlite3), graphology, Ollama/Claude API

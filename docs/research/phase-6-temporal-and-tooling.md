@@ -1,5 +1,8 @@
 # Phase 6: Temporal Analysis & MCP Tooling Research
 
+> **Referenced by:** [spec.md §Phase 6](../../spec.md) | [Phase 6 Implementation Plan](../plans/phase-6-implementation.md)
+> **Related research:** [Codebase Readiness](phase-6-codebase-readiness.md) | [Emergence Patterns](phase-6-emergence-patterns.md) | [Graph Analysis (Phase 4)](graph-analysis-research.md)
+
 **Date:** 2026-02-26
 **Scope:** Temporal pattern analysis, MCP tool design, graph-based reflection algorithms, incremental graph analysis
 **Target stack:** TypeScript, Node.js (>=22), SQLite (better-sqlite3), graphology, MCP SDK

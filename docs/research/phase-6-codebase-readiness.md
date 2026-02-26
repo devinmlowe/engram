@@ -1,5 +1,8 @@
 # Phase 6: Reflection & Emergence -- Codebase Readiness Assessment
 
+> **Referenced by:** [spec.md §Phase 6](../../spec.md) | [Phase 6 Implementation Plan](../plans/phase-6-implementation.md)
+> **Related research:** [Emergence Patterns](phase-6-emergence-patterns.md) | [Temporal & Tooling](phase-6-temporal-and-tooling.md) | [Graph Analysis (Phase 4)](graph-analysis-research.md)
+
 **Date:** 2026-02-26
 **Branch:** worktree-phase-6-emergence
 **Assessor:** Codebase analysis of all Phase 6 integration points
