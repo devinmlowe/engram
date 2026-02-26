@@ -91,6 +91,229 @@ program
     }
   });
 
+// ─── remember ──────────────────────────────────────────────────
+
+program
+  .command("remember <content>")
+  .description("Store a fact, preference, or knowledge as a semantic memory")
+  .option(
+    "-t, --type <type>",
+    "Memory type (preference, decision, pattern, fact, solution, convention)",
+    "fact",
+  )
+  .option(
+    "-i, --importance <n>",
+    "Importance score (0-1)",
+    "0.7",
+  )
+  .action(async (content, opts) => {
+    const { initEmbeddings, embedDocument } = await import(
+      "../episodic/embeddings.js"
+    );
+    const {
+      insertMemory,
+      findNearestMemories,
+      recordAccess,
+    } = await import("../semantic/memory.js");
+
+    const config = loadConfig();
+    const db = initDatabase(config);
+
+    try {
+      await initEmbeddings(config);
+
+      const importance = parseFloat(opts.importance);
+      const type = opts.type;
+
+      // Validate type
+      const validTypes = [
+        "preference",
+        "decision",
+        "pattern",
+        "fact",
+        "solution",
+        "convention",
+      ];
+      if (!validTypes.includes(type)) {
+        console.error(
+          `Invalid type: ${type}. Must be one of: ${validTypes.join(", ")}`,
+        );
+        process.exit(1);
+      }
+
+      // 1. Embed the content
+      const embedding = await embedDocument(content);
+
+      // 2. Check for near-duplicates
+      const neighbors = findNearestMemories(db, embedding, 3);
+      for (const neighbor of neighbors) {
+        const similarity =
+          1 - (neighbor.distance * neighbor.distance) / 2;
+        if (similarity >= 0.95) {
+          recordAccess(db, neighbor.id);
+          console.log(`Updated existing memory: ${neighbor.id}`);
+          return;
+        }
+      }
+
+      // 3. Insert new memory
+      const newId = crypto.randomUUID();
+      const now = Math.floor(Date.now() / 1000);
+
+      insertMemory(
+        db,
+        {
+          id: newId,
+          type: type as import("../core/types.js").MemoryType,
+          content,
+          confidence: 0.9,
+          importance,
+          accessCount: 0,
+          createdAt: now,
+          sourceExchanges: [],
+          isActive: true,
+        },
+        embedding,
+      );
+
+      console.log(`Remembered: ${content}`);
+    } finally {
+      db.close();
+    }
+  });
+
+// ─── extract ───────────────────────────────────────────────────
+
+program
+  .command("extract <conversation-id>")
+  .description("Extract semantic facts from a conversation")
+  .option(
+    "--tier <tier>",
+    "Extraction tier (auto, haiku, sonnet)",
+    "auto",
+  )
+  .option("--reflexion", "Enable reflexion pass for completeness")
+  .option("--dry-run", "Show extracted facts without consolidating")
+  .action(async (conversationId, opts) => {
+    const { initEmbeddings } = await import("../episodic/embeddings.js");
+    const { initExtractor, extractFromConversation } = await import(
+      "../semantic/extractor.js"
+    );
+    const { consolidateFacts, initConsolidator } = await import(
+      "../semantic/consolidator.js"
+    );
+
+    const config = loadConfig();
+    const db = initDatabase(config);
+
+    try {
+      await initEmbeddings(config);
+      await initExtractor();
+
+      // Load exchanges for this conversation
+      const rows = db
+        .prepare(
+          "SELECT * FROM exchanges WHERE conversation_id = ? ORDER BY exchange_index ASC",
+        )
+        .all(conversationId) as Array<Record<string, unknown>>;
+
+      if (rows.length === 0) {
+        console.error(
+          `No exchanges found for conversation: ${conversationId}`,
+        );
+        process.exit(1);
+      }
+
+      // Convert rows to ConversationExchange format
+      const exchanges = rows.map((row) => ({
+        index: row.exchange_index as number,
+        userMessage: (row.user_message as string) || "",
+        assistantMessage: (row.assistant_message as string) || "",
+      }));
+
+      // Get conversation metadata
+      const convRow = db
+        .prepare("SELECT * FROM conversations WHERE id = ?")
+        .get(conversationId) as Record<string, unknown> | undefined;
+
+      const project = convRow
+        ? (convRow.project as string)
+        : (rows[0].project as string);
+      const firstTimestamp = rows[0].timestamp as string;
+      const lastTimestamp = rows[rows.length - 1].timestamp as string;
+
+      const metadata = {
+        project,
+        dateRange: `${firstTimestamp.split("T")[0]} to ${lastTimestamp.split("T")[0]}`,
+      };
+
+      console.log(
+        `Extracting facts from ${exchanges.length} exchanges...`,
+      );
+
+      const tier = opts.tier as "auto" | "haiku" | "sonnet";
+      const result = await extractFromConversation(
+        conversationId,
+        exchanges,
+        metadata,
+        {
+          tier,
+          reflexionEnabled: opts.reflexion ?? false,
+        },
+      );
+
+      console.log(
+        `\nExtracted ${result.facts.length} facts (model: ${result.model}, tier: ${result.tier})`,
+      );
+
+      if (result.facts.length === 0) {
+        console.log("No facts extracted.");
+        return;
+      }
+
+      // Print extracted facts
+      for (const fact of result.facts) {
+        console.log(
+          `  [${fact.type}] ${fact.content} (importance: ${fact.importance})`,
+        );
+      }
+
+      if (opts.dryRun) {
+        console.log("\n(dry run — facts not consolidated)");
+        return;
+      }
+
+      // Consolidate
+      console.log("\nConsolidating...");
+      initConsolidator();
+
+      const consolidationResults = await consolidateFacts(
+        db,
+        result.facts,
+        conversationId,
+      );
+
+      // Report
+      const actions = {
+        insert: 0,
+        merge: 0,
+        conflict: 0,
+        skip: 0,
+      };
+      for (const cr of consolidationResults) {
+        actions[cr.action]++;
+      }
+
+      console.log("\nConsolidation complete:");
+      console.log(`  Inserted: ${actions.insert}`);
+      console.log(`  Merged:   ${actions.merge}`);
+      console.log(`  Conflicts: ${actions.conflict}`);
+      console.log(`  Skipped:  ${actions.skip}`);
+    } finally {
+      db.close();
+    }
+  });
+
 // ─── stats ─────────────────────────────────────────────────────
 
 program
@@ -120,6 +343,37 @@ program
         }
       ).count;
 
+      // Semantic memory counts
+      const memoryCount = (
+        db
+          .prepare(
+            "SELECT COUNT(*) as count FROM memories WHERE is_active = 1",
+          )
+          .get() as { count: number }
+      ).count;
+
+      const inactiveMemoryCount = (
+        db
+          .prepare(
+            "SELECT COUNT(*) as count FROM memories WHERE is_active = 0",
+          )
+          .get() as { count: number }
+      ).count;
+
+      const conflictCount = (
+        db.prepare("SELECT COUNT(*) as count FROM conflicts").get() as {
+          count: number;
+        }
+      ).count;
+
+      const unresolvedConflicts = (
+        db
+          .prepare(
+            "SELECT COUNT(*) as count FROM conflicts WHERE resolution IS NULL",
+          )
+          .get() as { count: number }
+      ).count;
+
       const lastSync = db
         .prepare(
           "SELECT MAX(last_indexed) as ts FROM conversations",
@@ -137,9 +391,16 @@ program
       console.log("Engram Statistics:");
       console.log(`  Database:      ${config.dbPath}`);
       console.log(`  Size:          ${dbSize}`);
-      console.log(`  Exchanges:     ${exchangeCount}`);
-      console.log(`  Conversations: ${convCount}`);
-      console.log(`  Tool Calls:    ${toolCount}`);
+      console.log("");
+      console.log("  Episodic:");
+      console.log(`    Exchanges:     ${exchangeCount}`);
+      console.log(`    Conversations: ${convCount}`);
+      console.log(`    Tool Calls:    ${toolCount}`);
+      console.log("");
+      console.log("  Semantic:");
+      console.log(`    Memories:      ${memoryCount} active, ${inactiveMemoryCount} superseded`);
+      console.log(`    Conflicts:     ${conflictCount} total, ${unresolvedConflicts} unresolved`);
+      console.log("");
       console.log(
         `  Last Sync:     ${lastSync.ts ? new Date(lastSync.ts * 1000).toISOString() : "never"}`,
       );
