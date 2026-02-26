@@ -895,11 +895,65 @@ Tasks:
 - **Milestone**: System extracts and recalls distilled knowledge, with validated dedup and conflict detection
 
 ### Phase 4: Knowledge Graph
-- Entity extraction and normalization
-- Relationship detection
-- Graph storage and traversal
-- `explore` MCP tool
-- **Milestone**: Entity-relationship queries work
+
+The knowledge graph layer transforms isolated semantic memories into a connected entity-relationship network — the Zettelkasten layer where backlinks surface connections that no individual memory anticipated. Research across Graphiti/Zep, Microsoft GraphRAG, iText2KG, and the graphology ecosystem validates the entity-extraction→resolution→graph-building→analysis pipeline. The key design decisions below are informed by three research documents:
+
+- [Knowledge graph storage patterns, entity resolution, and SQLite traversal](docs/research/knowledge-graph-sqlite-implementation.md)
+- [Entity extraction, relationship detection, and incremental graph building](docs/research/entity-extraction-knowledge-graphs.md)
+- [Graph analysis algorithms, community detection, and graphology library](docs/research/graph-analysis-research.md)
+
+**Entity Extraction Pipeline** (Graphiti-inspired separation of concerns):
+- Two-step extraction: (1) extract entities, (2) extract relationships between resolved entities. Rationale: Graphiti evolved from a single mega-prompt to separate focused prompts — produces cleaner output and enables concurrent execution. See [entity-extraction-knowledge-graphs.md §3](docs/research/entity-extraction-knowledge-graphs.md).
+- Entity types: `project`, `tool`, `technology`, `person`, `concept`, `file`, `repo` — validated against Graphiti and Microsoft GraphRAG type systems. See [entity-extraction-knowledge-graphs.md §1.1](docs/research/entity-extraction-knowledge-graphs.md).
+- Relationship types: `uses`, `depends_on`, `related_to`, `part_of`, `configured_by`, `solved_by` — derived from developer conversation patterns. See [entity-extraction-knowledge-graphs.md §2](docs/research/entity-extraction-knowledge-graphs.md).
+- Claude tool use with `strict: true` for guaranteed schema compliance, reusing the Phase 3 extraction pattern. Same three-tier routing: local → Haiku → Sonnet.
+- Coreference resolution instruction in entity extraction prompt: "Replace all pronouns and informal references with specific entity names." See [entity-extraction-knowledge-graphs.md §1.2](docs/research/entity-extraction-knowledge-graphs.md).
+
+**Entity Resolution and Normalization:**
+- Four-stage cascading pipeline: (1) exact name match, (2) alias lookup, (3) embedding cosine similarity via vec_entities, (4) LLM verification for ambiguous cases. Rationale: production systems (Graphiti, iText2KG) converge on hybrid search + LLM verification. See [knowledge-graph-sqlite-implementation.md §2](docs/research/knowledge-graph-sqlite-implementation.md).
+- Similarity thresholds: ≥0.95 auto-merge, 0.85-0.95 likely match (merge with LLM confirmation), 0.70-0.85 review zone, <0.70 distinct entity. Validated by iText2KG (0.7 threshold) and Graphiti (embedding + full-text + LLM). See [entity-extraction-knowledge-graphs.md §4](docs/research/entity-extraction-knowledge-graphs.md).
+- Alias management: canonical name selection with alias tracking. When entities merge, the more frequent name becomes canonical and the other becomes an alias. See [knowledge-graph-sqlite-implementation.md §2](docs/research/knowledge-graph-sqlite-implementation.md).
+
+**Graph Storage and Traversal:**
+- Existing `entities` + `relationships` edge table pattern is validated. Add composite unique constraint on `(source_entity_id, target_entity_id, type)` to prevent duplicate edges. See [knowledge-graph-sqlite-implementation.md §1](docs/research/knowledge-graph-sqlite-implementation.md).
+- SQLite recursive CTEs for simple 1-2 hop traversal with depth limits and cycle prevention. For complex multi-hop analysis, load graph into graphology in-memory (loading 10K entities + 50K relationships takes <100ms, <50MB RAM). See [graph-analysis-research.md §4](docs/research/graph-analysis-research.md).
+- Add FTS5 on entity names/descriptions for text-based entity search alongside vector search on vec_entities. See [knowledge-graph-sqlite-implementation.md §7](docs/research/knowledge-graph-sqlite-implementation.md).
+
+**Graph Analysis (graphology library):**
+- `graphology` selected as the graph analysis library — pure data structure with zero visualization dependencies, comprehensive algorithm packages, native TypeScript, active maintenance (~571K weekly npm downloads). See [graph-analysis-research.md §1](docs/research/graph-analysis-research.md).
+- Packages needed: `graphology`, `graphology-communities-louvain`, `graphology-metrics`, `graphology-traversal`, `graphology-shortest-path`, `graphology-components` — adds ~2-3MB with zero viz overhead. See [graph-analysis-research.md §1](docs/research/graph-analysis-research.md).
+- Louvain community detection for topic cluster generation (Leiden algorithm preferred theoretically but no maintained JS/TS implementation). At engram's expected scale (100-10K nodes), Louvain runs in ~50ms. See [graph-analysis-research.md §2](docs/research/graph-analysis-research.md).
+- Bridge detection via betweenness centrality (graphology-metrics): identify entities that connect otherwise-separate communities — the "surprising connections." See [graph-analysis-research.md §3](docs/research/graph-analysis-research.md).
+- Edge weight scoring: four-factor model combining frequency (35%), recency (25%), extraction confidence (20%), and connected entity importance (20%). Uses same power-law decay formula as FSRS memory model for conceptual consistency. See [graph-analysis-research.md §7](docs/research/graph-analysis-research.md).
+
+**`explore` MCP Tool:**
+- Entity-centric graph navigation with configurable traversal depth (default 2 hops)
+- Five query patterns: entity lookup, neighborhood traversal, path finding, community membership, related entities by type
+- XML output format consistent with existing `recall` tool: `<graph entity="..." connections="...">` tags
+- Zero LLM calls at query time — all intelligence is in the indexing phase (Graphiti pattern)
+
+**Graph-enhanced `recall`:**
+- Extend multi-source search to include graph results alongside episodic and semantic
+- Entity lookup + 1-hop neighbor expansion enriches recall results with related entities
+- RRF fusion across all three sources, with graph entities that connect to multiple results boosted
+
+**New dependencies**: `graphology`, `graphology-communities-louvain`, `graphology-metrics`, `graphology-traversal`, `graphology-shortest-path`, `graphology-components`
+
+Tasks:
+- Implement `src/graph/entities.ts` — entity CRUD with FTS5/vec0 sync, alias management
+- Implement `src/graph/relationships.ts` — relationship CRUD, weight management, bidirectional traversal
+- Implement `src/graph/extractor.ts` — LLM-based entity+relationship extraction from conversations/memories
+- Implement `src/graph/resolver.ts` — four-stage entity resolution pipeline (exact→alias→embedding→LLM)
+- Implement `src/graph/search.ts` — hybrid entity search (vector + FTS), neighborhood queries
+- Implement `src/graph/analysis.ts` — graphology integration for community detection, centrality, bridge detection
+- Create `prompts/extract-entities.md` — entity extraction prompt with developer-domain few-shot examples
+- Create `prompts/extract-relationships.md` — relationship extraction prompt
+- Extend `src/core/db.ts` with FTS5 for entities, unique constraints on relationships
+- Extend `src/mcp/server.ts` with `explore` tool
+- Extend `src/episodic/search.ts` to include graph results in multi-source search
+- Add `src/cli/index.ts` graph commands: `entities`, `relationships`, `explore`
+- Integration tests: extraction → resolution → graph building → traversal → search end-to-end
+- **Milestone**: Entity-relationship queries work, graph analysis produces topic clusters
 
 ### Phase 5: Dream State Daemon
 - Daemon process with launchd integration
