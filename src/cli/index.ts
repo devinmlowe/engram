@@ -731,4 +731,68 @@ program
     }
   });
 
+// ─── dream ──────────────────────────────────────────────────────
+
+program
+  .command("dream")
+  .description("Run dream state processing pipeline")
+  .option(
+    "--phase <phase>",
+    "Run only a specific phase: ingest|extract|consolidate|reflect|prune",
+  )
+  .option("--conversation <id>", "Process a specific conversation")
+  .option("--dry-run", "Show what would be processed without making changes")
+  .option("--verbose", "Show detailed progress")
+  .action(async (opts) => {
+    const { runDream } = await import("../dream/daemon.js");
+    const { initEmbeddings } = await import("../episodic/embeddings.js");
+    const config = loadConfig();
+    const db = initDatabase(config);
+
+    try {
+      await initEmbeddings(config);
+
+      const phases = opts.phase
+        ? [opts.phase as import("../core/types.js").DreamPhase]
+        : undefined;
+
+      const report = await runDream(db, config, {
+        phases,
+        conversationId: opts.conversation,
+        dryRun: opts.dryRun,
+        verbose: opts.verbose,
+        onProgress: (phase, processed, total, errors) => {
+          if (opts.verbose) {
+            process.stdout.write(
+              `\r  [${phase}] ${processed}/${total} (${errors} errors)`,
+            );
+          }
+        },
+      });
+
+      if (opts.verbose) {
+        process.stdout.write("\n");
+      }
+
+      console.log("\nDream complete:");
+      for (const phase of report.phases) {
+        console.log(
+          `  ${phase.phase}: ${phase.itemsProcessed} items, ${phase.errors} errors (${phase.durationMs}ms)`,
+        );
+      }
+      console.log("");
+      console.log(`  New memories:      ${report.newMemories}`);
+      console.log(`  Updated memories:  ${report.updatedMemories}`);
+      console.log(`  New entities:      ${report.newEntities}`);
+      console.log(`  New relationships: ${report.newRelationships}`);
+      console.log(`  Conflicts:         ${report.conflictsDetected}`);
+      console.log(`  Pruned:            ${report.memoriesPruned}`);
+
+      const durationSec = report.completedAt - report.startedAt;
+      console.log(`  Duration:          ${durationSec}s`);
+    } finally {
+      db.close();
+    }
+  });
+
 program.parse();
