@@ -445,6 +445,8 @@ The dream state daemon performs graph analysis to discover structure:
 
 ## Layer 4: Dream State Daemon
 
+> **Implementation reference**: [Phase 5 Implementation Plan](docs/plans/phase-5-implementation.md) | [Codebase Readiness](docs/research/phase-5-codebase-readiness.md)
+
 ### Purpose
 Background process that performs memory consolidation during off-hours — the computational equivalent of sleep-stage memory processing. Runs as a managed daemon with embedded intelligence for deciding what to process and when.
 
@@ -956,10 +958,70 @@ Tasks:
 - **Milestone**: Entity-relationship queries work, graph analysis produces topic clusters
 
 ### Phase 5: Dream State Daemon
-- Daemon process with launchd integration
-- Phase 1-3 processing pipeline (ingest, extract, consolidate)
-- Local MLX integration for cost-free extraction
-- Checkpoint and resume support
+
+**Research documents:**
+- [Codebase readiness assessment and gap analysis](docs/research/phase-5-codebase-readiness.md)
+- [macOS launchd daemon patterns for Node.js](docs/research/daemon-launchd-patterns.md)
+- [MLX/Ollama local LLM integration strategies](docs/research/mlx-local-llm-integration.md)
+- [Checkpoint and resume patterns for pipelines](docs/research/checkpoint-resume-patterns.md)
+- [Memory consolidation pipeline patterns (Graphiti, GraphRAG, Mem0)](docs/research/memory-consolidation-pipelines.md)
+
+**Codebase readiness**: Phases 1-4 delivered all processing components. Phase 5 is primarily **orchestration work** — composing `syncConversations()`, `extractFromConversation()`, `consolidateFacts()`, `extractEntities()`, `resolveEntities()`, `extractRelationships()`, `findOrCreateRelationship()`, `analyzeGraph()`, and `isPruneEligible()` into an autonomous pipeline. The database schema already has `dream_runs` and `dream_checkpoints` tables. Types (`DreamPhase`, `DreamProgress`, `DreamReport`) and config (`dream.localModel`, `dream.scheduleHour`, `dream.concurrency`) are pre-defined.
+
+**Pipeline orchestrator** (`src/dream/daemon.ts`):
+- Sequential five-phase pipeline: INGEST → EXTRACT → CONSOLIDATE → REFLECT → PRUNE
+- Full composition of the extraction pipeline (the key gap identified in codebase analysis): semantic fact extraction + entity extraction + entity resolution + relationship extraction + relationship persistence + fact consolidation — composed per-conversation in a single `processConversation()` function
+- Run tracking via `dream_runs` table (started_at, completed_at, phases_completed, error stats)
+- See [phase-5-codebase-readiness.md §F.3](docs/research/phase-5-codebase-readiness.md) for the full pipeline composition pattern
+
+**Checkpoint and resume** (`src/dream/scheduler.ts`):
+- Per-conversation checkpointing using SQLite transactions — each conversation's results committed atomically. See [checkpoint-resume-patterns.md §3](docs/research/checkpoint-resume-patterns.md)
+- Run resumption: incomplete `dream_runs` (has `started_at` but no `completed_at`) are resumed, skipping already-checkpointed items
+- Idempotent processing: content-addressed IDs, upsert semantics, safe to re-run any phase
+- Error handling: skip-and-continue for extraction failures (non-fatal), fail-fast for infrastructure errors (DB corruption). See [checkpoint-resume-patterns.md §7](docs/research/checkpoint-resume-patterns.md)
+- Priority scheduling: new conversations first, then by tool diversity and entity graph overlap. See [memory-consolidation-pipelines.md §7](docs/research/memory-consolidation-pipelines.md)
+
+**Local LLM integration** (`src/dream/intelligence.ts`):
+- Ollama REST API as default provider (grammar-enforced JSON schema output, widely installed, simpler than raw MLX subprocess). See [mlx-local-llm-integration.md §4](docs/research/mlx-local-llm-integration.md)
+- Model: Qwen 2.5 7B Instruct (4-bit), ~50-65 tok/s on M4, ~4.5 GB memory. See [mlx-local-llm-integration.md §2](docs/research/mlx-local-llm-integration.md)
+- Confidence-based routing: local extraction confidence ≥ 0.8 → accept; < 0.8 → escalate to Claude Haiku API
+- Unified interface: `LocalModelAdapter` with `isAvailable()`, `generate()`, `generateStructured()` methods
+- Graceful degradation: if Ollama unavailable, falls back to API extraction (existing Haiku → Sonnet tier)
+
+**launchd integration**:
+- Launch Agent (not Daemon) with `StartCalendarInterval` — runs at 2 AM, processes all pending work, exits cleanly. See [daemon-launchd-patterns.md §2](docs/research/daemon-launchd-patterns.md)
+- PID lock file prevents concurrent runs
+- Signal handling: SIGTERM (graceful phase completion), SIGINT (immediate checkpoint + exit)
+- Install/uninstall script at `scripts/install-daemon.sh`
+
+**CLI `dream` command**:
+- `engram dream` — run all phases
+- `engram dream --phase ingest` — quick sync after a session
+- `engram dream --phase reflect` — force a reflection pass
+- `engram dream --conversation <uuid>` — process a specific conversation
+- `engram dream --dry-run` — show what would be processed
+- `engram dream --verbose` — detailed progress output
+
+**Memory pruning** (PRUNE phase):
+- Iterate all active memories, compute `isPruneEligible()` (confidence < 0.1 threshold)
+- Eligible memories: set `is_active = 0`, record in `dream_runs.memories_pruned`
+- Existing `decay.ts` functions handle all decay math; the daemon just needs the iteration loop
+
+**New files**:
+- `src/dream/daemon.ts` — pipeline orchestrator
+- `src/dream/scheduler.ts` — work queue, checkpoint tracking, priority scoring
+- `src/dream/intelligence.ts` — local LLM adapter (Ollama/MLX) with API fallback
+- `launchd/com.engram.dreamstate.plist` — macOS launchd configuration
+- `scripts/install-daemon.sh` — daemon install/uninstall helper
+- `tests/dream/daemon.test.ts` — orchestrator tests
+- `tests/dream/scheduler.test.ts` — checkpoint/scheduler tests
+
+**Modified files**:
+- `src/cli/index.ts` — add `dream` command handler
+- `src/semantic/extractor.ts` — implement `"local"` tier in `resolveModels()` (currently throws)
+
+**No modifications needed**: All pipeline components from Phases 1-4 are complete and tested.
+
 - **Milestone**: Autonomous background processing
 
 ### Phase 6: Reflection & Emergence
