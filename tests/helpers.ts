@@ -4,7 +4,13 @@ import { tmpdir } from "node:os";
 import { initDatabase } from "../src/core/db.js";
 import { loadConfig } from "../src/core/config.js";
 import type Database from "better-sqlite3";
-import type { EngramConfig, Exchange, ToolCall } from "../src/core/types.js";
+import type {
+  EngramConfig,
+  Exchange,
+  ToolCall,
+  Entity,
+  Relationship,
+} from "../src/core/types.js";
 
 export interface TestDb {
   db: Database.Database;
@@ -76,6 +82,37 @@ export function createSyntheticToolCall(
     exchangeId: "exch-001",
     toolName: "Read",
     isError: false,
+    ...overrides,
+  };
+}
+
+export function createTestEntity(overrides: Partial<Entity> = {}): Entity {
+  const id = overrides.id ?? `ent-${Math.random().toString(36).slice(2, 10)}`;
+  return {
+    id,
+    name: "TypeScript",
+    type: "technology",
+    description: "A typed superset of JavaScript",
+    aliases: [],
+    firstSeen: Math.floor(Date.now() / 1000),
+    lastSeen: Math.floor(Date.now() / 1000),
+    mentionCount: 1,
+    createdAt: Math.floor(Date.now() / 1000),
+    ...overrides,
+  };
+}
+
+export function createTestRelationship(
+  overrides: Partial<Relationship> = {},
+): Relationship {
+  return {
+    id: `rel-${Math.random().toString(36).slice(2, 10)}`,
+    sourceEntityId: "ent-source",
+    targetEntityId: "ent-target",
+    type: "uses",
+    weight: 1.0,
+    sourceMemories: [],
+    createdAt: Math.floor(Date.now() / 1000),
     ...overrides,
   };
 }
