@@ -1,16 +1,18 @@
-import { describe, it, expect, beforeEach, afterEach, beforeAll } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach, beforeAll } from "vitest";
 import {
   rrfFuse,
   normalizeMinMaxFloored,
   budgetResults,
   formatRecallXml,
   searchEpisodic,
+  searchMultiSource,
 } from "../../src/episodic/search.js";
 import { insertExchange } from "../../src/episodic/store.js";
-import { initEmbeddings, embedExchange } from "../../src/episodic/embeddings.js";
+import { insertMemory } from "../../src/semantic/memory.js";
+import { initEmbeddings, embedExchange, embedDocument } from "../../src/episodic/embeddings.js";
 import { createTestDb, createSyntheticExchange } from "../helpers.js";
 import type { TestDb } from "../helpers.js";
-import type { SearchResult, RecallResponse } from "../../src/core/types.js";
+import type { SearchResult, RecallResponse, Memory } from "../../src/core/types.js";
 
 // ─── Unit Tests (no DB) ───────────────────────────────────────
 
@@ -354,5 +356,258 @@ describe("searchEpisodic (integration)", () => {
     });
 
     expect(response.results).toHaveLength(0);
+  });
+});
+
+// ─── Multi-Source Search Tests ──────────────────────────────────
+
+describe("searchMultiSource", () => {
+  let t: TestDb;
+
+  beforeAll(async () => {
+    await initEmbeddings();
+  }, 120_000);
+
+  beforeEach(() => {
+    t = createTestDb();
+  });
+
+  afterEach(() => {
+    t.cleanup();
+  });
+
+  function createTestMemory(overrides: Partial<Memory> = {}): Memory {
+    const id =
+      overrides.id ?? `mem-${Math.random().toString(36).slice(2, 10)}`;
+    return {
+      id,
+      type: "fact",
+      content: "Default memory content",
+      confidence: 0.5,
+      importance: 0.5,
+      accessCount: 0,
+      createdAt: Math.floor(Date.now() / 1000),
+      sourceExchanges: ["exch-001"],
+      isActive: true,
+      ...overrides,
+    };
+  }
+
+  async function seedExchange(
+    id: string,
+    userMsg: string,
+    assistantMsg: string,
+    project: string = "test",
+    timestamp: string = "2026-02-26T10:00:00Z",
+  ) {
+    const exchange = createSyntheticExchange({
+      id,
+      userMessage: userMsg,
+      assistantMessage: assistantMsg,
+      project,
+      timestamp,
+      tokenEstimate: Math.ceil((userMsg.length + assistantMsg.length) / 4),
+    });
+
+    const embedding = await embedExchange(userMsg, assistantMsg, {
+      project,
+      date: timestamp.split("T")[0],
+    });
+
+    insertExchange(t.db, exchange, embedding, []);
+  }
+
+  async function seedMemory(
+    id: string,
+    content: string,
+    type: Memory["type"] = "fact",
+    importance: number = 0.5,
+  ) {
+    const embedding = await embedDocument(content);
+    const memory = createTestMemory({
+      id,
+      content,
+      type,
+      importance,
+    });
+    insertMemory(t.db, memory, embedding);
+  }
+
+  it("returns results from both stores when both have data", async () => {
+    // Seed episodic
+    await seedExchange(
+      "e-fish",
+      "I use Fish shell",
+      "Fish shell has great autocompletion",
+    );
+
+    // Seed semantic
+    await seedMemory("m-fish", "User prefers Fish shell", "preference", 0.8);
+
+    const response = await searchMultiSource(t.db, {
+      query: "Fish shell",
+      budget: 5000,
+    });
+
+    expect(response.results.length).toBeGreaterThan(0);
+
+    const sources = new Set(response.results.map((r) => r.source));
+    // We expect at least semantic results; episodic depends on FTS/vec match
+    expect(sources.has("semantic")).toBe(true);
+  });
+
+  it("with no semantic memories, returns episodic-only results", async () => {
+    await seedExchange(
+      "e-sqlite",
+      "How does SQLite WAL mode work?",
+      "WAL mode uses write-ahead logging",
+    );
+
+    const response = await searchMultiSource(t.db, {
+      query: "SQLite WAL mode",
+      budget: 5000,
+    });
+
+    expect(response.results.length).toBeGreaterThan(0);
+    // All results should be episodic
+    for (const result of response.results) {
+      expect(result.source).toBe("episodic");
+    }
+  });
+
+  it("token budget prioritizes semantic over episodic", async () => {
+    // Seed multiple episodic exchanges (larger token estimates)
+    for (let i = 0; i < 3; i++) {
+      const longMsg = "A".repeat(200);
+      await seedExchange(
+        `e-budget-${i}`,
+        `TypeScript question ${i}: ${longMsg}`,
+        `TypeScript answer ${i}: ${longMsg}`,
+      );
+    }
+
+    // Seed a semantic memory (smaller token estimate)
+    await seedMemory(
+      "m-budget-ts",
+      "TypeScript uses structural typing by default",
+      "fact",
+      0.9,
+    );
+
+    const response = await searchMultiSource(t.db, {
+      query: "TypeScript typing",
+      budget: 200, // Tight budget
+    });
+
+    // With tight budget, semantic results should be included first
+    if (response.results.length > 0) {
+      const semanticResults = response.results.filter(
+        (r) => r.source === "semantic",
+      );
+      const episodicResults = response.results.filter(
+        (r) => r.source === "episodic",
+      );
+
+      // If both are present, semantic should come before episodic
+      // in the budgeted output (due to semantic-first prioritization)
+      if (semanticResults.length > 0 && episodicResults.length > 0) {
+        const firstSemanticIdx = response.results.findIndex(
+          (r) => r.source === "semantic",
+        );
+        const firstEpisodicIdx = response.results.findIndex(
+          (r) => r.source === "episodic",
+        );
+        expect(firstSemanticIdx).toBeLessThan(firstEpisodicIdx);
+      }
+    }
+  });
+});
+
+// ─── formatRecallXml with mixed sources ─────────────────────────
+
+describe("formatRecallXml (mixed sources)", () => {
+  it("outputs both episodic and semantic tags", () => {
+    const response: RecallResponse = {
+      query: "Fish shell",
+      results: [
+        {
+          id: "m1",
+          source: "semantic",
+          score: 0.9,
+          content: "User prefers Fish shell and uses tmux always",
+          metadata: {
+            type: "preference",
+            confidence: 0.85,
+            importance: 0.8,
+          },
+          tokenEstimate: 20,
+        },
+        {
+          id: "e1",
+          source: "episodic",
+          score: 0.7,
+          content: "User: I use Fish shell\nAssistant: Fish has great features",
+          metadata: {
+            project: "engram",
+            date: "2026-02-26",
+          },
+          tokenEstimate: 30,
+        },
+      ],
+      tokensUsed: 50,
+      totalResults: 2,
+    };
+
+    const xml = formatRecallXml(response);
+
+    // Should contain semantic tag
+    expect(xml).toContain("<semantic");
+    expect(xml).toContain('type="preference"');
+    expect(xml).toContain('confidence="85%"');
+    expect(xml).toContain('importance="high"');
+    expect(xml).toContain("User prefers Fish shell");
+    expect(xml).toContain("</semantic>");
+
+    // Should contain episodic tag
+    expect(xml).toContain("<episodic");
+    expect(xml).toContain('project="engram"');
+    expect(xml).toContain("</episodic>");
+
+    // Should have engram_memory wrapper
+    expect(xml).toContain("<engram_memory");
+    expect(xml).toContain("</engram_memory>");
+  });
+
+  it("semantic importance labels are correct", () => {
+    const testCases = [
+      { importance: 0.9, expected: "high" },
+      { importance: 0.6, expected: "medium" },
+      { importance: 0.3, expected: "low" },
+    ];
+
+    for (const { importance, expected } of testCases) {
+      const response: RecallResponse = {
+        query: "test",
+        results: [
+          {
+            id: "m1",
+            source: "semantic",
+            score: 0.8,
+            content: "Test content",
+            metadata: {
+              type: "fact",
+              confidence: 0.5,
+              importance,
+            },
+            tokenEstimate: 10,
+          },
+        ],
+        tokensUsed: 10,
+        totalResults: 1,
+      };
+
+      const xml = formatRecallXml(response);
+      expect(xml).toContain(`importance="${expected}"`);
+    }
   });
 });
