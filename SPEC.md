@@ -246,25 +246,77 @@ CREATE TABLE conflicts (
 
 ### Extraction Pipeline
 
-During dream state processing, each new conversation is analyzed:
+During dream state processing, each new conversation is analyzed. The pipeline draws from production patterns in Mem0, Zep/Graphiti, and LangMem — see [docs/research/semantic-extraction-techniques.md](docs/research/semantic-extraction-techniques.md) for the full survey.
 
 ```
 Input: Raw conversation exchanges
   │
   ▼
-Fact Extraction (Claude Haiku)
-  Prompt: "Extract discrete facts, preferences, decisions,
-           patterns, and solutions from this conversation.
-           For each, provide: type, content (1-3 sentences),
-           importance (0-1), and which exchanges support it."
+Pre-processing
+  - Filter to human + assistant text messages (tool calls as optional context)
+  - For conversations > 100 turns: chunk into overlapping windows of
+    ~20-30 turns with 5-turn overlap (prevents context loss at boundaries)
+  - Prepend conversation metadata: project, branch, date range
   │
   ▼
-Deduplication Check
+Fact Extraction (Three-Tier Intelligence)
+  Tier 1 — Local LLM (default): Qwen 3 8B Q4_K_M via MLX-LM (~32 tok/s)
+  Tier 2 — Cloud API (fallback): Claude Haiku 4.5 via tool use (strict: true)
+  Tier 3 — Cloud API (complex): Claude Sonnet for multi-hop reasoning
+  │
+  Extraction uses Claude tool use with strict: true for guaranteed schema
+  compliance (constrained decoding for local models). Each memory is
+  extracted as an atomic fact — complex statements decomposed into
+  discrete, independently verifiable claims. See AFEV framework in
+  docs/research/semantic-extraction-techniques.md §1.2.
+  │
+  Prompt pattern (Mem0-style typed facts):
+    "Extract discrete facts, preferences, decisions, patterns, and
+     solutions. For each, provide: type, content (1 atomic sentence),
+     importance (0-1), and which exchanges support it.
+     Replace all pronouns with actual entity names.
+     Do NOT extract from system messages or casual greetings.
+     Return empty array if no extractable information."
+  │
+  Confidence-based routing: local model self-reports confidence (1-10).
+  Score >= 8 terminates locally; < 8 escalates to Claude Haiku.
+  See docs/research/local-inference-nli-models.md §5 for routing details.
+  │
+  ▼
+Reflexion Pass (optional, quality gate)
+  Second LLM call reviews extraction against source text:
+    "Which facts, preferences, or decisions were missed?"
+  Catches implicit preferences and unstated assumptions.
+  Pattern from Zep/Graphiti — see docs/research/semantic-extraction-techniques.md §1.3.
+  │
+  ▼
+Deduplication Check (Tiered Thresholds)
   For each extracted memory:
-  - Embed and search existing memories (cosine similarity > 0.85)
-  - If near-duplicate found: reinforce (bump confidence + access_count)
-  - If contradiction found: log conflict, keep both until resolved
-  - If novel: insert new memory
+  1. Embed with nomic-embed-text-v1.5 and search existing memories
+  2. Cosine similarity >= 0.95: auto-merge (bump confidence + access_count)
+  3. Cosine similarity 0.85-0.95: run NLI contradiction check
+     - DeBERTa-v3-base via transformers.js/ONNX (~30ms per pair)
+     - Entailment > 0.7 → merge as reinforcement
+     - Contradiction > 0.7 → log conflict, keep both
+     - Neutral → treat as distinct, insert new memory
+  4. Cosine similarity < 0.85: insert as novel memory
+  │
+  Thresholds validated against production systems (Cognee, FalkorDB,
+  SemDeDup). See docs/research/deduplication-conflict-detection.md §1.2.
+  │
+  ▼
+Conflict Resolution (for detected contradictions)
+  Resolution priority: temporal recency > explicit correction >
+  corroboration count > source reliability.
+  │
+  For ambiguous conflicts (NLI contradiction 0.5-0.7):
+  - Escalate to LLM with both memories + source context
+  - LLM classifies: UPDATE (supersede old), KEEP_BOTH, or NOOP
+  - Pattern from Mem0's ADD/UPDATE/DELETE/NOOP classification
+  │
+  Superseded memories are NOT deleted — marked with superseded_by
+  link and is_active=false. Preserves temporal query capability.
+  See docs/research/deduplication-conflict-detection.md §2.3.
   │
   ▼
 Embedding + Indexing
@@ -274,21 +326,46 @@ Embedding + Indexing
 
 ### Confidence & Decay Model
 
+The confidence model combines insights from FSRS (Free Spaced Repetition Scheduler), Bayesian confidence updating, and the Park et al. Generative Agents retrieval scoring. See [docs/research/deduplication-conflict-detection.md](docs/research/deduplication-conflict-detection.md) §4-5 for the full research survey.
+
+**Storage-time confidence** (determines memory health and pruning eligibility):
+
 ```
-confidence(t) = base_confidence × reinforcement_factor × decay_factor
+confidence(t) = base_confidence × corroboration_factor × decay_factor
 
-reinforcement_factor = 1 + log(1 + access_count)
-decay_factor = exp(-λ × days_since_last_access)
+corroboration_factor = min(1.0, 0.5 + 0.1 × num_confirmations)
+  — starts at 0.5 for single-source, approaches 1.0 with multiple confirmations
+  — each independent conversation confirming this memory counts as +1
 
-where:
-  λ = 0.01 for preferences (slow decay — user preferences are stable)
-  λ = 0.02 for decisions (medium decay — architectural choices evolve)
-  λ = 0.05 for facts (faster decay — factual details change)
-  λ = 0.005 for patterns (very slow decay — behavioral patterns are persistent)
-  λ = 0.03 for solutions (medium decay — solutions become outdated)
+decay_factor = 0.9 ^ (days_since_last_access / stability)
+  — FSRS-inspired: stability is per-memory, grows with successful access
+  — stability_initial varies by type (see below)
+  — on successful access: stability *= (1 + growth_rate × (1 - R))
+    where R is retrievability at access time ("desirable difficulty" effect)
+  — on contradiction: stability *= 0.8 (failure penalty)
+
+stability_initial by type:
+  preference: 90 days  (slow decay — user preferences are stable)
+  decision:   60 days  (medium — architectural choices evolve)
+  fact:       30 days  (faster — factual details change)
+  pattern:    120 days (very slow — behavioral patterns are persistent)
+  solution:   45 days  (medium — solutions become outdated)
+  convention: 75 days  (slow — conventions are sticky)
 ```
 
-Memories with `confidence < 0.1` are candidates for pruning during dream state.
+**Retrieval-time scoring** (determines result ranking in recall):
+
+```
+retrieval_score = 0.55 × relevance + 0.25 × recency + 0.20 × importance
+
+relevance:  cosine similarity (vector) + BM25 (keyword), fused with RRF
+recency:    decay_factor from above (0.0-1.0)
+importance: LLM-judged at extraction (0.0-1.0), boosted on access
+```
+
+This three-factor model follows the Park et al. Generative Agents approach but weights relevance more heavily, following Tribe AI's production recommendation — the most common failure mode is retrieving important-but-irrelevant memories. See [docs/research/memory-architectures-schemas.md](docs/research/memory-architectures-schemas.md) §3.
+
+Memories with `confidence < 0.1` are candidates for pruning during dream state. Pruned memories are archived (not deleted) with full provenance.
 
 ---
 
@@ -767,12 +844,55 @@ Tasks:
 - **Milestone**: All historical data accessible via new system with improved search quality
 
 ### Phase 3: Semantic Extraction
-- Fact extraction pipeline (Claude Haiku)
-- Memory CRUD with confidence scoring
-- Deduplication and conflict detection
-- Semantic search integration into `recall`
-- `remember` MCP tool
-- **Milestone**: System extracts and recalls distilled knowledge
+
+The semantic layer transforms raw episodic data into distilled knowledge — the core differentiator between engram and conversation search. Research across Mem0, Zep/Graphiti, LangMem, Letta, and EverMemOS validates the extraction→dedup→conflict→index pipeline architecture. The key design decisions below are informed by four research documents:
+
+- [Extraction techniques and prompt patterns](docs/research/semantic-extraction-techniques.md)
+- [Deduplication, conflict detection, and decay models](docs/research/deduplication-conflict-detection.md)
+- [Memory architecture comparisons and schema validation](docs/research/memory-architectures-schemas.md)
+- [Local inference options and hybrid architecture](docs/research/local-inference-nli-models.md)
+
+**Extraction Pipeline** (see Layer 2 Extraction Pipeline for full flow):
+- Three-tier intelligence: local LLM (Qwen 3 8B Q4_K_M via MLX) → Claude Haiku 4.5 → Claude Sonnet, with confidence-based routing at 0.8 threshold. Rationale: local-first honors the offline-capable principle; cloud fallback ensures quality for complex conversations. At 100-500 conversations/night, hybrid costs ~$5-15/month vs $37.50 cloud-only. See [local-inference-nli-models.md §6](docs/research/local-inference-nli-models.md).
+- Claude tool use with `strict: true` for guaranteed schema compliance (constrained decoding for local models). Rationale: all surveyed production systems enforce structured output; prompt-only JSON is unreliable. See [semantic-extraction-techniques.md §1.1](docs/research/semantic-extraction-techniques.md).
+- Atomic fact decomposition: complex statements split into discrete, independently verifiable claims. Rationale: improves dedup precision, retrieval granularity, and conflict detection. Validated by AFEV framework. See [semantic-extraction-techniques.md §1.2](docs/research/semantic-extraction-techniques.md).
+- Whole-conversation extraction as primary approach (not per-turn). For >100 turns, overlapping windows of 20-30 turns with 5-turn overlap. Rationale: engram processes history after-the-fact, so full context is available. See [semantic-extraction-techniques.md §4.3](docs/research/semantic-extraction-techniques.md).
+- Optional reflexion pass: second LLM call reviews extraction for missed facts. Rationale: Zep/Graphiti show this catches implicit preferences and unstated assumptions. See [semantic-extraction-techniques.md §1.3](docs/research/semantic-extraction-techniques.md).
+
+**Memory CRUD with confidence scoring:**
+- Six memory types (preference, decision, pattern, fact, solution, convention) validated against production taxonomy. Mem0, LangMem, and Bedrock AgentCore converge on similar categories. See [memory-architectures-schemas.md §1.2](docs/research/memory-architectures-schemas.md).
+- FSRS-inspired confidence model with per-memory stability, Bayesian corroboration factor, and three-factor retrieval scoring (0.55 relevance + 0.25 recency + 0.20 importance). Rationale: FSRS produces 20-30% fewer false decays than fixed-lambda exponential; corroboration factor ensures multi-source memories are more durable. See [deduplication-conflict-detection.md §5.3](docs/research/deduplication-conflict-detection.md).
+- Importance scored by LLM at extraction (Park et al. 1-10 scale), dynamically boosted on access. Rationale: static importance is insufficient; memories that keep getting retrieved should gain importance. See [memory-architectures-schemas.md §3.3](docs/research/memory-architectures-schemas.md).
+
+**Deduplication and conflict detection:**
+- Tiered cosine similarity thresholds: >= 0.95 auto-merge, 0.85-0.95 NLI check, < 0.85 distinct. Production-validated by Cognee, FalkorDB, SemDeDup. See [deduplication-conflict-detection.md §1.2](docs/research/deduplication-conflict-detection.md).
+- NLI contradiction detection via DeBERTa-v3-base cross-encoder in transformers.js/ONNX (~30ms per pair, ~90% MNLI accuracy). Runs entirely in Node.js with no Python dependency. See [local-inference-nli-models.md §1](docs/research/local-inference-nli-models.md).
+- Conflict resolution: temporal recency > explicit correction > corroboration count > source reliability. Superseded memories marked (not deleted) with `superseded_by` link. See [deduplication-conflict-detection.md §2.3](docs/research/deduplication-conflict-detection.md).
+
+**Semantic search integration into `recall`:**
+- Extend hybrid search to query both episodic and semantic stores in parallel
+- RRF fusion across all sources, with semantic memories boosted (higher signal density)
+- Token budget allocation: prefer semantic memories > conversation summaries > raw exchanges
+
+**`remember` MCP tool:**
+- Explicit memory creation with type, content, and optional importance
+- Bypass extraction pipeline — direct insert with high base confidence (user-stated)
+- Deduplicate against existing memories before insert
+
+**New dependency**: `@xenova/transformers` for NLI cross-encoder (DeBERTa-v3-base ONNX). Already a dependency for embeddings — adds only the NLI model weights (~184MB).
+
+Tasks:
+- Implement `src/semantic/extractor.ts` — fact extraction with three-tier intelligence routing
+- Implement `src/semantic/consolidator.ts` — tiered dedup with NLI contradiction detection
+- Implement `src/semantic/memory.ts` — CRUD operations, FSRS-inspired confidence, importance scoring
+- Implement `src/semantic/decay.ts` — per-memory stability tracking, Bayesian corroboration
+- Create `prompts/extract-facts.md` — extraction prompt template with few-shot examples
+- Create `prompts/resolve-conflict.md` — conflict resolution prompt template
+- Extend `src/episodic/search.ts` to support multi-source (episodic + semantic) search
+- Extend `src/mcp/server.ts` with `remember` tool
+- Add NLI pipeline initialization to embeddings module (DeBERTa-v3-base ONNX)
+- Integration tests: extraction → dedup → conflict → retrieval end-to-end
+- **Milestone**: System extracts and recalls distilled knowledge, with validated dedup and conflict detection
 
 ### Phase 4: Knowledge Graph
 - Entity extraction and normalization
