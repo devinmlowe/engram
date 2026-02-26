@@ -12,7 +12,9 @@ import { loadConfig } from "../core/config.js";
 import {
   searchMultiSource,
   formatRecallXml,
+  escapeXml,
 } from "../episodic/search.js";
+import { exploreEntity } from "../graph/search.js";
 import { initEmbeddings, embedDocument } from "../episodic/embeddings.js";
 import {
   insertMemory,
@@ -25,6 +27,7 @@ import type {
   EngramConfig,
   SearchOptions,
   SearchSource,
+  RelationshipType,
   Memory,
   MemoryType,
 } from "../core/types.js";
@@ -61,7 +64,7 @@ const VALID_MEMORY_TYPES: readonly MemoryType[] = [
   "convention",
 ];
 
-const VALID_SOURCES: readonly SearchSource[] = ["episodic", "semantic"];
+const VALID_SOURCES: readonly SearchSource[] = ["episodic", "semantic", "graph"];
 
 /** Auto-merge threshold for near-duplicate detection */
 const REMEMBER_DEDUP_THRESHOLD = 0.95;
@@ -81,7 +84,7 @@ const RecallInputSchema = z.object({
     .optional(),
   depth: z.enum(["shallow", "deep"]).optional(),
   sources: z
-    .array(z.enum(["episodic", "semantic"]))
+    .array(z.enum(["episodic", "semantic", "graph"]))
     .optional(),
 });
 
@@ -102,6 +105,23 @@ const ShowInputSchema = z.object({
   path: z.string().min(1, "Path is required"),
   startLine: z.number().int().min(1).optional(),
   endLine: z.number().int().min(1).optional(),
+});
+
+const ExploreInputSchema = z.object({
+  entity: z.string().min(1, "Entity name is required"),
+  depth: z.number().int().min(1).max(3).optional().default(1),
+  relationship_types: z
+    .array(
+      z.enum([
+        "uses",
+        "depends_on",
+        "related_to",
+        "part_of",
+        "configured_by",
+        "solved_by",
+      ]),
+    )
+    .optional(),
 });
 
 // ─── Server Setup ──────────────────────────────────────────────
@@ -150,10 +170,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
           sources: {
             type: "array",
-            items: { type: "string", enum: ["episodic", "semantic"] },
+            items: { type: "string", enum: ["episodic", "semantic", "graph"] },
             default: ["episodic", "semantic"],
             description:
-              "Which memory stores to search. Defaults to both.",
+              "Which memory stores to search. Defaults to episodic and semantic.",
           },
         },
         required: ["query"],
@@ -232,6 +252,55 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
       annotations: {
         title: "Show Conversation",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    {
+      name: "explore",
+      description:
+        "Explore connections in the knowledge graph starting from an entity. " +
+        "Shows what a concept, tool, project, or technology is connected to. " +
+        "Use after recall to understand how things relate to each other.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          entity: {
+            type: "string",
+            minLength: 1,
+            description:
+              "Entity name to explore (e.g., 'TypeScript', 'engram', 'SQLite')",
+          },
+          depth: {
+            type: "number",
+            minimum: 1,
+            maximum: 3,
+            default: 1,
+            description: "Number of hops to traverse (1-3)",
+          },
+          relationship_types: {
+            type: "array",
+            items: {
+              type: "string",
+              enum: [
+                "uses",
+                "depends_on",
+                "related_to",
+                "part_of",
+                "configured_by",
+                "solved_by",
+              ],
+            },
+            description: "Filter by relationship types",
+          },
+        },
+        required: ["entity"],
+        additionalProperties: false,
+      },
+      annotations: {
+        title: "Explore Knowledge Graph",
         readOnlyHint: true,
         destructiveHint: false,
         idempotentHint: true,
@@ -343,6 +412,51 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       return {
         content: [{ type: "text", text: formatted }],
+      };
+    }
+
+    if (name === "explore") {
+      const params = ExploreInputSchema.parse(args);
+
+      const result = exploreEntity(getDb(), {
+        entity: params.entity,
+        depth: params.depth,
+        relationshipTypes: params.relationship_types as
+          | RelationshipType[]
+          | undefined,
+      });
+
+      // Format as XML
+      const lines: string[] = [];
+      lines.push(
+        `<engram_graph entity="${escapeXml(result.centerEntity.name)}" type="${result.centerEntity.type}">`,
+      );
+      if (result.centerEntity.description) {
+        lines.push(
+          `  <description>${escapeXml(result.centerEntity.description)}</description>`,
+        );
+      }
+      for (const neighbor of result.neighbors) {
+        const dir = neighbor.relationship.direction;
+        const attrs =
+          dir === "outgoing"
+            ? `direction="outgoing" type="${neighbor.relationship.type}" target="${escapeXml(neighbor.entity.name)}" weight="${neighbor.relationship.weight.toFixed(2)}"`
+            : `direction="incoming" type="${neighbor.relationship.type}" source="${escapeXml(neighbor.entity.name)}" weight="${neighbor.relationship.weight.toFixed(2)}"`;
+        lines.push(`  <relationship ${attrs}>`);
+        if (neighbor.relationship.context) {
+          lines.push(`    ${escapeXml(neighbor.relationship.context)}`);
+        }
+        lines.push("  </relationship>");
+      }
+      if (result.community) {
+        lines.push(
+          `  <community name="${escapeXml(result.community.name)}" entities="${result.community.entityCount}" />`,
+        );
+      }
+      lines.push("</engram_graph>");
+
+      return {
+        content: [{ type: "text", text: lines.join("\n") }],
       };
     }
 
