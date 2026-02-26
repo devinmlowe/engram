@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import { Command } from "commander";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { loadConfig } from "../core/config.js";
 import { initDatabase } from "../core/db.js";
 
@@ -167,6 +169,126 @@ program
     console.log(`  Model: ${getActiveModel()}`);
 
     console.log("Done. Engram is ready.");
+  });
+
+// ─── migrate ────────────────────────────────────────────────────
+
+program
+  .command("migrate")
+  .description("Migrate data from superpowers conversation-index DB")
+  .option(
+    "-s, --source <path>",
+    "Source database path",
+    join(homedir(), ".config/superpowers/conversation-index/db.sqlite"),
+  )
+  .option(
+    "-n, --dry-run",
+    "Show what would be migrated without making changes",
+  )
+  .option("--batch-size <n>", "Embedding batch size", "32")
+  .option("--force", "Force re-migration (ignore checkpoints)")
+  .action(async (opts) => {
+    const { runMigration, formatProgress } = await import(
+      "../migration/migrate.js"
+    );
+
+    try {
+      console.log(`Migrating from: ${opts.source}`);
+      const report = await runMigration({
+        sourcePath: opts.source,
+        dryRun: opts.dryRun,
+        batchSize: parseInt(opts.batchSize, 10),
+        force: opts.force,
+        onProgress: (p) => {
+          process.stdout.write(`\r${formatProgress(p)}`);
+        },
+      });
+
+      if (!opts.dryRun) {
+        console.log("\n\nMigration complete:");
+        console.log(`  Exchanges:     ${report.exchangesMigrated}`);
+        console.log(`  Tool calls:    ${report.toolCallsMigrated}`);
+        console.log(`  Conversations: ${report.conversationsCreated}`);
+        console.log(`  Embeddings:    ${report.embeddingsGenerated}`);
+
+        if (report.errors.length > 0) {
+          console.log(`  Errors:        ${report.errors.length}`);
+          for (const err of report.errors.slice(0, 10)) {
+            console.error(`    ${err}`);
+          }
+          if (report.errors.length > 10) {
+            console.error(
+              `    ... and ${report.errors.length - 10} more`,
+            );
+          }
+        }
+
+        const durationSec = report.completedAt
+          ? Math.round((report.completedAt - report.startedAt) / 1000)
+          : 0;
+        console.log(`  Duration:      ${durationSec}s`);
+      }
+    } catch (err) {
+      console.error(
+        "Migration failed:",
+        err instanceof Error ? err.message : err,
+      );
+      process.exit(1);
+    }
+  });
+
+// ─── validate ───────────────────────────────────────────────────
+
+program
+  .command("validate")
+  .description("Validate migration integrity")
+  .option(
+    "-s, --source <path>",
+    "Source database path",
+    join(homedir(), ".config/superpowers/conversation-index/db.sqlite"),
+  )
+  .action(async (opts) => {
+    const { runValidation } = await import("../migration/validate.js");
+
+    try {
+      console.log("Running validation checks...\n");
+      const results = await runValidation({
+        sourcePath: opts.source,
+      });
+
+      let passed = 0;
+      let failed = 0;
+
+      for (const result of results) {
+        const status = result.passed ? "PASS" : "FAIL";
+        const icon = result.passed ? "+" : "x";
+        console.log(`  [${icon}] ${status}: ${result.check}`);
+
+        if (!result.passed) {
+          console.log(
+            `       Expected: ${result.expected}, Actual: ${result.actual}`,
+          );
+          if (result.details) {
+            console.log(`       ${result.details}`);
+          }
+        }
+
+        if (result.passed) passed++;
+        else failed++;
+      }
+
+      console.log(`\nResults: ${passed} passed, ${failed} failed`);
+
+      if (failed > 0) {
+        process.exit(1);
+      }
+    } catch (err) {
+      console.error(
+        "Validation failed:",
+        err instanceof Error ? err.message : err,
+      );
+      process.exit(1);
+    }
   });
 
 program.parse();
