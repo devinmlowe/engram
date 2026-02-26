@@ -10,7 +10,7 @@ import Graph from "graphology";
 import louvain from "graphology-communities-louvain";
 import betweennessCentrality from "graphology-metrics/centrality/betweenness.js";
 import type Database from "better-sqlite3";
-import type { GraphAnalysisResult, CommunityResult } from "./types.js";
+import type { GraphAnalysisResult, CommunityResult, BridgeScore, CommunityNaming } from "./types.js";
 
 // ─── Graph Loading ───────────────────────────────────────────────
 
@@ -311,10 +311,14 @@ export function analyzeGraph(
  *
  * Each community becomes a TopicCluster row. The generation counter
  * increments from the current max generation.
+ *
+ * When communityNames is provided, uses the LLM-generated name and
+ * description instead of the generic "Community N" placeholder.
  */
 export function persistAnalysis(
   db: Database.Database,
   analysis: GraphAnalysisResult,
+  communityNames?: CommunityNaming[],
 ): void {
   // Get current max generation
   const row = db
@@ -324,6 +328,14 @@ export function persistAnalysis(
 
   const now = Math.floor(Date.now() / 1000);
 
+  // Index community names by communityId for fast lookup
+  const nameMap = new Map<number, CommunityNaming>();
+  if (communityNames) {
+    for (const cn of communityNames) {
+      nameMap.set(cn.communityId, cn);
+    }
+  }
+
   const insert = db.prepare(`
     INSERT INTO topic_clusters (id, name, description, entity_ids, memory_ids, coherence_score, created_at, updated_at, generation)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -332,8 +344,11 @@ export function persistAnalysis(
   const insertMany = db.transaction(() => {
     for (const community of analysis.communities) {
       const id = crypto.randomUUID();
-      const name = `Community ${community.communityId}`;
-      const description = `Auto-detected community with ${community.entityIds.length} entities (coherence: ${community.coherenceScore.toFixed(3)})`;
+      const naming = nameMap.get(community.communityId);
+      const name = naming?.name ?? `Community ${community.communityId}`;
+      const description =
+        naming?.description ??
+        `Auto-detected community with ${community.entityIds.length} entities (coherence: ${community.coherenceScore.toFixed(3)})`;
       const entityIdsJson = JSON.stringify(community.entityIds);
       const memoryIdsJson = JSON.stringify([]);
 
@@ -352,4 +367,111 @@ export function persistAnalysis(
   });
 
   insertMany();
+}
+
+// ─── Bridge Score Persistence ────────────────────────────────────
+
+/**
+ * Get the latest bridge generation number.
+ *
+ * Returns 0 when no bridge scores exist.
+ */
+export function getLatestBridgeGeneration(db: Database.Database): number {
+  const row = db
+    .prepare("SELECT MAX(generation) as maxGen FROM bridge_scores")
+    .get() as { maxGen: number | null } | undefined;
+  return row?.maxGen ?? 0;
+}
+
+/**
+ * Persist bridge entity scores to the bridge_scores table.
+ *
+ * Each bridge gets its betweenness, community_span, and bridge_score
+ * recorded with a generation counter for temporal tracking.
+ * Uses a transaction for atomicity — partial failures leave no data.
+ */
+export function persistBridgeScores(
+  db: Database.Database,
+  bridges: Array<{
+    entityId: string;
+    betweenness: number;
+    communitySpan: number;
+    bridgeScore: number;
+  }>,
+  generation?: number,
+): void {
+  const nextGeneration = generation ?? getLatestBridgeGeneration(db) + 1;
+
+  const insert = db.prepare(`
+    INSERT INTO bridge_scores (entity_id, betweenness, community_span, bridge_score, generation)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+
+  const insertAll = db.transaction(() => {
+    for (const bridge of bridges) {
+      insert.run(
+        bridge.entityId,
+        bridge.betweenness,
+        bridge.communitySpan,
+        bridge.bridgeScore,
+        nextGeneration,
+      );
+    }
+  });
+
+  insertAll();
+}
+
+/**
+ * Retrieve bridge scores for a given generation (or latest if not specified).
+ *
+ * JOINs with entities to include entityName and entityType in the result.
+ */
+export function getBridgeScores(
+  db: Database.Database,
+  generation?: number,
+): BridgeScore[] {
+  const targetGeneration = generation ?? getLatestBridgeGeneration(db);
+
+  if (targetGeneration === 0) {
+    return [];
+  }
+
+  const rows = db
+    .prepare(
+      `SELECT
+        bs.entity_id,
+        e.name AS entity_name,
+        e.type AS entity_type,
+        bs.betweenness,
+        bs.community_span,
+        bs.bridge_score,
+        bs.narrative,
+        bs.generation
+      FROM bridge_scores bs
+      JOIN entities e ON e.id = bs.entity_id
+      WHERE bs.generation = ?
+      ORDER BY bs.bridge_score DESC`,
+    )
+    .all(targetGeneration) as Array<{
+    entity_id: string;
+    entity_name: string;
+    entity_type: string;
+    betweenness: number;
+    community_span: number;
+    bridge_score: number;
+    narrative: string | null;
+    generation: number;
+  }>;
+
+  return rows.map((row) => ({
+    entityId: row.entity_id,
+    entityName: row.entity_name,
+    entityType: row.entity_type as BridgeScore["entityType"],
+    betweenness: row.betweenness,
+    communitySpan: row.community_span,
+    bridgeScore: row.bridge_score,
+    narrative: row.narrative ?? undefined,
+    generation: row.generation,
+  }));
 }
