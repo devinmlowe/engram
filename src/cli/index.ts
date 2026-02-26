@@ -400,6 +400,39 @@ program
       console.log("  Semantic:");
       console.log(`    Memories:      ${memoryCount} active, ${inactiveMemoryCount} superseded`);
       console.log(`    Conflicts:     ${conflictCount} total, ${unresolvedConflicts} unresolved`);
+
+      // Graph statistics
+      const entityCount = (
+        db
+          .prepare("SELECT COUNT(*) as count FROM entities")
+          .get() as { count: number }
+      ).count;
+
+      const entityTypeCounts = db
+        .prepare(
+          "SELECT type, COUNT(*) as count FROM entities GROUP BY type ORDER BY count DESC",
+        )
+        .all() as Array<{ type: string; count: number }>;
+
+      const relationshipCount = (
+        db
+          .prepare("SELECT COUNT(*) as count FROM relationships")
+          .get() as { count: number }
+      ).count;
+
+      const clusterCount = (
+        db
+          .prepare("SELECT COUNT(*) as count FROM topic_clusters")
+          .get() as { count: number }
+      ).count;
+
+      console.log("");
+      console.log("  Graph:");
+      console.log(
+        `    Entities:      ${entityCount}${entityTypeCounts.length > 0 ? ` (${entityTypeCounts.map((t) => `${t.count} ${t.type}`).join(", ")})` : ""}`,
+      );
+      console.log(`    Relationships: ${relationshipCount}`);
+      console.log(`    Topic Clusters: ${clusterCount}`);
       console.log("");
       console.log(
         `  Last Sync:     ${lastSync.ts ? new Date(lastSync.ts * 1000).toISOString() : "never"}`,
@@ -549,6 +582,152 @@ program
         err instanceof Error ? err.message : err,
       );
       process.exit(1);
+    }
+  });
+
+// ─── entities ─────────────────────────────────────────────────
+
+program
+  .command("entities")
+  .description("List entities in the knowledge graph")
+  .option("-t, --type <type>", "Filter by entity type")
+  .option("-l, --limit <n>", "Max results", "20")
+  .option("--search <query>", "Search entities by name")
+  .action(async (opts) => {
+    const { getAllEntities, ftsSearchEntities, getEntity } = await import(
+      "../graph/entity.js"
+    );
+    const config = loadConfig();
+    const db = initDatabase(config);
+    try {
+      if (opts.search) {
+        const results = ftsSearchEntities(db, opts.search, parseInt(opts.limit, 10));
+        if (results.length === 0) {
+          console.log("No entities found.");
+          return;
+        }
+        for (const r of results) {
+          const entity = getEntity(db, r.id);
+          if (entity) {
+            console.log(
+              `  [${entity.type}] ${entity.name} (mentions: ${entity.mentionCount})`,
+            );
+            if (entity.description) console.log(`    ${entity.description}`);
+          }
+        }
+      } else {
+        const entities = getAllEntities(db, opts.type);
+        if (entities.length === 0) {
+          console.log("No entities found.");
+          return;
+        }
+        const limited = entities.slice(0, parseInt(opts.limit, 10));
+        for (const e of limited) {
+          console.log(
+            `  [${e.type}] ${e.name} (mentions: ${e.mentionCount})`,
+          );
+          if (e.description) console.log(`    ${e.description}`);
+        }
+        if (entities.length > limited.length) {
+          console.log(`  ... and ${entities.length - limited.length} more`);
+        }
+      }
+    } finally {
+      db.close();
+    }
+  });
+
+// ─── relationships ────────────────────────────────────────────
+
+program
+  .command("relationships <entity>")
+  .description("Show relationships for an entity")
+  .option("-t, --type <type>", "Filter by relationship type")
+  .action(async (entity, opts) => {
+    const { getEntityByName, getEntityByAlias, getEntity } = await import(
+      "../graph/entity.js"
+    );
+    const { getRelationshipsForEntity } = await import(
+      "../graph/relationship.js"
+    );
+    const config = loadConfig();
+    const db = initDatabase(config);
+    try {
+      // Find entity
+      const found =
+        getEntityByName(db, entity) ?? getEntityByAlias(db, entity);
+      if (!found) {
+        console.error(`Entity not found: ${entity}`);
+        process.exit(1);
+      }
+      const rels = getRelationshipsForEntity(db, found.id);
+      const filtered = opts.type
+        ? rels.filter((r) => r.type === opts.type)
+        : rels;
+      if (filtered.length === 0) {
+        console.log(`No relationships found for ${found.name}.`);
+        return;
+      }
+      console.log(`Relationships for ${found.name} (${found.type}):\n`);
+      for (const rel of filtered) {
+        const isSource = rel.sourceEntityId === found.id;
+        const otherId = isSource ? rel.targetEntityId : rel.sourceEntityId;
+        const other = getEntity(db, otherId);
+        const dir = isSource ? "->" : "<-";
+        console.log(
+          `  ${dir} ${rel.type} ${other?.name ?? otherId} (weight: ${rel.weight.toFixed(2)})`,
+        );
+        if (rel.context) console.log(`    ${rel.context}`);
+      }
+    } finally {
+      db.close();
+    }
+  });
+
+// ─── explore ──────────────────────────────────────────────────
+
+program
+  .command("explore <entity>")
+  .description("Explore entity connections in the knowledge graph")
+  .option("-d, --depth <n>", "Traversal depth (1-3)", "1")
+  .option("-t, --type <type>", "Filter by relationship type")
+  .action(async (entity, opts) => {
+    const { exploreEntity } = await import("../graph/search.js");
+    const config = loadConfig();
+    const db = initDatabase(config);
+    try {
+      const depth = parseInt(opts.depth, 10);
+      const result = exploreEntity(db, {
+        entity,
+        depth: Math.min(Math.max(depth, 1), 3),
+        relationshipTypes: opts.type ? [opts.type] : undefined,
+      });
+      console.log(`\n${result.centerEntity.name} (${result.centerEntity.type})`);
+      if (result.centerEntity.description) {
+        console.log(`  ${result.centerEntity.description}`);
+      }
+      console.log(`  Mentions: ${result.centerEntity.mentionCount}\n`);
+      if (result.neighbors.length === 0) {
+        console.log("  No connections found.");
+        return;
+      }
+      console.log("  Connections:");
+      for (const n of result.neighbors) {
+        const dir = n.relationship.direction === "outgoing" ? "->" : "<-";
+        console.log(
+          `    ${dir} ${n.relationship.type} ${n.entity.name} (${n.entity.type}, weight: ${n.relationship.weight.toFixed(2)}, depth: ${n.depth})`,
+        );
+        if (n.relationship.context) {
+          console.log(`      ${n.relationship.context}`);
+        }
+      }
+      if (result.community) {
+        console.log(
+          `\n  Community: ${result.community.name} (${result.community.entityCount} entities)`,
+        );
+      }
+    } finally {
+      db.close();
     }
   });
 
