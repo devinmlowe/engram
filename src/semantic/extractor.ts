@@ -313,6 +313,30 @@ async function callExtraction(
   prompt: string,
   model: string,
 ): Promise<{ facts: ExtractedFact[]; model: string }> {
+  // Local model route: use intelligence layer instead of Anthropic SDK
+  if (model === "local") {
+    const { generateStructured, buildIntelligenceConfig } = await import(
+      "../dream/intelligence.js"
+    );
+    const { loadConfig } = await import("../core/config.js");
+    const config = loadConfig();
+    const intelligenceConfig = buildIntelligenceConfig(config);
+
+    // Build a JSON schema matching the EXTRACT_MEMORIES_TOOL input schema
+    const schema = EXTRACT_MEMORIES_TOOL.input_schema;
+
+    const result = await generateStructured<{ facts: unknown[] }>(
+      "You are a memory extraction system. Extract facts from the conversation.",
+      prompt,
+      schema as Record<string, unknown>,
+      intelligenceConfig,
+    );
+
+    const facts = parseExtractionResponse({ facts: result.result.facts });
+    return { facts, model: result.model };
+  }
+
+  // API route: use Anthropic SDK
   if (!client) {
     throw new Error(
       "Extractor not initialized. Call initExtractor() first.",
@@ -523,10 +547,12 @@ function resolveModels(
     case "sonnet":
       return [{ model: FALLBACK_MODEL, tier: "sonnet" }];
     case "local":
-      // Local tier not yet implemented (Phase 4)
-      throw new Error(
-        "Local extraction tier not yet implemented. Use 'haiku', 'sonnet', or 'auto'.",
-      );
+      // Local tier: try local model first, fall back to Haiku → Sonnet
+      return [
+        { model: "local", tier: "local" },
+        { model: DEFAULT_MODEL, tier: "haiku" },
+        { model: FALLBACK_MODEL, tier: "sonnet" },
+      ];
     case "auto":
     default:
       return [
