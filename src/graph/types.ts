@@ -78,6 +78,102 @@ export interface EdgeWeightFactors {
   targetImportance: number;
 }
 
+// ─── Community Naming ──────────────────────────────────────────
+
+export interface CommunityNaming {
+  communityId: number;
+  name: string;
+  description: string;
+  topicKeywords: string[];
+}
+
+// ─── Bridge Scores ─────────────────────────────────────────────
+
+export interface BridgeScore {
+  entityId: string;
+  entityName: string;
+  entityType: EntityType;
+  betweenness: number;
+  communitySpan: number;
+  bridgeScore: number;
+  narrative?: string;
+  generation: number;
+}
+
+// ─── Temporal Patterns ─────────────────────────────────────────
+
+export type TemporalPatternType =
+  | "entity_burst"
+  | "community_shift"
+  | "phase_transition"
+  | "topic_emergence"
+  | "topic_decay"
+  | "bridge_formation";
+
+export interface TemporalPattern {
+  id: string;
+  type: TemporalPatternType;
+  description: string;
+  entityIds: string[];
+  timeStart: number;
+  timeEnd: number;
+  confidence: number;
+  metadata: Record<string, unknown>;
+  generation: number;
+}
+
+// ─── Reflection Observations ───────────────────────────────────
+
+export type ObservationType =
+  | "community_summary"
+  | "bridge_narrative"
+  | "temporal_insight"
+  | "growth_observation"
+  | "quality_assessment";
+
+export interface ReflectionObservation {
+  id: string;
+  type: ObservationType;
+  content: string;
+  relatedEntityIds: string[];
+  confidence: number;
+  generation: number;
+}
+
+// ─── Reflect Result (MCP tool output) ──────────────────────────
+
+export interface ReflectResult {
+  communities: Array<{
+    name: string;
+    description: string;
+    entityCount: number;
+    coherenceScore: number;
+    topEntities: Array<{ name: string; type: EntityType }>;
+    memoryCount: number;
+  }>;
+  bridges: Array<{
+    entityName: string;
+    entityType: EntityType;
+    bridgeScore: number;
+    communitySpan: number;
+    narrative?: string;
+    connectedCommunities: string[];
+  }>;
+  temporalPatterns: TemporalPattern[];
+  health: {
+    totalNodes: number;
+    totalEdges: number;
+    modularity: number;
+    communityCount: number;
+    orphanNodes: number;
+    averageCoherence: number;
+    generationCount: number;
+  };
+  observations: ReflectionObservation[];
+  generation: number;
+  generatedAt: number;
+}
+
 // ─── Explore Query ──────────────────────────────────────────────
 
 export interface ExploreOptions {

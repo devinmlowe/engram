@@ -205,6 +205,14 @@ export interface DreamReport {
   newRelationships: number;
   conflictsDetected: number;
   memoriesPruned: number;
+  // Phase 6: Reflection & Emergence metrics
+  communitiesNamed?: number;
+  bridgesIdentified?: number;
+  temporalPatternsDetected?: number;
+  observationsGenerated?: number;
+  entitiesMerged?: number;
+  orphansPruned?: number;
+  clustersPruned?: number;
 }
 
 // ─── Configuration ──────────────────────────────────────────────

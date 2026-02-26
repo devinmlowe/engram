@@ -217,6 +217,67 @@ function createSchema(db: Database.Database, config: EngramConfig): void {
     );
 
     CREATE INDEX IF NOT EXISTS idx_dream_checkpoints_run ON dream_checkpoints(run_id, phase);
+
+    -- ═══════════════════════════════════════════════════════════════
+    -- PHASE 6: REFLECTION & EMERGENCE
+    -- Bridge scores, temporal patterns, reflection observations
+    -- ═══════════════════════════════════════════════════════════════
+
+    -- Bridge entity scores per dream generation
+    CREATE TABLE IF NOT EXISTS bridge_scores (
+      entity_id TEXT NOT NULL REFERENCES entities(id),
+      betweenness REAL NOT NULL,
+      community_span INTEGER NOT NULL,
+      bridge_score REAL NOT NULL,
+      narrative TEXT,
+      generation INTEGER NOT NULL,
+      created_at INTEGER DEFAULT (unixepoch()),
+      PRIMARY KEY (entity_id, generation)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_bridge_scores_generation
+      ON bridge_scores(generation);
+    CREATE INDEX IF NOT EXISTS idx_bridge_scores_score
+      ON bridge_scores(bridge_score DESC);
+
+    -- Detected temporal patterns
+    CREATE TABLE IF NOT EXISTS temporal_patterns (
+      id TEXT PRIMARY KEY,
+      type TEXT NOT NULL CHECK(type IN (
+        'entity_burst', 'community_shift', 'phase_transition',
+        'topic_emergence', 'topic_decay', 'bridge_formation'
+      )),
+      description TEXT NOT NULL,
+      entity_ids TEXT,
+      time_start INTEGER,
+      time_end INTEGER,
+      confidence REAL DEFAULT 0.5,
+      metadata TEXT,
+      generation INTEGER NOT NULL,
+      created_at INTEGER DEFAULT (unixepoch())
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_temporal_patterns_generation
+      ON temporal_patterns(generation);
+    CREATE INDEX IF NOT EXISTS idx_temporal_patterns_type
+      ON temporal_patterns(type);
+
+    -- Higher-order observations from reflection
+    CREATE TABLE IF NOT EXISTS reflection_observations (
+      id TEXT PRIMARY KEY,
+      type TEXT NOT NULL CHECK(type IN (
+        'community_summary', 'bridge_narrative', 'temporal_insight',
+        'growth_observation', 'quality_assessment'
+      )),
+      content TEXT NOT NULL,
+      related_entity_ids TEXT,
+      confidence REAL DEFAULT 0.7,
+      generation INTEGER NOT NULL,
+      created_at INTEGER DEFAULT (unixepoch())
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_reflection_obs_generation
+      ON reflection_observations(generation);
   `);
 
   // FTS5 virtual tables (created separately — can't use IF NOT EXISTS)
