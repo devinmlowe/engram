@@ -7,6 +7,7 @@ import type {
 } from "../core/types.js";
 import { embedQuery } from "./embeddings.js";
 import { searchSemantic } from "../semantic/search.js";
+import { searchGraph } from "../graph/search.js";
 
 // ─── RRF Fusion ────────────────────────────────────────────────
 
@@ -91,7 +92,7 @@ export function budgetResults(
 
 // ─── XML Formatting ────────────────────────────────────────────
 
-function escapeXml(text: string): string {
+export function escapeXml(text: string): string {
   return text
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -121,7 +122,25 @@ function formatSemanticXml(result: SearchResult): string {
 }
 
 /**
- * Format recall results as XML, supporting both episodic and semantic sources.
+ * Format a single graph result as an XML element.
+ */
+function formatGraphXml(result: SearchResult): string {
+  const meta = result.metadata as Record<string, unknown>;
+  const entityName = (meta.entityName as string) || "";
+  const entityType = (meta.entityType as string) || "";
+  const score = Math.round(result.score * 100);
+
+  const lines: string[] = [];
+  lines.push(
+    `  <graph entity="${escapeXml(entityName)}" type="${escapeXml(entityType)}" relevance="${score}%">`,
+  );
+  lines.push(`    ${escapeXml(result.content)}`);
+  lines.push("  </graph>");
+  return lines.join("\n");
+}
+
+/**
+ * Format recall results as XML, supporting episodic, semantic, and graph sources.
  */
 export function formatRecallXml(response: RecallResponse): string {
   const lines: string[] = [];
@@ -132,6 +151,8 @@ export function formatRecallXml(response: RecallResponse): string {
   for (const result of response.results) {
     if (result.source === "semantic") {
       lines.push(formatSemanticXml(result));
+    } else if (result.source === "graph") {
+      lines.push(formatGraphXml(result));
     } else {
       // Episodic format
       const meta = result.metadata as Record<string, string>;
@@ -395,16 +416,16 @@ export async function searchEpisodic(
 const SEMANTIC_BOOST = 1.2;
 
 /**
- * Search across multiple memory sources (episodic + semantic) with
+ * Search across multiple memory sources (episodic + semantic + graph) with
  * cross-source RRF fusion.
  *
  * Pipeline:
- * 1. Determine which sources to query (default: both)
- * 2. Run episodic and semantic search in parallel
+ * 1. Determine which sources to query (default: episodic + semantic)
+ * 2. Run episodic, semantic, and graph search in parallel
  * 3. Apply semantic boost (1.2x) before cross-source RRF
- * 4. Fuse with RRF across sources
+ * 4. Fuse episodic + semantic with RRF, append graph results
  * 5. Normalize combined results
- * 6. Apply token budget: semantic first (higher value per token), then episodic
+ * 6. Apply token budget: semantic first, then graph, then episodic
  * 7. Return RecallResponse
  */
 export async function searchMultiSource(
@@ -420,28 +441,34 @@ export async function searchMultiSource(
 
   const includeEpisodic = sources.includes("episodic");
   const includeSemantic = sources.includes("semantic");
+  const includeGraph = sources.includes("graph");
 
   // 1-2. Run searches in parallel
-  const [episodicResponse, semanticResults] = await Promise.all([
+  const [episodicResponse, semanticResults, graphResults] = await Promise.all([
     includeEpisodic
       ? searchEpisodic(db, options)
       : Promise.resolve({ results: [], tokensUsed: 0, totalResults: 0, query }),
     includeSemantic
       ? searchSemantic(db, options)
       : Promise.resolve([] as SearchResult[]),
+    includeGraph
+      ? searchGraph(db, options)
+      : Promise.resolve([] as SearchResult[]),
   ]);
 
-  // If only one source, short-circuit
-  if (!includeSemantic) {
-    return episodicResponse;
-  }
-  if (!includeEpisodic) {
-    const budgeted = budgetResults(semanticResults, budget);
+  // Short-circuit: single source only
+  const activeSources = [includeEpisodic, includeSemantic, includeGraph].filter(Boolean).length;
+
+  if (activeSources === 1) {
+    if (includeEpisodic) return episodicResponse;
+
+    const singleResults = includeSemantic ? semanticResults : graphResults;
+    const budgeted = budgetResults(singleResults, budget);
     const tokensUsed = budgeted.reduce((sum, r) => sum + r.tokenEstimate, 0);
     return {
       results: budgeted,
       tokensUsed,
-      totalResults: semanticResults.length,
+      totalResults: singleResults.length,
       query,
     };
   }
@@ -464,7 +491,7 @@ export async function searchMultiSource(
     rank: idx + 1,
   }));
 
-  // 4. Cross-source RRF fusion
+  // 4. Cross-source RRF fusion (episodic + semantic)
   const fused = rrfFuse(episodicRanked, semanticRanked);
 
   // 5. Normalize
@@ -476,7 +503,7 @@ export async function searchMultiSource(
   );
   const semanticMap = new Map(semanticResults.map((r) => [r.id, r]));
 
-  // Assemble final results in RRF order
+  // Assemble episodic+semantic results in RRF order
   const allResults: SearchResult[] = [];
   for (const item of fused.slice(0, limit * 2)) {
     const semanticResult = semanticMap.get(item.id);
@@ -489,12 +516,18 @@ export async function searchMultiSource(
     }
   }
 
+  // Append graph results (already scored by their own search)
+  for (const gResult of graphResults) {
+    allResults.push(gResult);
+  }
+
   const totalResults = allResults.length;
 
-  // 6. Apply token budget: semantic first (higher value per token), then episodic
+  // 6. Apply token budget: semantic first, then graph (compact), then episodic
   const semanticFirst = allResults.filter((r) => r.source === "semantic");
-  const episodicSecond = allResults.filter((r) => r.source === "episodic");
-  const prioritized = [...semanticFirst, ...episodicSecond];
+  const graphSecond = allResults.filter((r) => r.source === "graph");
+  const episodicThird = allResults.filter((r) => r.source === "episodic");
+  const prioritized = [...semanticFirst, ...graphSecond, ...episodicThird];
 
   const budgeted = budgetResults(prioritized, budget);
   const tokensUsed = budgeted.reduce((sum, r) => sum + r.tokenEstimate, 0);
