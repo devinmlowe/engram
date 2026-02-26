@@ -749,6 +749,7 @@ engram/
 - Import script for superpowers database
 - Re-embed all historical exchanges
 - Verify search quality against known queries
+- Revisit score normalization — RRF fusion scores (2-3%) are unintuitive despite correct ranking; see [docs/score-normalization.md](docs/score-normalization.md)
 - **Milestone**: All historical data accessible via new system
 
 ### Phase 3: Semantic Extraction
