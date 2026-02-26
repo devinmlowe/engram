@@ -328,8 +328,7 @@ describe("Entity CRUD", () => {
   });
 
   describe("ftsSearchEntities", () => {
-    it("returns empty array when FTS table does not exist", () => {
-      // The default test DB doesn't have entities_fts
+    it("returns empty array for non-matching query", () => {
       const entity = createTestEntity({
         id: "ent-fts-1",
         name: "TypeScript",
@@ -337,22 +336,11 @@ describe("Entity CRUD", () => {
       });
       insertEntity(t.db, entity, randomEmbedding());
 
-      const results = ftsSearchEntities(t.db, "TypeScript");
+      const results = ftsSearchEntities(t.db, "Kubernetes");
       expect(results).toEqual([]);
     });
 
-    it("finds inserted entity when FTS table exists", () => {
-      // Manually create the FTS table for this test
-      t.db.exec(`
-        CREATE VIRTUAL TABLE IF NOT EXISTS entities_fts USING fts5(
-          name,
-          description,
-          content='entities',
-          content_rowid='rowid',
-          tokenize='porter unicode61'
-        )
-      `);
-
+    it("finds inserted entity by name", () => {
       const entity = createTestEntity({
         id: "ent-fts-2",
         name: "Kubernetes",

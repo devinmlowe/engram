@@ -332,51 +332,68 @@ export function mergeEntities(
     const keepEntity = rowToEntity(keepRow);
     const mergeEntity = rowToEntity(mergeRow);
 
-    // 1. Repoint relationships where source = mergeId
+    // 1. Pre-dedup: delete merge entity's edges that would conflict with
+    //    keep entity's existing edges after repointing (unique constraint).
+    //    For each mergeId edge, check if keepId already has an equivalent edge
+    //    (same target/source and type). If so, delete the lower-weight one.
+
+    // Outgoing edges from mergeId that would conflict with keepId's outgoing
+    const mergeOutgoing = db
+      .prepare(
+        "SELECT id, target_entity_id, type, weight FROM relationships WHERE source_entity_id = ?",
+      )
+      .all(mergeId) as Array<{ id: string; target_entity_id: string; type: string; weight: number }>;
+
+    for (const edge of mergeOutgoing) {
+      const keepEdge = db
+        .prepare(
+          "SELECT id, weight FROM relationships WHERE source_entity_id = ? AND target_entity_id = ? AND type = ?",
+        )
+        .get(keepId, edge.target_entity_id, edge.type) as { id: string; weight: number } | undefined;
+
+      if (keepEdge) {
+        // Conflict: delete the lower-weight edge
+        if (edge.weight > keepEdge.weight) {
+          db.prepare("DELETE FROM relationships WHERE id = ?").run(keepEdge.id);
+        } else {
+          db.prepare("DELETE FROM relationships WHERE id = ?").run(edge.id);
+        }
+      }
+    }
+
+    // Incoming edges to mergeId that would conflict with keepId's incoming
+    const mergeIncoming = db
+      .prepare(
+        "SELECT id, source_entity_id, type, weight FROM relationships WHERE target_entity_id = ?",
+      )
+      .all(mergeId) as Array<{ id: string; source_entity_id: string; type: string; weight: number }>;
+
+    for (const edge of mergeIncoming) {
+      const keepEdge = db
+        .prepare(
+          "SELECT id, weight FROM relationships WHERE source_entity_id = ? AND target_entity_id = ? AND type = ?",
+        )
+        .get(edge.source_entity_id, keepId, edge.type) as { id: string; weight: number } | undefined;
+
+      if (keepEdge) {
+        // Conflict: delete the lower-weight edge
+        if (edge.weight > keepEdge.weight) {
+          db.prepare("DELETE FROM relationships WHERE id = ?").run(keepEdge.id);
+        } else {
+          db.prepare("DELETE FROM relationships WHERE id = ?").run(edge.id);
+        }
+      }
+    }
+
+    // 2. Repoint remaining relationships where source = mergeId
     db.prepare(
       "UPDATE relationships SET source_entity_id = ? WHERE source_entity_id = ?",
     ).run(keepId, mergeId);
 
-    // 2. Repoint relationships where target = mergeId
+    // 3. Repoint remaining relationships where target = mergeId
     db.prepare(
       "UPDATE relationships SET target_entity_id = ? WHERE target_entity_id = ?",
     ).run(keepId, mergeId);
-
-    // 3. Deduplicate edges: for each (source, target, type) group with duplicates,
-    //    keep the one with higher weight and delete the rest
-    const duplicates = db
-      .prepare(`
-        SELECT source_entity_id, target_entity_id, type, COUNT(*) as cnt
-        FROM relationships
-        WHERE source_entity_id = ? OR target_entity_id = ?
-        GROUP BY source_entity_id, target_entity_id, type
-        HAVING cnt > 1
-      `)
-      .all(keepId, keepId) as Array<{
-      source_entity_id: string;
-      target_entity_id: string;
-      type: string;
-      cnt: number;
-    }>;
-
-    for (const dup of duplicates) {
-      // Get all edges in this group, sorted by weight desc
-      const edges = db
-        .prepare(`
-          SELECT id, weight FROM relationships
-          WHERE source_entity_id = ? AND target_entity_id = ? AND type = ?
-          ORDER BY weight DESC
-        `)
-        .all(dup.source_entity_id, dup.target_entity_id, dup.type) as Array<{
-        id: string;
-        weight: number;
-      }>;
-
-      // Delete all but the first (highest weight)
-      for (let i = 1; i < edges.length; i++) {
-        db.prepare("DELETE FROM relationships WHERE id = ?").run(edges[i].id);
-      }
-    }
 
     // 4. Transfer aliases from merged entity and add merged name as alias
     const combinedAliases = new Set([

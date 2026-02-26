@@ -163,6 +163,20 @@ function createSchema(db: Database.Database, config: EngramConfig): void {
     CREATE INDEX IF NOT EXISTS idx_relationships_target ON relationships(target_entity_id);
     CREATE INDEX IF NOT EXISTS idx_relationships_type ON relationships(type);
 
+    -- Unique constraint: prevent duplicate edges (same source, target, type)
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_rel_unique_edge
+      ON relationships(source_entity_id, target_entity_id, type);
+
+    -- Composite indexes for bidirectional traversal
+    CREATE INDEX IF NOT EXISTS idx_rel_source_target
+      ON relationships(source_entity_id, target_entity_id);
+    CREATE INDEX IF NOT EXISTS idx_rel_target_source
+      ON relationships(target_entity_id, source_entity_id);
+
+    -- Case-insensitive name index
+    CREATE INDEX IF NOT EXISTS idx_entities_name_lower
+      ON entities(name COLLATE NOCASE);
+
     CREATE TABLE IF NOT EXISTS topic_clusters (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -221,6 +235,16 @@ function createSchema(db: Database.Database, config: EngramConfig): void {
       content,
       context,
       content='memories',
+      content_rowid='rowid',
+      tokenize='porter unicode61'
+    )
+  `);
+
+  createFtsIfNeeded(db, "entities_fts", `
+    CREATE VIRTUAL TABLE entities_fts USING fts5(
+      name,
+      description,
+      content='entities',
       content_rowid='rowid',
       tokenize='porter unicode61'
     )
