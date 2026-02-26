@@ -746,11 +746,25 @@ engram/
 - **Milestone**: Drop-in replacement for current episodic-memory search
 
 ### Phase 2: Data Migration
-- Import script for superpowers database
-- Re-embed all historical exchanges
-- Verify search quality against known queries
-- Revisit score normalization — RRF fusion scores (2-3%) are unintuitive despite correct ranking; see [docs/score-normalization.md](docs/score-normalization.md)
-- **Milestone**: All historical data accessible via new system
+
+**Source**: `~/.config/superpowers/conversation-index/db.sqlite` — 7,660 exchanges, 145,386 tool calls, 36 projects, 384d embeddings (all-MiniLM-L6-v2)
+**Target**: `~/.local/share/engram/engram.db` — re-embedded at 256d (nomic-embed-text-v1.5), with FTS5
+
+**Exclusions**: The `double-shot-latte` project (4,055 exchanges, 53% of source) is excluded — it contains only automated conversation-state classifier infrastructure noise (zero human-authored exchanges, 86% error responses). See analysis in [docs/research/data-migration-strategy.md](docs/research/data-migration-strategy.md).
+
+**Effective migration scope**: ~3,605 exchanges, ~145K tool calls, ~35 projects. Estimated runtime: 3-6 minutes.
+
+Tasks:
+- Import script for superpowers database with double-shot-latte exclusion
+- Schema mapping: derive `conversation_id` from `basename(archive_path, '.jsonl')`, `exchange_index` from `line_start` ordering, `token_estimate` via chars/4 heuristic. See [docs/research/data-migration-strategy.md](docs/research/data-migration-strategy.md)
+- Fix Matryoshka truncation bug in `embeddings.ts` — missing `layer_norm` before slice. See [docs/research/data-migration-strategy.md](docs/research/data-migration-strategy.md)
+- Re-embed all historical exchanges with corrected nomic-embed-text-v1.5 pipeline (batch size 32, ~40-80 exchanges/sec). See [docs/research/sqlite-bulk-operations.md](docs/research/sqlite-bulk-operations.md)
+- Populate FTS5 via `rebuild` command after bulk insert (sub-second at this scale). See [docs/research/sqlite-bulk-operations.md](docs/research/sqlite-bulk-operations.md)
+- Build conversations table from `GROUP BY archive_path` aggregation
+- Score normalization: apply min-max with floor to RRF fusion scores for intuitive 0-100% display. See [docs/score-normalization.md](docs/score-normalization.md) and [docs/research/score-normalization-strategies.md](docs/research/score-normalization-strategies.md)
+- Verify search quality: NDCG@5 primary metric, A/B comparison against old system with 30-50 test queries. See [docs/research/search-quality-evaluation.md](docs/research/search-quality-evaluation.md)
+- Cross-encoder reranking available (`Xenova/bge-reranker-base`, ~50-150ms) but default OFF to isolate variables
+- **Milestone**: All historical data accessible via new system with improved search quality
 
 ### Phase 3: Semantic Extraction
 - Fact extraction pipeline (Claude Haiku)

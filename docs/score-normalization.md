@@ -60,6 +60,10 @@ Phase 3+ will add semantic and graph results to the `recall` response. The scori
 - Cormack et al., "Reciprocal Rank Fusion outperforms Condorcet and individual Rank Learning Methods" — original RRF paper, discusses score interpretation
 - Anthropic, "Introducing Contextual Retrieval" (2024) — contextual embeddings + BM25 fusion approach
 
+## Deep Research
+
+For comprehensive analysis of normalization strategies (CombSUM/CombMNZ, RSF, sigmoid scaling, production system survey, cross-source comparability), see [research/score-normalization-strategies.md](research/score-normalization-strategies.md).
+
 ## Recommendation
 
 The simplest fix for Phase 2 is min-max normalization within each result set:
