@@ -22,13 +22,13 @@ export interface ExtractionResult {
   conversationId: string;
   facts: ExtractedFact[];
   model: string;
-  tier: "local" | "haiku" | "sonnet";
+  tier: "local" | "openrouter" | "haiku" | "sonnet";
   confidence: number; // model self-reported confidence 1-10
   durationMs: number;
 }
 
 export interface ExtractionConfig {
-  tier: "local" | "haiku" | "sonnet" | "auto";
+  tier: "local" | "openrouter" | "haiku" | "sonnet" | "auto";
   reflexionEnabled: boolean;
   chunkSize: number;
   chunkOverlap: number;

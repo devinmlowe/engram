@@ -37,6 +37,8 @@ const VALID_MEMORY_TYPES: ReadonlySet<MemoryType> = new Set([
 
 const DEFAULT_MODEL = "claude-haiku-4-5-20251001";
 const FALLBACK_MODEL = "claude-sonnet-4-6";
+const DEFAULT_OPENROUTER_MODEL = "google/gemini-2.5-flash-lite";
+const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
 const DEFAULT_CONFIG: ExtractionConfig = {
   tier: "auto",
@@ -108,21 +110,27 @@ export interface ConversationMetadata {
 // ─── Initialization ─────────────────────────────────────────────
 
 /**
- * Initialize the Anthropic client for extraction.
- * Uses the provided API key, or falls back to ANTHROPIC_API_KEY env var.
+ * Initialize the extraction clients.
+ *
+ * Creates the Anthropic client if an API key is available.
+ * OpenRouter uses fetch directly and only needs OPENROUTER_API_KEY at call time.
+ * At least one provider (Anthropic or OpenRouter) must be configured.
  */
 export async function initExtractor(anthropicApiKey?: string): Promise<void> {
   if (client) return;
 
   const apiKey = anthropicApiKey ?? process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    throw new Error(
-      "Anthropic API key required for semantic extraction. " +
-        "Set ANTHROPIC_API_KEY environment variable or pass key to initExtractor().",
-    );
+  if (apiKey) {
+    client = new Anthropic({ apiKey });
   }
 
-  client = new Anthropic({ apiKey });
+  // Verify at least one extraction provider is available
+  if (!client && !process.env.OPENROUTER_API_KEY) {
+    throw new Error(
+      "No extraction provider configured. " +
+        "Set ANTHROPIC_API_KEY or OPENROUTER_API_KEY environment variable.",
+    );
+  }
 }
 
 /**
@@ -304,10 +312,115 @@ export function parseExtractionResponse(
   return facts;
 }
 
+// ─── OpenRouter Types ───────────────────────────────────────────
+
+interface OpenRouterMessage {
+  role: "system" | "user" | "assistant";
+  content: string;
+}
+
+interface OpenRouterToolCall {
+  id: string;
+  type: "function";
+  function: {
+    name: string;
+    arguments: string;
+  };
+}
+
+interface OpenRouterResponse {
+  choices: Array<{
+    message: {
+      role: string;
+      content?: string;
+      tool_calls?: OpenRouterToolCall[];
+    };
+  }>;
+  model: string;
+}
+
 // ─── LLM Extraction Call ────────────────────────────────────────
 
 /**
- * Call the Anthropic API for fact extraction with a specific model.
+ * Call OpenRouter's OpenAI-compatible API for fact extraction.
+ *
+ * Uses function calling (tool_use) to enforce structured JSON output,
+ * mirroring the Anthropic tool_use pattern but in OpenAI format.
+ */
+async function callOpenRouterExtraction(
+  prompt: string,
+): Promise<{ facts: ExtractedFact[]; model: string }> {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) {
+    throw new Error("OPENROUTER_API_KEY not set");
+  }
+
+  const model = process.env.ENGRAM_OPENROUTER_MODEL ?? DEFAULT_OPENROUTER_MODEL;
+
+  // Convert Anthropic tool schema to OpenAI function calling format
+  const toolDef = {
+    type: "function" as const,
+    function: {
+      name: EXTRACT_MEMORIES_TOOL.name,
+      description: EXTRACT_MEMORIES_TOOL.description,
+      parameters: EXTRACT_MEMORIES_TOOL.input_schema,
+    },
+  };
+
+  const messages: OpenRouterMessage[] = [
+    { role: "user", content: prompt },
+  ];
+
+  const response = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${apiKey}`,
+      "HTTP-Referer": "https://github.com/devinmlowe/engram",
+      "X-Title": "engram dream cycle",
+    },
+    body: JSON.stringify({
+      model,
+      messages,
+      tools: [toolDef],
+      tool_choice: { type: "function", function: { name: "extract_memories" } },
+      max_tokens: 4096,
+      temperature: 0,
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`OpenRouter API error ${response.status}: ${body}`);
+  }
+
+  const data = (await response.json()) as OpenRouterResponse;
+
+  // Extract function call arguments from the response
+  const toolCalls = data.choices?.[0]?.message?.tool_calls;
+  if (!toolCalls || toolCalls.length === 0) {
+    // Some models return the JSON directly in content instead of tool_calls
+    const content = data.choices?.[0]?.message?.content;
+    if (content) {
+      try {
+        const parsed = JSON.parse(content) as Record<string, unknown>;
+        const facts = parseExtractionResponse(parsed);
+        return { facts, model: data.model ?? model };
+      } catch {
+        return { facts: [], model: data.model ?? model };
+      }
+    }
+    return { facts: [], model: data.model ?? model };
+  }
+
+  const args = toolCalls[0].function.arguments;
+  const parsed = JSON.parse(args) as Record<string, unknown>;
+  const facts = parseExtractionResponse(parsed);
+  return { facts, model: data.model ?? model };
+}
+
+/**
+ * Call an LLM for fact extraction, routing by model identifier.
  */
 async function callExtraction(
   prompt: string,
@@ -336,10 +449,15 @@ async function callExtraction(
     return { facts, model: result.model };
   }
 
-  // API route: use Anthropic SDK
+  // OpenRouter route: use fetch with OpenAI-compatible function calling
+  if (model === "openrouter") {
+    return callOpenRouterExtraction(prompt);
+  }
+
+  // Anthropic API route: use Anthropic SDK
   if (!client) {
     throw new Error(
-      "Extractor not initialized. Call initExtractor() first.",
+      "Anthropic client not initialized. Set ANTHROPIC_API_KEY or use OpenRouter/local tier.",
     );
   }
 
@@ -452,10 +570,10 @@ function deduplicateFacts(
 /**
  * Extract structured facts from a conversation.
  *
- * Three-tier routing (when tier="auto"):
- * 1. Local tier — skipped (requires MLX, Phase 4 concern)
- * 2. Haiku — fast, cost-effective first attempt
- * 3. Sonnet — fallback if Haiku fails (rate limit, error)
+ * Multi-tier routing (when tier="auto"):
+ * 1. OpenRouter — cost-effective first attempt (Gemini 2.5 Flash Lite ~$11/batch)
+ * 2. Haiku — Anthropic fallback
+ * 3. Sonnet — final fallback if Haiku fails
  *
  * Chunks long conversations and optionally runs a reflexion pass
  * to catch missed facts.
@@ -469,18 +587,12 @@ export async function extractFromConversation(
   const cfg: ExtractionConfig = { ...DEFAULT_CONFIG, ...config };
   const startTime = Date.now();
 
-  if (!client) {
-    throw new Error(
-      "Extractor not initialized. Call initExtractor() first.",
-    );
-  }
-
   // Chunk if needed
   const chunks = chunkConversation(exchanges, cfg.chunkSize, cfg.chunkOverlap);
 
   let allFacts: ExtractedFact[] = [];
   let usedModel = DEFAULT_MODEL;
-  let usedTier: "local" | "haiku" | "sonnet" = "haiku";
+  let usedTier: "local" | "openrouter" | "haiku" | "sonnet" = "haiku";
 
   // Determine which model(s) to try
   const modelsToTry = resolveModels(cfg.tier);
@@ -537,27 +649,49 @@ export async function extractFromConversation(
 
 /**
  * Resolve which models to try based on tier configuration.
+ *
+ * In "auto" mode, OpenRouter is preferred when OPENROUTER_API_KEY is set,
+ * with Anthropic Haiku → Sonnet as fallbacks. This gives the cheapest
+ * extraction path (~$11 vs ~$90-120 for a full dream cycle).
  */
 function resolveModels(
   tier: ExtractionConfig["tier"],
-): Array<{ model: string; tier: "local" | "haiku" | "sonnet" }> {
+): Array<{ model: string; tier: "local" | "openrouter" | "haiku" | "sonnet" }> {
   switch (tier) {
     case "haiku":
       return [{ model: DEFAULT_MODEL, tier: "haiku" }];
     case "sonnet":
       return [{ model: FALLBACK_MODEL, tier: "sonnet" }];
+    case "openrouter":
+      return [
+        { model: "openrouter", tier: "openrouter" },
+        { model: DEFAULT_MODEL, tier: "haiku" },
+        { model: FALLBACK_MODEL, tier: "sonnet" },
+      ];
     case "local":
-      // Local tier: try local model first, fall back to Haiku → Sonnet
       return [
         { model: "local", tier: "local" },
+        { model: "openrouter", tier: "openrouter" },
         { model: DEFAULT_MODEL, tier: "haiku" },
         { model: FALLBACK_MODEL, tier: "sonnet" },
       ];
     case "auto":
-    default:
-      return [
-        { model: DEFAULT_MODEL, tier: "haiku" },
-        { model: FALLBACK_MODEL, tier: "sonnet" },
-      ];
+    default: {
+      const models: Array<{ model: string; tier: "local" | "openrouter" | "haiku" | "sonnet" }> = [];
+      // Prefer OpenRouter when available (10x cheaper than Haiku)
+      if (process.env.OPENROUTER_API_KEY) {
+        models.push({ model: "openrouter", tier: "openrouter" });
+      }
+      // Anthropic tiers as fallback
+      if (client) {
+        models.push({ model: DEFAULT_MODEL, tier: "haiku" });
+        models.push({ model: FALLBACK_MODEL, tier: "sonnet" });
+      }
+      // If nothing is configured, return Haiku as default (will error with helpful message)
+      if (models.length === 0) {
+        models.push({ model: DEFAULT_MODEL, tier: "haiku" });
+      }
+      return models;
+    }
   }
 }

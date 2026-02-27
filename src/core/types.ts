@@ -249,6 +249,7 @@ export interface EngramConfig {
 
   dream: {
     localModel?: string; // MLX model path
+    openrouterModel?: string; // OpenRouter model ID (e.g. google/gemini-2.5-flash-lite)
     apiModel: string; // claude haiku
     apiFallbackModel: string; // claude sonnet
     concurrency: number; // parallel work items

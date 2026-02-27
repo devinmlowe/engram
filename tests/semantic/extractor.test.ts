@@ -4,6 +4,7 @@ import {
   buildExtractionPrompt,
   parseExtractionResponse,
   extractFromConversation,
+  initExtractor,
   resetExtractor,
   setClient,
   type ConversationExchange,
@@ -381,12 +382,21 @@ describe("parseExtractionResponse", () => {
 // ─── extractFromConversation() with mocked Anthropic ─────────
 
 describe("extractFromConversation (mocked API)", () => {
+  let savedOpenRouterKey: string | undefined;
+
   beforeEach(() => {
     resetExtractor();
+    // Isolate tests from real OpenRouter API key so auto tier uses Anthropic path
+    savedOpenRouterKey = process.env.OPENROUTER_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
   });
 
   afterEach(() => {
     resetExtractor();
+    // Restore the key
+    if (savedOpenRouterKey !== undefined) {
+      process.env.OPENROUTER_API_KEY = savedOpenRouterKey;
+    }
   });
 
   it("returns correct ExtractionResult structure with mocked client", async () => {
@@ -508,11 +518,18 @@ describe("extractFromConversation (mocked API)", () => {
     expect(mockCreate).toHaveBeenCalledTimes(2);
   });
 
-  it("throws when no API client is initialized", async () => {
-    // resetExtractor was called in beforeEach, so client is null
-    await expect(
-      extractFromConversation("conv-err", makeExchanges(1), defaultMetadata),
-    ).rejects.toThrow("Extractor not initialized");
+  it("throws when no extraction provider is configured", async () => {
+    // resetExtractor was called in beforeEach and OPENROUTER_API_KEY is cleared.
+    // Also temporarily clear ANTHROPIC_API_KEY so no provider is available.
+    const savedAnthropicKey = process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    try {
+      await expect(initExtractor()).rejects.toThrow("No extraction provider configured");
+    } finally {
+      if (savedAnthropicKey !== undefined) {
+        process.env.ANTHROPIC_API_KEY = savedAnthropicKey;
+      }
+    }
   });
 
   it("returns empty facts and low confidence for conversations with no extractable content", async () => {

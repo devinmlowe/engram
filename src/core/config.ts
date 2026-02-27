@@ -97,6 +97,8 @@ export function loadConfig(overrides?: Partial<EngramConfig>): EngramConfig {
       ...overrides?.dream,
       localModel:
         env.ENGRAM_LOCAL_MODEL ?? overrides?.dream?.localModel ?? undefined,
+      openrouterModel:
+        env.ENGRAM_OPENROUTER_MODEL ?? overrides?.dream?.openrouterModel ?? undefined,
     },
 
     decay: {

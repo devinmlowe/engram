@@ -15,6 +15,7 @@ import type { EngramConfig } from "../core/types.js";
 export interface IntelligenceConfig {
   ollamaUrl: string;
   ollamaModel: string;
+  openrouterModel?: string;
   apiModel: string;
   apiFallbackModel: string;
   timeoutMs: number;
@@ -68,6 +69,8 @@ function getClient(): Anthropic {
 
 const DEFAULT_OLLAMA_URL = "http://localhost:11434";
 const DEFAULT_OLLAMA_MODEL = "qwen2.5:7b";
+const DEFAULT_OPENROUTER_MODEL = "google/gemini-2.5-flash-lite";
+const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const DEFAULT_TIMEOUT_MS = 120_000;
 const AVAILABILITY_TIMEOUT_MS = 5_000;
 
@@ -85,6 +88,9 @@ export function buildIntelligenceConfig(
       process.env.OLLAMA_HOST ?? DEFAULT_OLLAMA_URL,
     ollamaModel:
       config.dream.localModel ?? DEFAULT_OLLAMA_MODEL,
+    openrouterModel:
+      config.dream.openrouterModel ??
+      (process.env.OPENROUTER_API_KEY ? DEFAULT_OPENROUTER_MODEL : undefined),
     apiModel: config.dream.apiModel,
     apiFallbackModel: config.dream.apiFallbackModel,
     timeoutMs: DEFAULT_TIMEOUT_MS,
@@ -254,6 +260,152 @@ async function ollamaGenerate(
   }
 }
 
+// ─── OpenRouter (Cloud Fallback) ─────────────────────────────────
+
+/**
+ * Structured generation via OpenRouter's OpenAI-compatible API.
+ *
+ * Uses function calling to enforce schema. Returns null on failure
+ * so the caller can fall through to the next tier.
+ */
+async function openrouterGenerateStructured<T>(
+  systemPrompt: string,
+  userPrompt: string,
+  schema: Record<string, unknown>,
+  config: IntelligenceConfig,
+): Promise<GenerationResult<T> | null> {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey || !config.openrouterModel) return null;
+
+  try {
+    const startMs = Date.now();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), config.timeoutMs);
+
+    const response = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+        "HTTP-Referer": "https://github.com/devinmlowe/engram",
+        "X-Title": "engram dream cycle",
+      },
+      body: JSON.stringify({
+        model: config.openrouterModel,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+        tools: [{
+          type: "function",
+          function: {
+            name: "structured_output",
+            description: "Return structured data matching the schema",
+            parameters: { type: "object", ...schema },
+          },
+        }],
+        tool_choice: { type: "function", function: { name: "structured_output" } },
+        max_tokens: 4096,
+        temperature: 0,
+      }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    if (!response.ok) return null;
+
+    const data = (await response.json()) as {
+      choices?: Array<{
+        message: {
+          content?: string;
+          tool_calls?: Array<{ function: { arguments: string } }>;
+        };
+      }>;
+      model?: string;
+    };
+
+    const toolCalls = data.choices?.[0]?.message?.tool_calls;
+    let parsed: T;
+
+    if (toolCalls && toolCalls.length > 0) {
+      parsed = JSON.parse(toolCalls[0].function.arguments) as T;
+    } else {
+      // Some models return JSON in content instead of tool_calls
+      const content = data.choices?.[0]?.message?.content;
+      if (!content) return null;
+      parsed = JSON.parse(content) as T;
+    }
+
+    return {
+      result: parsed,
+      source: "api",
+      model: data.model ?? config.openrouterModel,
+      durationMs: Date.now() - startMs,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Free-text generation via OpenRouter.
+ * Returns null on failure so the caller can fall through.
+ */
+async function openrouterGenerate(
+  systemPrompt: string,
+  userPrompt: string,
+  config: IntelligenceConfig,
+): Promise<GenerationResult<string> | null> {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey || !config.openrouterModel) return null;
+
+  try {
+    const startMs = Date.now();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), config.timeoutMs);
+
+    const response = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+        "HTTP-Referer": "https://github.com/devinmlowe/engram",
+        "X-Title": "engram dream cycle",
+      },
+      body: JSON.stringify({
+        model: config.openrouterModel,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+        max_tokens: 4096,
+        temperature: 0,
+      }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    if (!response.ok) return null;
+
+    const data = (await response.json()) as {
+      choices?: Array<{ message: { content?: string } }>;
+      model?: string;
+    };
+
+    const content = data.choices?.[0]?.message?.content;
+    if (!content) return null;
+
+    return {
+      result: content,
+      source: "api",
+      model: data.model ?? config.openrouterModel,
+      durationMs: Date.now() - startMs,
+    };
+  } catch {
+    return null;
+  }
+}
+
 // ─── API Fallback (Claude) ───────────────────────────────────────
 
 /**
@@ -369,8 +521,7 @@ async function apiGenerate(
 /**
  * Generate structured output (JSON matching a schema).
  *
- * Attempts local Ollama generation first. If Ollama is unavailable
- * or fails, falls back to the Claude API with tool_use.
+ * Tier cascade: Ollama (local) → OpenRouter (cheap cloud) → Anthropic API.
  */
 export async function generateStructured<T>(
   systemPrompt: string,
@@ -378,7 +529,7 @@ export async function generateStructured<T>(
   schema: Record<string, unknown>,
   config: IntelligenceConfig,
 ): Promise<GenerationResult<T>> {
-  // Try Ollama first
+  // Tier 1: Try Ollama (local, free)
   const available = await isOllamaAvailable(config);
   if (available) {
     const localResult = await ollamaGenerateStructured<T>(
@@ -392,22 +543,32 @@ export async function generateStructured<T>(
     }
   }
 
-  // Fall back to API
+  // Tier 2: Try OpenRouter (cheap cloud)
+  const openrouterResult = await openrouterGenerateStructured<T>(
+    systemPrompt,
+    userPrompt,
+    schema,
+    config,
+  );
+  if (openrouterResult) {
+    return openrouterResult;
+  }
+
+  // Tier 3: Fall back to Anthropic API
   return apiGenerateStructured<T>(systemPrompt, userPrompt, schema, config);
 }
 
 /**
  * Generate a free-text response.
  *
- * Attempts local Ollama generation first. If Ollama is unavailable
- * or fails, falls back to the Claude API.
+ * Tier cascade: Ollama (local) → OpenRouter (cheap cloud) → Anthropic API.
  */
 export async function generate(
   systemPrompt: string,
   userPrompt: string,
   config: IntelligenceConfig,
 ): Promise<GenerationResult<string>> {
-  // Try Ollama first
+  // Tier 1: Try Ollama (local, free)
   const available = await isOllamaAvailable(config);
   if (available) {
     const localResult = await ollamaGenerate(
@@ -420,6 +581,16 @@ export async function generate(
     }
   }
 
-  // Fall back to API
+  // Tier 2: Try OpenRouter (cheap cloud)
+  const openrouterResult = await openrouterGenerate(
+    systemPrompt,
+    userPrompt,
+    config,
+  );
+  if (openrouterResult) {
+    return openrouterResult;
+  }
+
+  // Tier 3: Fall back to Anthropic API
   return apiGenerate(systemPrompt, userPrompt, config);
 }
