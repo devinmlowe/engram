@@ -7,9 +7,13 @@ import {
   detectTopicEmergence,
   detectTopicDecay,
   trackCommunityEvolution,
+  detectPhaseTransitions,
+  detectBridgeFormation,
   analyzeTemporalPatterns,
   persistTemporalPatterns,
   getTemporalPatterns,
+  DEFAULT_TEMPORAL_CONFIG,
+  _test,
 } from "../../src/graph/temporal.js";
 import type { TemporalPattern } from "../../src/graph/types.js";
 
@@ -18,17 +22,17 @@ import type { TemporalPattern } from "../../src/graph/types.js";
 const DAY = 86400; // seconds per day
 const NOW = Math.floor(Date.now() / 1000);
 
-// ─── Helpers ──────────────────────────────────────────────────────
+// ─── Test Helpers ─────────────────────────────────────────────────
 
-function insertEntity(
+function insertTestEntity(
   db: Database.Database,
   id: string,
   name: string,
-  opts: {
+  type: string = "concept",
+  overrides: {
     firstSeen?: number;
     lastSeen?: number;
     mentionCount?: number;
-    type?: string;
   } = {},
 ) {
   db.prepare(
@@ -37,12 +41,27 @@ function insertEntity(
   ).run(
     id,
     name,
-    opts.type ?? "concept",
-    opts.firstSeen ?? NOW,
-    opts.lastSeen ?? NOW,
-    opts.mentionCount ?? 1,
+    type,
+    overrides.firstSeen ?? NOW,
+    overrides.lastSeen ?? NOW,
+    overrides.mentionCount ?? 1,
     NOW,
   );
+}
+
+function insertTestRelationship(
+  db: Database.Database,
+  id: string,
+  source: string,
+  target: string,
+  type: string = "related_to",
+  weight: number = 1.0,
+  overrides: { createdAt?: number } = {},
+) {
+  db.prepare(
+    `INSERT INTO relationships (id, source_entity_id, target_entity_id, type, weight, source_memories, created_at)
+    VALUES (?, ?, ?, ?, ?, '[]', ?)`,
+  ).run(id, source, target, type, weight, overrides.createdAt ?? NOW);
 }
 
 function insertCluster(
@@ -56,6 +75,18 @@ function insertCluster(
     `INSERT INTO topic_clusters (id, name, entity_ids, memory_ids, coherence_score, created_at, updated_at, generation)
     VALUES (?, ?, ?, '[]', 0.5, ?, ?, ?)`,
   ).run(id, name, JSON.stringify(entityIds), NOW, NOW, generation);
+}
+
+function insertBridgeScore(
+  db: Database.Database,
+  entityId: string,
+  generation: number,
+  bridgeScore: number = 1.0,
+) {
+  db.prepare(
+    `INSERT INTO bridge_scores (entity_id, betweenness, community_span, bridge_score, generation)
+    VALUES (?, ?, ?, ?, ?)`,
+  ).run(entityId, 0.5, 2, bridgeScore, generation);
 }
 
 // ─── Tests ────────────────────────────────────────────────────────
@@ -74,22 +105,26 @@ describe("Temporal Pattern Analysis", () => {
   // ─── detectEntityBursts ───────────────────────────────────────
 
   describe("detectEntityBursts", () => {
-    it("detects a clear burst period exceeding 2x average", () => {
-      // Week 1: 2 entities (normal)
-      const week1Base = NOW - 21 * DAY;
-      insertEntity(t.db, "w1-a", "Week1 A", { firstSeen: week1Base });
-      insertEntity(t.db, "w1-b", "Week1 B", { firstSeen: week1Base + DAY });
+    it("detects entity with high recent rate triggering burst", () => {
+      // Use 5 windows so the burst can exceed 2x average.
+      // Windows 1-4: 1 entity each. Window 5: 8 entities.
+      // avg = (1+1+1+1+8)/5 = 2.4, threshold = 2*2.4 = 4.8
+      // 8 >= 4.8 -> burst detected
+      const windowSeconds = 7 * DAY;
+      const baseWindowIdx = Math.floor(NOW / windowSeconds) - 4;
 
-      // Week 2: 2 entities (normal)
-      const week2Base = NOW - 14 * DAY;
-      insertEntity(t.db, "w2-a", "Week2 A", { firstSeen: week2Base });
-      insertEntity(t.db, "w2-b", "Week2 B", { firstSeen: week2Base + DAY });
+      for (let w = 0; w < 4; w++) {
+        const ts = (baseWindowIdx + w) * windowSeconds + 100;
+        insertTestEntity(t.db, `normal-${w}`, `Normal ${w}`, "concept", {
+          firstSeen: ts,
+        });
+      }
 
-      // Week 3: 10 entities (BURST — 5x the normal rate of ~2)
-      const week3Base = NOW - 7 * DAY;
-      for (let i = 0; i < 10; i++) {
-        insertEntity(t.db, `w3-${i}`, `Week3 Entity ${i}`, {
-          firstSeen: week3Base + i * 1000,
+      // Burst window (the 5th window)
+      const burstStart = (baseWindowIdx + 4) * windowSeconds + 100;
+      for (let i = 0; i < 8; i++) {
+        insertTestEntity(t.db, `burst-${i}`, `Burst ${i}`, "concept", {
+          firstSeen: burstStart + i * 100,
         });
       }
 
@@ -97,25 +132,29 @@ describe("Temporal Pattern Analysis", () => {
 
       expect(patterns.length).toBeGreaterThanOrEqual(1);
 
-      const burstPattern = patterns.find(
-        (p) => p.entityIds.length === 10,
-      );
+      const burstPattern = patterns.find((p) => p.entityIds.length === 8);
       expect(burstPattern).toBeDefined();
       expect(burstPattern!.type).toBe("entity_burst");
-      expect(burstPattern!.entityIds.length).toBe(10);
+      expect(burstPattern!.entityIds.length).toBe(8);
       expect(burstPattern!.confidence).toBeGreaterThan(0.5);
       expect(burstPattern!.generation).toBe(1);
-      expect(burstPattern!.description).toContain("Burst of 10");
+      expect(burstPattern!.description).toContain("Burst of 8");
     });
 
     it("returns empty when all windows have similar counts", () => {
-      // 3 entities per week for 3 weeks — uniform, no bursts
+      const windowSeconds = 7 * DAY;
+      const baseWindowIdx = Math.floor(NOW / windowSeconds) - 2;
+
       for (let week = 0; week < 3; week++) {
-        const base = NOW - (3 - week) * 7 * DAY;
+        const base = (baseWindowIdx + week) * windowSeconds + 100;
         for (let i = 0; i < 3; i++) {
-          insertEntity(t.db, `w${week}-${i}`, `Week${week} Entity ${i}`, {
-            firstSeen: base + i * 1000,
-          });
+          insertTestEntity(
+            t.db,
+            `w${week}-${i}`,
+            `Week${week} Entity ${i}`,
+            "concept",
+            { firstSeen: base + i * 1000 },
+          );
         }
       }
 
@@ -129,9 +168,8 @@ describe("Temporal Pattern Analysis", () => {
     });
 
     it("returns empty when only one time window exists", () => {
-      // All entities in the same window — no baseline to compare against
       for (let i = 0; i < 10; i++) {
-        insertEntity(t.db, `ent-${i}`, `Entity ${i}`, {
+        insertTestEntity(t.db, `ent-${i}`, `Entity ${i}`, "concept", {
           firstSeen: NOW + i * 100,
         });
       }
@@ -141,14 +179,20 @@ describe("Temporal Pattern Analysis", () => {
     });
 
     it("includes correct time range in pattern", () => {
-      // Create a burst with known timing
-      const normalBase = NOW - 14 * DAY;
-      insertEntity(t.db, "normal-a", "Normal A", { firstSeen: normalBase });
+      const windowSeconds = 7 * DAY;
+      const baseWindowIdx = Math.floor(NOW / windowSeconds) - 4;
 
-      const burstBase = NOW - 7 * DAY;
-      for (let i = 0; i < 6; i++) {
-        insertEntity(t.db, `burst-${i}`, `Burst ${i}`, {
-          firstSeen: burstBase + i * 100,
+      for (let w = 0; w < 4; w++) {
+        const ts = (baseWindowIdx + w) * windowSeconds + 100;
+        insertTestEntity(t.db, `n-${w}`, `Normal ${w}`, "concept", {
+          firstSeen: ts,
+        });
+      }
+
+      const burstStart = (baseWindowIdx + 4) * windowSeconds + 100;
+      for (let i = 0; i < 8; i++) {
+        insertTestEntity(t.db, `b-${i}`, `Burst ${i}`, "concept", {
+          firstSeen: burstStart + i * 100,
         });
       }
 
@@ -166,17 +210,32 @@ describe("Temporal Pattern Analysis", () => {
   // ─── detectTopicEmergence ─────────────────────────────────────
 
   describe("detectTopicEmergence", () => {
-    it("detects clustered emergence when entities appear together", () => {
-      // 5 entities appear in the same 7-day window
-      const emergenceBase = NOW - 3 * DAY;
+    it("flags recently appeared entities with relationships", () => {
+      const windowSeconds = 7 * DAY;
+      const windowIdx = Math.floor(NOW / windowSeconds);
+      const windowStart = windowIdx * windowSeconds + 100;
+
       for (let i = 0; i < 5; i++) {
-        insertEntity(t.db, `cluster-${i}`, `Cluster Entity ${i}`, {
-          firstSeen: emergenceBase + i * 3600,
-        });
+        insertTestEntity(
+          t.db,
+          `cluster-${i}`,
+          `Cluster Entity ${i}`,
+          "concept",
+          { firstSeen: windowStart + i * 3600 },
+        );
       }
 
-      // 1 entity appears in a different window (isolated)
-      insertEntity(t.db, "loner", "Loner", {
+      // Add a relationship to boost confidence
+      insertTestRelationship(
+        t.db,
+        "rel-0-1",
+        "cluster-0",
+        "cluster-1",
+        "related_to",
+        1.0,
+      );
+
+      insertTestEntity(t.db, "loner", "Loner", "concept", {
         firstSeen: NOW - 30 * DAY,
       });
 
@@ -184,9 +243,7 @@ describe("Temporal Pattern Analysis", () => {
 
       expect(patterns.length).toBeGreaterThanOrEqual(1);
 
-      const emergence = patterns.find(
-        (p) => p.entityIds.length >= 5,
-      );
+      const emergence = patterns.find((p) => p.entityIds.length >= 5);
       expect(emergence).toBeDefined();
       expect(emergence!.type).toBe("topic_emergence");
       expect(emergence!.confidence).toBeGreaterThan(0.4);
@@ -194,9 +251,12 @@ describe("Temporal Pattern Analysis", () => {
     });
 
     it("respects minEntities threshold", () => {
-      // 2 entities — below minEntities of 3
-      insertEntity(t.db, "pair-a", "Pair A", { firstSeen: NOW });
-      insertEntity(t.db, "pair-b", "Pair B", { firstSeen: NOW + 100 });
+      insertTestEntity(t.db, "pair-a", "Pair A", "concept", {
+        firstSeen: NOW,
+      });
+      insertTestEntity(t.db, "pair-b", "Pair B", "concept", {
+        firstSeen: NOW + 100,
+      });
 
       const patterns = detectTopicEmergence(t.db, 7, 3, 1);
       expect(patterns.length).toBe(0);
@@ -208,35 +268,45 @@ describe("Temporal Pattern Analysis", () => {
     });
 
     it("shows entity names in description", () => {
-      insertEntity(t.db, "e1", "TypeScript", { firstSeen: NOW });
-      insertEntity(t.db, "e2", "React", { firstSeen: NOW + 100 });
-      insertEntity(t.db, "e3", "Node.js", { firstSeen: NOW + 200 });
+      const windowSeconds = 7 * DAY;
+      const windowIdx = Math.floor(NOW / windowSeconds);
+      const base = windowIdx * windowSeconds + 100;
+
+      insertTestEntity(t.db, "e1", "TypeScript", "concept", {
+        firstSeen: base,
+      });
+      insertTestEntity(t.db, "e2", "React", "concept", {
+        firstSeen: base + 100,
+      });
+      insertTestEntity(t.db, "e3", "Node.js", "concept", {
+        firstSeen: base + 200,
+      });
 
       const patterns = detectTopicEmergence(t.db, 7, 3, 1);
 
       expect(patterns.length).toBeGreaterThanOrEqual(1);
       const p = patterns[0];
-      // Should mention at least some entity names
       expect(
         p.description.includes("TypeScript") ||
-        p.description.includes("React") ||
-        p.description.includes("Node.js"),
+          p.description.includes("React") ||
+          p.description.includes("Node.js"),
       ).toBe(true);
     });
 
     it("detects multiple emergence windows", () => {
-      // Window 1: 3 entities
-      const base1 = NOW - 21 * DAY;
+      const windowSeconds = 7 * DAY;
+      const baseWindowIdx = Math.floor(NOW / windowSeconds) - 3;
+
+      const base1 = baseWindowIdx * windowSeconds + 100;
       for (let i = 0; i < 3; i++) {
-        insertEntity(t.db, `g1-${i}`, `Group1 ${i}`, {
+        insertTestEntity(t.db, `g1-${i}`, `Group1 ${i}`, "concept", {
           firstSeen: base1 + i * 100,
         });
       }
 
-      // Window 2: 4 entities
-      const base2 = NOW - 7 * DAY;
+      const base2 = (baseWindowIdx + 2) * windowSeconds + 100;
       for (let i = 0; i < 4; i++) {
-        insertEntity(t.db, `g2-${i}`, `Group2 ${i}`, {
+        insertTestEntity(t.db, `g2-${i}`, `Group2 ${i}`, "concept", {
           firstSeen: base2 + i * 100,
         });
       }
@@ -249,23 +319,21 @@ describe("Temporal Pattern Analysis", () => {
   // ─── detectTopicDecay ─────────────────────────────────────────
 
   describe("detectTopicDecay", () => {
-    it("detects entities that went stale together", () => {
-      // 4 entities last seen 60 days ago, mention_count >= 2
+    it("flags old inactive entities", () => {
       const staleTime = NOW - 60 * DAY;
       for (let i = 0; i < 4; i++) {
-        insertEntity(t.db, `stale-${i}`, `Stale Entity ${i}`, {
+        insertTestEntity(t.db, `stale-${i}`, `Stale Entity ${i}`, "concept", {
           firstSeen: staleTime - 30 * DAY,
           lastSeen: staleTime + i * 100,
           mentionCount: 3,
         });
       }
 
-      // 2 entities still active (last seen today)
-      insertEntity(t.db, "active-a", "Active A", {
+      insertTestEntity(t.db, "active-a", "Active A", "concept", {
         lastSeen: NOW,
         mentionCount: 5,
       });
-      insertEntity(t.db, "active-b", "Active B", {
+      insertTestEntity(t.db, "active-b", "Active B", "concept", {
         lastSeen: NOW,
         mentionCount: 5,
       });
@@ -274,8 +342,8 @@ describe("Temporal Pattern Analysis", () => {
 
       expect(patterns.length).toBeGreaterThanOrEqual(1);
 
-      const decay = patterns.find(
-        (p) => p.entityIds.some((id) => id.startsWith("stale-")),
+      const decay = patterns.find((p) =>
+        p.entityIds.some((id) => id.startsWith("stale-")),
       );
       expect(decay).toBeDefined();
       expect(decay!.type).toBe("topic_decay");
@@ -284,10 +352,9 @@ describe("Temporal Pattern Analysis", () => {
     });
 
     it("ignores entities with mention_count < 2", () => {
-      // Entities seen only once — shouldn't be flagged as "decayed"
       const staleTime = NOW - 60 * DAY;
       for (let i = 0; i < 5; i++) {
-        insertEntity(t.db, `once-${i}`, `Once Entity ${i}`, {
+        insertTestEntity(t.db, `once-${i}`, `Once Entity ${i}`, "concept", {
           firstSeen: staleTime,
           lastSeen: staleTime,
           mentionCount: 1,
@@ -299,9 +366,8 @@ describe("Temporal Pattern Analysis", () => {
     });
 
     it("does not flag recently active entities", () => {
-      // All entities recently active
       for (let i = 0; i < 5; i++) {
-        insertEntity(t.db, `recent-${i}`, `Recent ${i}`, {
+        insertTestEntity(t.db, `recent-${i}`, `Recent ${i}`, "concept", {
           lastSeen: NOW - 5 * DAY,
           mentionCount: 3,
         });
@@ -317,13 +383,12 @@ describe("Temporal Pattern Analysis", () => {
     });
 
     it("respects minEntities threshold", () => {
-      // Only 2 stale entities, below minEntities of 3
       const staleTime = NOW - 60 * DAY;
-      insertEntity(t.db, "stale-a", "Stale A", {
+      insertTestEntity(t.db, "stale-a", "Stale A", "concept", {
         lastSeen: staleTime,
         mentionCount: 3,
       });
-      insertEntity(t.db, "stale-b", "Stale B", {
+      insertTestEntity(t.db, "stale-b", "Stale B", "concept", {
         lastSeen: staleTime,
         mentionCount: 3,
       });
@@ -336,11 +401,8 @@ describe("Temporal Pattern Analysis", () => {
   // ─── trackCommunityEvolution ──────────────────────────────────
 
   describe("trackCommunityEvolution", () => {
-    it("detects community birth when no previous match exists", () => {
-      // Generation 1: one cluster
+    it("two generations with different compositions flagged", () => {
       insertCluster(t.db, "c1-gen1", "Backend Tools", ["e1", "e2", "e3"], 1);
-
-      // Generation 2: original plus a new cluster with completely different entities
       insertCluster(t.db, "c1-gen2", "Backend Tools", ["e1", "e2", "e3"], 2);
       insertCluster(
         t.db,
@@ -353,7 +415,8 @@ describe("Temporal Pattern Analysis", () => {
       const patterns = trackCommunityEvolution(t.db, 2);
 
       const birth = patterns.find(
-        (p) => (p.metadata as Record<string, unknown>).changeType === "birth",
+        (p) =>
+          (p.metadata as Record<string, unknown>).changeType === "birth",
       );
       expect(birth).toBeDefined();
       expect(birth!.type).toBe("community_shift");
@@ -362,17 +425,15 @@ describe("Temporal Pattern Analysis", () => {
     });
 
     it("detects community death when previous cluster disappears", () => {
-      // Generation 1: two clusters
       insertCluster(t.db, "c1-gen1", "Cluster Alpha", ["e1", "e2"], 1);
       insertCluster(t.db, "c2-gen1", "Cluster Beta", ["e5", "e6", "e7"], 1);
-
-      // Generation 2: only one cluster remains (Cluster Beta disappears)
       insertCluster(t.db, "c1-gen2", "Cluster Alpha", ["e1", "e2"], 2);
 
       const patterns = trackCommunityEvolution(t.db, 2);
 
       const death = patterns.find(
-        (p) => (p.metadata as Record<string, unknown>).changeType === "death",
+        (p) =>
+          (p.metadata as Record<string, unknown>).changeType === "death",
       );
       expect(death).toBeDefined();
       expect(death!.type).toBe("community_shift");
@@ -381,10 +442,7 @@ describe("Temporal Pattern Analysis", () => {
     });
 
     it("detects community growth", () => {
-      // Generation 1: small cluster
       insertCluster(t.db, "c1-gen1", "DevOps", ["e1", "e2", "e3"], 1);
-
-      // Generation 2: same cluster with additional entities
       insertCluster(
         t.db,
         "c1-gen2",
@@ -411,7 +469,6 @@ describe("Temporal Pattern Analysis", () => {
     });
 
     it("detects community contraction", () => {
-      // Generation 1: big cluster
       insertCluster(
         t.db,
         "c1-gen1",
@@ -419,15 +476,20 @@ describe("Temporal Pattern Analysis", () => {
         ["e1", "e2", "e3", "e4", "e5"],
         1,
       );
-
-      // Generation 2: same cluster shrank
-      insertCluster(t.db, "c1-gen2", "Testing Tools", ["e1", "e2", "e3"], 2);
+      insertCluster(
+        t.db,
+        "c1-gen2",
+        "Testing Tools",
+        ["e1", "e2", "e3"],
+        2,
+      );
 
       const patterns = trackCommunityEvolution(t.db, 2);
 
       const contraction = patterns.find(
         (p) =>
-          (p.metadata as Record<string, unknown>).changeType === "contraction",
+          (p.metadata as Record<string, unknown>).changeType ===
+          "contraction",
       );
       expect(contraction).toBeDefined();
       expect(contraction!.type).toBe("community_shift");
@@ -436,7 +498,6 @@ describe("Temporal Pattern Analysis", () => {
 
     it("returns empty for generation 1 (no previous to compare)", () => {
       insertCluster(t.db, "c1", "First Gen", ["e1", "e2"], 1);
-
       const patterns = trackCommunityEvolution(t.db, 1);
       expect(patterns.length).toBe(0);
     });
@@ -469,33 +530,167 @@ describe("Temporal Pattern Analysis", () => {
     });
   });
 
+  // ─── detectPhaseTransitions ───────────────────────────────────
+
+  describe("detectPhaseTransitions", () => {
+    it("detects phase transition between windows with different entity compositions", () => {
+      const windowSeconds = 7 * DAY;
+      const baseWindowIdx = Math.floor(NOW / windowSeconds) - 2;
+      const window1Time = baseWindowIdx * windowSeconds + 100;
+
+      insertTestEntity(t.db, "eA", "Entity A", "concept");
+      insertTestEntity(t.db, "eB", "Entity B", "concept");
+      insertTestEntity(t.db, "eC", "Entity C", "concept");
+      insertTestEntity(t.db, "eX", "Entity X", "concept");
+      insertTestEntity(t.db, "eY", "Entity Y", "concept");
+      insertTestEntity(t.db, "eZ", "Entity Z", "concept");
+
+      // Window 1: relationships among A, B, C
+      insertTestRelationship(t.db, "r1", "eA", "eB", "related_to", 1.0, {
+        createdAt: window1Time,
+      });
+      insertTestRelationship(t.db, "r2", "eA", "eC", "related_to", 1.0, {
+        createdAt: window1Time + 100,
+      });
+      insertTestRelationship(t.db, "r3", "eB", "eC", "related_to", 1.0, {
+        createdAt: window1Time + 200,
+      });
+
+      // Window 2: relationships among X, Y, Z (completely different)
+      const window2Time = (baseWindowIdx + 1) * windowSeconds + 100;
+      insertTestRelationship(t.db, "r4", "eX", "eY", "related_to", 1.0, {
+        createdAt: window2Time,
+      });
+      insertTestRelationship(t.db, "r5", "eX", "eZ", "related_to", 1.0, {
+        createdAt: window2Time + 100,
+      });
+      insertTestRelationship(t.db, "r6", "eY", "eZ", "related_to", 1.0, {
+        createdAt: window2Time + 200,
+      });
+
+      const patterns = detectPhaseTransitions(t.db, { windowDays: 7 });
+
+      expect(patterns.length).toBeGreaterThanOrEqual(1);
+      const transition = patterns[0];
+      expect(transition.type).toBe("phase_transition");
+      expect(transition.confidence).toBeGreaterThan(0.5);
+      expect(transition.description).toContain("Phase transition");
+      expect(
+        (transition.metadata as Record<string, unknown>).cosineDistance,
+      ).toBeGreaterThan(0.5);
+    });
+
+    it("returns empty when consecutive windows have similar compositions", () => {
+      const windowSeconds = 7 * DAY;
+      const baseWindowIdx = Math.floor(NOW / windowSeconds) - 2;
+
+      insertTestEntity(t.db, "eA", "Entity A", "concept");
+      insertTestEntity(t.db, "eB", "Entity B", "concept");
+      insertTestEntity(t.db, "eC", "Entity C", "concept");
+
+      // Same entities in both windows (different edge types to avoid unique constraint)
+      const window1Time = baseWindowIdx * windowSeconds + 100;
+      insertTestRelationship(t.db, "r1", "eA", "eB", "related_to", 1.0, {
+        createdAt: window1Time,
+      });
+      insertTestRelationship(t.db, "r1b", "eA", "eC", "related_to", 1.0, {
+        createdAt: window1Time + 100,
+      });
+
+      const window2Time = (baseWindowIdx + 1) * windowSeconds + 100;
+      insertTestRelationship(t.db, "r2", "eA", "eB", "uses", 1.0, {
+        createdAt: window2Time,
+      });
+      insertTestRelationship(t.db, "r2b", "eA", "eC", "uses", 1.0, {
+        createdAt: window2Time + 100,
+      });
+
+      const patterns = detectPhaseTransitions(t.db, { windowDays: 7 });
+      expect(patterns.length).toBe(0);
+    });
+
+    it("returns empty for empty database", () => {
+      const patterns = detectPhaseTransitions(t.db);
+      expect(patterns.length).toBe(0);
+    });
+
+    it("returns empty when only one window has relationships", () => {
+      insertTestEntity(t.db, "eA", "Entity A", "concept");
+      insertTestEntity(t.db, "eB", "Entity B", "concept");
+
+      insertTestRelationship(t.db, "r1", "eA", "eB", "related_to", 1.0, {
+        createdAt: NOW,
+      });
+
+      const patterns = detectPhaseTransitions(t.db, { windowDays: 7 });
+      expect(patterns.length).toBe(0);
+    });
+  });
+
+  // ─── detectBridgeFormation ────────────────────────────────────
+
+  describe("detectBridgeFormation", () => {
+    it("detects new bridge entity in latest generation", () => {
+      insertTestEntity(t.db, "old-bridge", "Old Bridge", "concept");
+      insertTestEntity(t.db, "new-bridge", "New Bridge", "concept");
+
+      insertBridgeScore(t.db, "old-bridge", 1, 1.5);
+      insertBridgeScore(t.db, "old-bridge", 2, 1.5);
+      insertBridgeScore(t.db, "new-bridge", 2, 2.0);
+
+      const patterns = detectBridgeFormation(t.db);
+
+      expect(patterns.length).toBe(1);
+      expect(patterns[0].type).toBe("bridge_formation");
+      expect(patterns[0].entityIds).toContain("new-bridge");
+      expect(patterns[0].entityIds).not.toContain("old-bridge");
+      expect(patterns[0].description).toContain("New Bridge");
+      expect(patterns[0].description).toContain("new bridge");
+    });
+
+    it("returns all bridges when first generation (no previous)", () => {
+      insertTestEntity(t.db, "bridge-a", "Bridge A", "concept");
+      insertTestEntity(t.db, "bridge-b", "Bridge B", "concept");
+
+      insertBridgeScore(t.db, "bridge-a", 1, 1.0);
+      insertBridgeScore(t.db, "bridge-b", 1, 2.0);
+
+      const patterns = detectBridgeFormation(t.db);
+
+      expect(patterns.length).toBe(1);
+      expect(patterns[0].entityIds.length).toBe(2);
+      expect(patterns[0].entityIds).toContain("bridge-a");
+      expect(patterns[0].entityIds).toContain("bridge-b");
+    });
+
+    it("returns empty when no bridge scores exist", () => {
+      const patterns = detectBridgeFormation(t.db);
+      expect(patterns.length).toBe(0);
+    });
+
+    it("returns empty when no new bridges formed", () => {
+      insertTestEntity(t.db, "same-bridge", "Same Bridge", "concept");
+
+      insertBridgeScore(t.db, "same-bridge", 1, 1.0);
+      insertBridgeScore(t.db, "same-bridge", 2, 1.5);
+
+      const patterns = detectBridgeFormation(t.db);
+      expect(patterns.length).toBe(0);
+    });
+  });
+
   // ─── analyzeTemporalPatterns ──────────────────────────────────
 
   describe("analyzeTemporalPatterns", () => {
-    it("runs all detectors and returns combined results", () => {
-      // Set up data for entity burst
-      const normalBase = NOW - 28 * DAY;
-      insertEntity(t.db, "normal-1", "Normal 1", { firstSeen: normalBase });
-
-      const burstBase = NOW - 7 * DAY;
-      for (let i = 0; i < 8; i++) {
-        insertEntity(t.db, `burst-${i}`, `Burst ${i}`, {
-          firstSeen: burstBase + i * 100,
-        });
-      }
-
-      // Set up data for topic decay
-      const staleTime = NOW - 60 * DAY;
-      for (let i = 0; i < 4; i++) {
-        insertEntity(t.db, `decay-${i}`, `Decay ${i}`, {
-          firstSeen: staleTime - 30 * DAY,
-          lastSeen: staleTime + i * 100,
-          mentionCount: 3,
-        });
-      }
-
-      // Set up community evolution data
-      insertCluster(t.db, "cluster-gen1", "Gen 1 Cluster", ["e1", "e2"], 1);
+    it("integration test: runs all detectors and persists to DB", () => {
+      // Set up community evolution data to guarantee at least one pattern
+      insertCluster(
+        t.db,
+        "cluster-gen1",
+        "Gen 1 Cluster",
+        ["e1", "e2"],
+        1,
+      );
       insertCluster(
         t.db,
         "cluster-gen2",
@@ -510,35 +705,17 @@ describe("Temporal Pattern Analysis", () => {
         minEntities: 3,
       });
 
-      // Should find patterns from multiple detectors
       expect(patterns.length).toBeGreaterThan(0);
 
       const types = new Set(patterns.map((p) => p.type));
-      // At minimum, we expect at least one type to be detected
       expect(types.size).toBeGreaterThanOrEqual(1);
-    });
-
-    it("persists all detected patterns to the database", () => {
-      // Create data that generates at least one pattern
-      const normalBase = NOW - 28 * DAY;
-      insertEntity(t.db, "n1", "Normal 1", { firstSeen: normalBase });
-
-      const burstBase = NOW - 7 * DAY;
-      for (let i = 0; i < 8; i++) {
-        insertEntity(t.db, `b-${i}`, `Burst ${i}`, {
-          firstSeen: burstBase + i * 100,
-        });
-      }
-
-      const patterns = analyzeTemporalPatterns(t.db, 1, { windowDays: 7 });
 
       // Verify persistence
-      const stored = getTemporalPatterns(t.db, 1);
+      const stored = getTemporalPatterns(t.db, 2);
       expect(stored.length).toBe(patterns.length);
     });
 
     it("uses default options when none provided", () => {
-      // Just verify it doesn't throw with default options
       const patterns = analyzeTemporalPatterns(t.db, 1);
       expect(Array.isArray(patterns)).toBe(true);
     });
@@ -624,7 +801,6 @@ describe("Temporal Pattern Analysis", () => {
       const retrieved = getTemporalPatterns(t.db, 1);
       expect(retrieved.length).toBe(3);
 
-      // Retrieved ordered by confidence DESC
       expect(retrieved[0].confidence).toBeGreaterThanOrEqual(
         retrieved[1].confidence,
       );
@@ -671,31 +847,30 @@ describe("Temporal Pattern Analysis", () => {
 
   describe("getTemporalPatterns", () => {
     it("retrieves patterns for a specific generation", () => {
-      const gen1Pattern: TemporalPattern = {
-        id: crypto.randomUUID(),
-        type: "entity_burst",
-        description: "Gen 1 pattern",
-        entityIds: ["e1"],
-        timeStart: NOW - 14 * DAY,
-        timeEnd: NOW - 7 * DAY,
-        confidence: 0.5,
-        metadata: {},
-        generation: 1,
-      };
-
-      const gen2Pattern: TemporalPattern = {
-        id: crypto.randomUUID(),
-        type: "topic_emergence",
-        description: "Gen 2 pattern",
-        entityIds: ["e2", "e3"],
-        timeStart: NOW - 7 * DAY,
-        timeEnd: NOW,
-        confidence: 0.7,
-        metadata: {},
-        generation: 2,
-      };
-
-      persistTemporalPatterns(t.db, [gen1Pattern, gen2Pattern]);
+      persistTemporalPatterns(t.db, [
+        {
+          id: crypto.randomUUID(),
+          type: "entity_burst",
+          description: "Gen 1 pattern",
+          entityIds: ["e1"],
+          timeStart: NOW - 14 * DAY,
+          timeEnd: NOW - 7 * DAY,
+          confidence: 0.5,
+          metadata: {},
+          generation: 1,
+        },
+        {
+          id: crypto.randomUUID(),
+          type: "topic_emergence",
+          description: "Gen 2 pattern",
+          entityIds: ["e2", "e3"],
+          timeStart: NOW - 7 * DAY,
+          timeEnd: NOW,
+          confidence: 0.7,
+          metadata: {},
+          generation: 2,
+        },
+      ]);
 
       const gen1Results = getTemporalPatterns(t.db, 1);
       expect(gen1Results.length).toBe(1);
@@ -737,6 +912,41 @@ describe("Temporal Pattern Analysis", () => {
       expect(latest.length).toBe(1);
       expect(latest[0].description).toBe("New pattern");
       expect(latest[0].generation).toBe(3);
+    });
+
+    it("filters by type when specified", () => {
+      persistTemporalPatterns(t.db, [
+        {
+          id: crypto.randomUUID(),
+          type: "entity_burst",
+          description: "Burst",
+          entityIds: ["e1"],
+          timeStart: NOW,
+          timeEnd: NOW,
+          confidence: 0.5,
+          metadata: {},
+          generation: 1,
+        },
+        {
+          id: crypto.randomUUID(),
+          type: "topic_decay",
+          description: "Decay",
+          entityIds: ["e2"],
+          timeStart: NOW,
+          timeEnd: NOW,
+          confidence: 0.6,
+          metadata: {},
+          generation: 1,
+        },
+      ]);
+
+      const bursts = getTemporalPatterns(t.db, 1, "entity_burst");
+      expect(bursts.length).toBe(1);
+      expect(bursts[0].type).toBe("entity_burst");
+
+      const decays = getTemporalPatterns(t.db, 1, "topic_decay");
+      expect(decays.length).toBe(1);
+      expect(decays[0].type).toBe("topic_decay");
     });
 
     it("returns empty array when no patterns exist", () => {
@@ -808,18 +1018,123 @@ describe("Temporal Pattern Analysis", () => {
     });
   });
 
+  // ─── Helper functions ─────────────────────────────────────────
+
+  describe("jaccardSimilarity helper", () => {
+    it("returns 1 for identical sets", () => {
+      expect(_test.jaccardSimilarity(["a", "b", "c"], ["a", "b", "c"])).toBe(
+        1.0,
+      );
+    });
+
+    it("returns 0 for disjoint sets", () => {
+      expect(_test.jaccardSimilarity(["a", "b"], ["c", "d"])).toBe(0);
+    });
+
+    it("returns correct value for partial overlap", () => {
+      // J({a,b,c}, {b,c,d}) = 2/4 = 0.5
+      expect(
+        _test.jaccardSimilarity(["a", "b", "c"], ["b", "c", "d"]),
+      ).toBeCloseTo(0.5, 5);
+    });
+
+    it("returns 0 for two empty sets", () => {
+      expect(_test.jaccardSimilarity([], [])).toBe(0);
+    });
+
+    it("returns 0 when one set is empty", () => {
+      expect(_test.jaccardSimilarity(["a"], [])).toBe(0);
+    });
+
+    it("computes known Jaccard values", () => {
+      // J({1,2,3}, {1,2,3,4}) = 3/4 = 0.75
+      expect(
+        _test.jaccardSimilarity(["1", "2", "3"], ["1", "2", "3", "4"]),
+      ).toBeCloseTo(0.75, 5);
+
+      // J({a}, {a,b,c,d,e}) = 1/5 = 0.2
+      expect(
+        _test.jaccardSimilarity(["a"], ["a", "b", "c", "d", "e"]),
+      ).toBeCloseTo(0.2, 5);
+    });
+  });
+
+  describe("cosineDistance helper", () => {
+    it("returns 0 for identical vectors", () => {
+      const a = new Map([
+        ["x", 1],
+        ["y", 2],
+      ]);
+      const b = new Map([
+        ["x", 1],
+        ["y", 2],
+      ]);
+      expect(_test.cosineDistance(a, b)).toBeCloseTo(0, 5);
+    });
+
+    it("returns 1 for orthogonal vectors", () => {
+      const a = new Map([
+        ["x", 1],
+        ["y", 0],
+      ]);
+      const b = new Map([
+        ["x", 0],
+        ["y", 1],
+      ]);
+      expect(_test.cosineDistance(a, b)).toBeCloseTo(1.0, 5);
+    });
+
+    it("returns 1 for completely disjoint key sets", () => {
+      const a = new Map([["x", 1]]);
+      const b = new Map([["y", 1]]);
+      expect(_test.cosineDistance(a, b)).toBeCloseTo(1.0, 5);
+    });
+
+    it("returns 1 when either vector is empty", () => {
+      const empty = new Map<string, number>();
+      const nonEmpty = new Map([["x", 1]]);
+      expect(_test.cosineDistance(empty, nonEmpty)).toBe(1.0);
+      expect(_test.cosineDistance(nonEmpty, empty)).toBe(1.0);
+    });
+
+    it("returns value between 0 and 1 for partially overlapping vectors", () => {
+      const a = new Map([
+        ["x", 3],
+        ["y", 4],
+      ]);
+      const b = new Map([
+        ["x", 4],
+        ["y", 3],
+      ]);
+      const dist = _test.cosineDistance(a, b);
+      expect(dist).toBeGreaterThan(0);
+      expect(dist).toBeLessThan(1);
+    });
+  });
+
+  // ─── Empty graph edge cases ───────────────────────────────────
+
+  describe("empty graph", () => {
+    it("all detectors return empty arrays on empty database", () => {
+      expect(detectEntityBursts(t.db, 7, 1)).toEqual([]);
+      expect(detectTopicEmergence(t.db, 7, 3, 1)).toEqual([]);
+      expect(detectTopicDecay(t.db, 30, 3, 1)).toEqual([]);
+      expect(trackCommunityEvolution(t.db, 2)).toEqual([]);
+      expect(detectPhaseTransitions(t.db)).toEqual([]);
+      expect(detectBridgeFormation(t.db)).toEqual([]);
+    });
+  });
+
   // ─── Edge cases ───────────────────────────────────────────────
 
   describe("edge cases", () => {
     it("handles entities with null first_seen in burst detection", () => {
-      // Insert entity with null first_seen via raw SQL
       t.db
         .prepare(
           "INSERT INTO entities (id, name, type, aliases, first_seen, last_seen, mention_count, created_at) VALUES (?, ?, ?, '[]', NULL, ?, 1, ?)",
         )
         .run("null-ent", "Null Entity", "concept", NOW, NOW);
 
-      // Should not throw
       const patterns = detectEntityBursts(t.db, 7, 1);
       expect(Array.isArray(patterns)).toBe(true);
     });
@@ -862,6 +1177,17 @@ describe("Temporal Pattern Analysis", () => {
 
       const retrieved = getTemporalPatterns(t.db, 1);
       expect(retrieved[0].metadata).toEqual(pattern.metadata);
+    });
+  });
+
+  // ─── DEFAULT_TEMPORAL_CONFIG ──────────────────────────────────
+
+  describe("DEFAULT_TEMPORAL_CONFIG", () => {
+    it("has expected default values", () => {
+      expect(DEFAULT_TEMPORAL_CONFIG.windowDays).toBe(7);
+      expect(DEFAULT_TEMPORAL_CONFIG.burstThreshold).toBe(3);
+      expect(DEFAULT_TEMPORAL_CONFIG.decayDaysThreshold).toBe(60);
+      expect(DEFAULT_TEMPORAL_CONFIG.jaccardThreshold).toBe(0.3);
     });
   });
 });

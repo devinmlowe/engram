@@ -16,6 +16,22 @@
 import type Database from "better-sqlite3";
 import type { TemporalPattern, TemporalPatternType } from "./types.js";
 
+// ─── Configuration ──────────────────────────────────────────────
+
+export interface TemporalConfig {
+  windowDays: number;
+  burstThreshold: number;
+  decayDaysThreshold: number;
+  jaccardThreshold: number;
+}
+
+export const DEFAULT_TEMPORAL_CONFIG: TemporalConfig = {
+  windowDays: 7,
+  burstThreshold: 3,
+  decayDaysThreshold: 60,
+  jaccardThreshold: 0.3,
+};
+
 // ─── Constants ────────────────────────────────────────────────────
 
 const SECONDS_PER_DAY = 86400;
@@ -422,6 +438,183 @@ export function trackCommunityEvolution(
   return patterns;
 }
 
+// ─── Phase Transition Detection ─────────────────────────────────
+
+/**
+ * Detect phase transitions by computing entity frequency vectors
+ * per time window using relationships.created_at. Measures cosine
+ * distance between consecutive windows. If distance > 0.5, flags
+ * as phase_transition.
+ */
+export function detectPhaseTransitions(
+  db: Database.Database,
+  config?: Partial<TemporalConfig>,
+): TemporalPattern[] {
+  const windowDays =
+    config?.windowDays ?? DEFAULT_TEMPORAL_CONFIG.windowDays;
+  const windowSeconds = windowDays * SECONDS_PER_DAY;
+
+  const rows = db
+    .prepare(
+      `SELECT source_entity_id, target_entity_id, created_at
+      FROM relationships
+      WHERE created_at IS NOT NULL
+      ORDER BY created_at`,
+    )
+    .all() as Array<{
+    source_entity_id: string;
+    target_entity_id: string;
+    created_at: number;
+  }>;
+
+  if (rows.length === 0) return [];
+
+  const windows = new Map<number, Map<string, number>>();
+
+  for (const row of rows) {
+    const windowIdx = Math.floor(row.created_at / windowSeconds);
+    let freq = windows.get(windowIdx);
+    if (!freq) {
+      freq = new Map();
+      windows.set(windowIdx, freq);
+    }
+    freq.set(
+      row.source_entity_id,
+      (freq.get(row.source_entity_id) ?? 0) + 1,
+    );
+    freq.set(
+      row.target_entity_id,
+      (freq.get(row.target_entity_id) ?? 0) + 1,
+    );
+  }
+
+  const sortedWindows = [...windows.entries()].sort(([a], [b]) => a - b);
+
+  if (sortedWindows.length < 2) return [];
+
+  const patterns: TemporalPattern[] = [];
+
+  for (let i = 1; i < sortedWindows.length; i++) {
+    const [prevIdx, prevFreq] = sortedWindows[i - 1];
+    const [currIdx, currFreq] = sortedWindows[i];
+
+    const distance = cosineDistance(prevFreq, currFreq);
+
+    if (distance > 0.5) {
+      const allEntityIds = new Set([...prevFreq.keys(), ...currFreq.keys()]);
+      const timeStart = prevIdx * windowSeconds;
+      const timeEnd = (currIdx + 1) * windowSeconds;
+
+      patterns.push({
+        id: crypto.randomUUID(),
+        type: "phase_transition",
+        description: `Phase transition detected between windows ${formatDate(timeStart)} and ${formatDate(timeEnd)} (cosine distance: ${distance.toFixed(3)})`,
+        entityIds: [...allEntityIds],
+        timeStart,
+        timeEnd,
+        confidence: Math.min(0.95, 0.5 + distance * 0.4),
+        metadata: {
+          cosineDistance: distance,
+          previousWindowEntities: prevFreq.size,
+          currentWindowEntities: currFreq.size,
+          windowDays,
+        },
+        generation: 0,
+      });
+    }
+  }
+
+  return patterns;
+}
+
+// ─── Bridge Formation Detection ─────────────────────────────────
+
+/**
+ * Detect bridge formation -- entities in bridge_scores for the
+ * latest generation that were not bridges in the previous generation.
+ */
+export function detectBridgeFormation(
+  db: Database.Database,
+): TemporalPattern[] {
+  const genRows = db
+    .prepare(
+      `SELECT DISTINCT generation
+      FROM bridge_scores
+      ORDER BY generation DESC
+      LIMIT 2`,
+    )
+    .all() as Array<{ generation: number }>;
+
+  if (genRows.length === 0) return [];
+
+  const latestGen = genRows[0].generation;
+  const previousGen = genRows.length > 1 ? genRows[1].generation : null;
+
+  const latestBridges = db
+    .prepare(
+      `SELECT bs.entity_id, e.name, bs.bridge_score
+      FROM bridge_scores bs
+      JOIN entities e ON e.id = bs.entity_id
+      WHERE bs.generation = ?`,
+    )
+    .all(latestGen) as Array<{
+    entity_id: string;
+    name: string;
+    bridge_score: number;
+  }>;
+
+  if (latestBridges.length === 0) return [];
+
+  const previousBridgeIds = new Set<string>();
+  if (previousGen !== null) {
+    const prevRows = db
+      .prepare(
+        `SELECT entity_id FROM bridge_scores WHERE generation = ?`,
+      )
+      .all(previousGen) as Array<{ entity_id: string }>;
+    for (const row of prevRows) {
+      previousBridgeIds.add(row.entity_id);
+    }
+  }
+
+  const newBridges = latestBridges.filter(
+    (b) => !previousBridgeIds.has(b.entity_id),
+  );
+
+  if (newBridges.length === 0) return [];
+
+  const now = nowUnix();
+  const entityIds = newBridges.map((b) => b.entity_id);
+  const entityNames = newBridges.map((b) => b.name);
+
+  const namePreview =
+    entityNames.length <= 3
+      ? entityNames.join(", ")
+      : `${entityNames.slice(0, 3).join(", ")} and ${entityNames.length - 3} more`;
+
+  return [
+    {
+      id: crypto.randomUUID(),
+      type: "bridge_formation",
+      description: `${newBridges.length} new bridge entities formed in generation ${latestGen}: ${namePreview}`,
+      entityIds,
+      timeStart: now - SECONDS_PER_DAY,
+      timeEnd: now,
+      confidence: Math.min(0.9, 0.5 + newBridges.length * 0.1),
+      metadata: {
+        latestGeneration: latestGen,
+        previousGeneration: previousGen,
+        newBridgeCount: newBridges.length,
+        entityNames,
+        bridgeScores: Object.fromEntries(
+          newBridges.map((b) => [b.entity_id, b.bridge_score]),
+        ),
+      },
+      generation: latestGen,
+    },
+  ];
+}
+
 // ─── Full Analysis Pipeline ──────────────────────────────────────
 
 /**
@@ -441,11 +634,21 @@ export function analyzeTemporalPatterns(
   const stalenessDays = options?.stalenessDays ?? 30;
   const minEntities = options?.minEntities ?? 3;
 
+  const partialConfig: Partial<TemporalConfig> = { windowDays };
+
   const patterns: TemporalPattern[] = [
     ...detectEntityBursts(db, windowDays, generation),
     ...detectTopicEmergence(db, windowDays, minEntities, generation),
     ...detectTopicDecay(db, stalenessDays, minEntities, generation),
     ...trackCommunityEvolution(db, generation),
+    ...detectPhaseTransitions(db, partialConfig).map((p) => ({
+      ...p,
+      generation,
+    })),
+    ...detectBridgeFormation(db).map((p) => ({
+      ...p,
+      generation,
+    })),
   ];
 
   if (patterns.length > 0) {
@@ -458,12 +661,14 @@ export function analyzeTemporalPatterns(
 // ─── Persistence ─────────────────────────────────────────────────
 
 /**
- * Persist temporal patterns to the database.
+ * Persist temporal patterns to the database using a transaction.
  */
 export function persistTemporalPatterns(
   db: Database.Database,
   patterns: TemporalPattern[],
 ): void {
+  if (patterns.length === 0) return;
+
   const insert = db.prepare(`
     INSERT INTO temporal_patterns
       (id, type, description, entity_ids, time_start, time_end, confidence, metadata, generation)
@@ -491,12 +696,38 @@ export function persistTemporalPatterns(
 
 /**
  * Retrieve temporal patterns for a given generation (or latest).
+ * Optionally filtered by pattern type.
  */
 export function getTemporalPatterns(
   db: Database.Database,
   generation?: number,
+  type?: TemporalPatternType,
 ): TemporalPattern[] {
-  let rows: Array<{
+  let targetGeneration = generation;
+
+  if (targetGeneration === undefined) {
+    const maxRow = db
+      .prepare("SELECT MAX(generation) AS max_gen FROM temporal_patterns")
+      .get() as { max_gen: number | null } | undefined;
+
+    const maxGen = maxRow?.max_gen;
+    if (maxGen == null) return [];
+    targetGeneration = maxGen;
+  }
+
+  let query = `SELECT id, type, description, entity_ids, time_start, time_end, confidence, metadata, generation
+    FROM temporal_patterns
+    WHERE generation = ?`;
+  const params: Array<string | number> = [targetGeneration];
+
+  if (type) {
+    query += ` AND type = ?`;
+    params.push(type);
+  }
+
+  query += ` ORDER BY confidence DESC`;
+
+  const rows = db.prepare(query).all(...params) as Array<{
     id: string;
     type: string;
     description: string;
@@ -507,34 +738,6 @@ export function getTemporalPatterns(
     metadata: string;
     generation: number;
   }>;
-
-  if (generation !== undefined) {
-    rows = db
-      .prepare(
-        `SELECT id, type, description, entity_ids, time_start, time_end, confidence, metadata, generation
-        FROM temporal_patterns
-        WHERE generation = ?
-        ORDER BY confidence DESC`,
-      )
-      .all(generation) as typeof rows;
-  } else {
-    // Get latest generation
-    const maxRow = db
-      .prepare("SELECT MAX(generation) AS max_gen FROM temporal_patterns")
-      .get() as { max_gen: number | null } | undefined;
-
-    const maxGen = maxRow?.max_gen;
-    if (maxGen == null) return [];
-
-    rows = db
-      .prepare(
-        `SELECT id, type, description, entity_ids, time_start, time_end, confidence, metadata, generation
-        FROM temporal_patterns
-        WHERE generation = ?
-        ORDER BY confidence DESC`,
-      )
-      .all(maxGen) as typeof rows;
-  }
 
   return rows.map((row) => ({
     id: row.id,
@@ -600,9 +803,54 @@ function jaccardSimilarity(a: string[], b: string[]): number {
 }
 
 /**
+ * Return current time as unix epoch seconds.
+ */
+function nowUnix(): number {
+  return Math.floor(Date.now() / 1000);
+}
+
+/**
+ * Compute cosine distance between two frequency vectors.
+ * distance = 1 - cosine_similarity
+ *
+ * Returns 1.0 when vectors are orthogonal or either is zero.
+ */
+function cosineDistance(
+  a: Map<string, number>,
+  b: Map<string, number>,
+): number {
+  const allKeys = new Set([...a.keys(), ...b.keys()]);
+
+  let dot = 0;
+  let normA = 0;
+  let normB = 0;
+
+  for (const key of allKeys) {
+    const va = a.get(key) ?? 0;
+    const vb = b.get(key) ?? 0;
+    dot += va * vb;
+    normA += va * va;
+    normB += vb * vb;
+  }
+
+  if (normA === 0 || normB === 0) return 1.0;
+
+  const similarity = dot / (Math.sqrt(normA) * Math.sqrt(normB));
+  return 1.0 - similarity;
+}
+
+/**
  * Format a unix timestamp to a short date string.
  */
 function formatDate(unixSeconds: number): string {
   const date = new Date(unixSeconds * 1000);
   return date.toISOString().split("T")[0];
 }
+
+// ─── Exported Helpers (for testing) ─────────────────────────────
+
+export const _test = {
+  jaccardSimilarity,
+  cosineDistance,
+  nowUnix,
+};
