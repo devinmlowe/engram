@@ -172,7 +172,7 @@ export async function runDream(
           result = await runConsolidatePhase(db, config, runId, logPath, options, report);
           break;
         case "reflect":
-          result = await runReflectPhase(db, config, runId, logPath, options);
+          result = await runReflectPhase(db, config, runId, logPath, options, report);
           break;
         case "prune":
           result = await runPrunePhase(db, config, runId, logPath, options, report);
@@ -418,14 +418,18 @@ async function runConsolidatePhase(
 }
 
 /**
- * REFLECT phase: analyze the knowledge graph for communities and bridge entities.
+ * REFLECT phase: analyze the knowledge graph for communities, bridge entities,
+ * temporal patterns, and emergent observations.
+ *
+ * Uses the full Phase 6 reflection pipeline from graph/reflection.ts.
  */
 async function runReflectPhase(
   db: Database.Database,
-  _config: EngramConfig,
+  config: EngramConfig,
   runId: string,
   logPath: string,
   options: DreamOptions,
+  report: DreamReport,
 ): Promise<PhaseResult> {
   const startMs = Date.now();
   logEntry(logPath, "reflect", "Starting reflect phase");
@@ -435,19 +439,27 @@ async function runReflectPhase(
     return { phase: "reflect", itemsProcessed: 0, errors: 0, durationMs: Date.now() - startMs };
   }
 
-  const { analyzeGraph, persistAnalysis } = await import("../graph/analyzer.js");
+  const { runReflection } = await import("../graph/reflection.js");
 
   try {
-    const analysis = analyzeGraph(db);
-    persistAnalysis(db, analysis);
+    const result = await runReflection(db, config);
 
     recordCheckpoint(db, runId, "reflect", "analysis");
 
-    logEntry(logPath, "reflect", "Graph analysis complete", {
-      communities: analysis.communities.length,
-      bridgeEntities: analysis.bridgeEntities.length,
-      totalNodes: analysis.totalNodes,
-      totalEdges: analysis.totalEdges,
+    // Update report with Phase 6 metrics
+    report.communitiesNamed = result.communities.length;
+    report.bridgesIdentified = result.bridges.length;
+    report.temporalPatternsDetected = result.temporalPatterns.length;
+    report.observationsGenerated = result.observations.length;
+
+    logEntry(logPath, "reflect", "Reflection complete", {
+      communities: result.communities.length,
+      bridges: result.bridges.length,
+      temporalPatterns: result.temporalPatterns.length,
+      observations: result.observations.length,
+      totalNodes: result.health.totalNodes,
+      totalEdges: result.health.totalEdges,
+      modularity: result.health.modularity,
     });
 
     options.onProgress?.("reflect", 1, 1, 0);
@@ -460,7 +472,7 @@ async function runReflectPhase(
     };
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : String(err);
-    logEntry(logPath, "reflect", `Error in graph analysis: ${errorMsg}`);
+    logEntry(logPath, "reflect", `Error in reflection: ${errorMsg}`);
     return {
       phase: "reflect",
       itemsProcessed: 0,
@@ -552,7 +564,27 @@ async function runPrunePhase(
   report.memoriesPruned = pruned;
   recordCheckpoint(db, runId, "prune", "scan");
 
-  logEntry(logPath, "prune", `Pruning complete: ${pruned} of ${memRows.length} memories pruned`);
+  logEntry(logPath, "prune", `Memory pruning complete: ${pruned} of ${memRows.length} memories pruned`);
+
+  // Phase 6 entity cleanup
+  try {
+    const { mergeRedundantEntities, pruneOrphanEntities, pruneStaleGenerations } = await import("../graph/reflection.js");
+
+    const mergeResult = mergeRedundantEntities(db);
+    report.entitiesMerged = mergeResult.merged;
+    logEntry(logPath, "prune", `Merged ${mergeResult.merged} redundant entities`);
+
+    const orphanResult = pruneOrphanEntities(db, { minMentions: 2, maxAgeDays: 90 });
+    report.orphansPruned = orphanResult.pruned;
+    logEntry(logPath, "prune", `Pruned ${orphanResult.pruned} orphan entities`);
+
+    const clusterResult = pruneStaleGenerations(db, { keepGenerations: 3 });
+    report.clustersPruned = clusterResult.pruned;
+    logEntry(logPath, "prune", `Pruned ${clusterResult.pruned} stale cluster generations`);
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    logEntry(logPath, "prune", `Entity cleanup error (non-fatal): ${errorMsg}`);
+  }
 
   return {
     phase: "prune",

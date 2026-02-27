@@ -103,6 +103,21 @@ vi.mock("../../src/graph/analyzer.js", () => ({
   persistAnalysis: vi.fn(),
 }));
 
+vi.mock("../../src/graph/reflection.js", () => ({
+  runReflection: vi.fn().mockResolvedValue({
+    communities: [{ name: "Test", description: "Test community", entityCount: 1, coherenceScore: 1.0, topEntities: [], memoryCount: 0 }],
+    bridges: [],
+    temporalPatterns: [],
+    health: { totalNodes: 2, totalEdges: 1, modularity: 0.5, communityCount: 1, orphanNodes: 0, averageCoherence: 1.0, generationCount: 1 },
+    observations: [],
+    generation: 1,
+    generatedAt: Math.floor(Date.now() / 1000),
+  }),
+  mergeRedundantEntities: vi.fn().mockReturnValue({ merged: 0 }),
+  pruneOrphanEntities: vi.fn().mockReturnValue({ pruned: 0 }),
+  pruneStaleGenerations: vi.fn().mockReturnValue({ pruned: 0 }),
+}));
+
 vi.mock("../../src/semantic/decay.js", () => ({
   isPruneEligible: vi.fn().mockReturnValue(false),
   getMemoryHealth: vi.fn().mockReturnValue({
@@ -121,6 +136,7 @@ import { syncConversations } from "../../src/episodic/sync.js";
 import { extractFromConversation } from "../../src/semantic/extractor.js";
 import { consolidateFacts } from "../../src/semantic/consolidator.js";
 import { analyzeGraph, persistAnalysis } from "../../src/graph/analyzer.js";
+import { runReflection } from "../../src/graph/reflection.js";
 import { isPruneEligible } from "../../src/semantic/decay.js";
 import { extractEntities } from "../../src/graph/extractor.js";
 import { resolveEntities } from "../../src/graph/resolver.js";
@@ -490,11 +506,10 @@ describe("Phase runners", () => {
   });
 
   describe("Reflect phase", () => {
-    it("runs graph analysis", async () => {
+    it("runs reflection pipeline", async () => {
       await runDream(t.db, t.config, { phases: ["reflect"] });
 
-      expect(analyzeGraph).toHaveBeenCalledTimes(1);
-      expect(persistAnalysis).toHaveBeenCalledTimes(1);
+      expect(runReflection).toHaveBeenCalledTimes(1);
     });
 
     it("records a checkpoint for analysis", async () => {
@@ -506,6 +521,15 @@ describe("Phase runners", () => {
 
       expect(checkpoints).toHaveLength(1);
       expect(checkpoints[0].item_id).toBe("analysis");
+    });
+
+    it("populates Phase 6 report metrics", async () => {
+      const report = await runDream(t.db, t.config, { phases: ["reflect"] });
+
+      expect(report.communitiesNamed).toBe(1);
+      expect(report.bridgesIdentified).toBe(0);
+      expect(report.temporalPatternsDetected).toBe(0);
+      expect(report.observationsGenerated).toBe(0);
     });
   });
 

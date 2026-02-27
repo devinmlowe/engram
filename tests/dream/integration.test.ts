@@ -118,6 +118,21 @@ vi.mock("../../src/graph/analyzer.js", () => ({
   persistAnalysis: vi.fn(),
 }));
 
+vi.mock("../../src/graph/reflection.js", () => ({
+  runReflection: vi.fn().mockResolvedValue({
+    communities: [],
+    bridges: [],
+    temporalPatterns: [],
+    health: { totalNodes: 0, totalEdges: 0, modularity: 0, communityCount: 0, orphanNodes: 0, averageCoherence: 0, generationCount: 0 },
+    observations: [],
+    generation: 1,
+    generatedAt: Math.floor(Date.now() / 1000),
+  }),
+  mergeRedundantEntities: vi.fn().mockReturnValue({ merged: 0 }),
+  pruneOrphanEntities: vi.fn().mockReturnValue({ pruned: 0 }),
+  pruneStaleGenerations: vi.fn().mockReturnValue({ pruned: 0 }),
+}));
+
 vi.mock("../../src/semantic/decay.js", () => ({
   isPruneEligible: vi.fn().mockReturnValue(false),
   getMemoryHealth: vi.fn().mockReturnValue({
