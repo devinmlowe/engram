@@ -7,8 +7,16 @@
   "bin": {
     "engram": "dist/cli/index.js"
   },
+  "files": [
+    "dist",
+    "prompts",
+    "launchd",
+    ".claude-plugin",
+    ".mcp.json"
+  ],
   "scripts": {
     "build": "tsc",
+    "prepare": "npm run build",
     "dev": "tsx src/cli/index.ts",
     "test": "vitest",
     "test:run": "vitest run",

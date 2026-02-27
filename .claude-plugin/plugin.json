@@ -1,0 +1,10 @@
+{
+  "name": "engram",
+  "version": "0.1.0",
+  "description": "Cognitive memory system — episodic storage, semantic extraction, knowledge graph, and dream-state consolidation for Claude Code",
+  "author": {
+    "name": "Devin Lowe"
+  },
+  "license": "MIT",
+  "mcpServers": "../.mcp.json"
+}
