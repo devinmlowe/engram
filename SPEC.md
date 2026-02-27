@@ -1034,12 +1034,78 @@ Tasks:
 - **Milestone**: System discovers emergent patterns
 
 ### Phase 7: Optimization & Polish
-- Cross-encoder reranking
-- Context budget tuning
-- Performance optimization (batch operations, caching)
-- Claude Code plugin packaging
-- Documentation and user guide
-- **Milestone**: Production-ready system
+
+> **Research documents:**
+> - [Cross-encoder reranking, context budgets, evaluation metrics, FSRS updates](docs/research/phase-7-optimization-patterns.md)
+> - [Claude Code plugin packaging and MCP server distribution](docs/research/claude-code-plugin-packaging.md)
+> - [Readiness assessment and gap analysis](docs/phase-7-readiness.md)
+> - [Implementation plan](docs/plans/phase-7-implementation.md)
+
+**Cross-encoder reranking** (`src/retrieval/reranker.ts`):
+- BGE-reranker-base (278M params) via `@xenova/transformers` ONNX runtime. See [phase-7-optimization-patterns.md §1](docs/research/phase-7-optimization-patterns.md).
+- Singleton model loader with batch inference for top-20 RRF candidates
+- Score blending: `final = 0.7 * reranker_normalized + 0.3 * rrf_normalized` (configurable)
+- Toggle via `config.search.reranker.enabled` (default: true)
+- Expected latency: ~50-150ms on Apple Silicon for 20 candidates
+- Graceful degradation: if model fails to load, continue without reranking
+
+**Context budget optimization** (`src/retrieval/context.ts`):
+- Priority-class budget allocation: semantic > graph > summaries > raw exchanges
+- Token estimation with 1.1x safety factor
+- Primacy-zone placement for XML output (avoids "lost in the middle" effect)
+- See [phase-7-optimization-patterns.md §2](docs/research/phase-7-optimization-patterns.md)
+
+**Performance optimization** (`src/core/cache.ts`):
+- LRU cache with TTL for: query embeddings, search results, graph analysis
+- SQLite PRAGMA tuning: `mmap_size = 256MB`, `cache_size = 64MB`
+- Embedding memoization by content hash
+- See [phase-7-optimization-patterns.md §4](docs/research/phase-7-optimization-patterns.md)
+
+**Claude Code plugin packaging**:
+- `mcp` CLI subcommand for `npx engram mcp` MCP server startup
+- `.claude-plugin/plugin.json` manifest for plugin marketplace
+- `.mcp.json` at repo root for MCP server definition
+- npm packaging: `files`, `prepare`, shebang lines
+- Local dev: `node dist/mcp/server.js` direct startup
+- Distribution: `claude mcp add --transport stdio --scope user engram -- npx -y engram mcp`
+- See [claude-code-plugin-packaging.md](docs/research/claude-code-plugin-packaging.md)
+
+**Documentation and user guide**:
+- `docs/user-guide.md` — Installation, setup, daily usage, configuration
+- `docs/api-reference.md` — MCP tools, CLI commands, config reference
+- `docs/architecture.md` — Layer diagram, data flow, module map
+- Missing prompt templates: `prompts/summarize.md`, `prompts/reflect.md`
+
+**Dead code audit and cleanup**:
+- Remove unused exports, orphan types, resolved TODOs
+- Verify `.gitignore` coverage
+
+**End-to-end test coverage**:
+- Full pipeline test: sync → embed → search → extract → consolidate → graph → dream
+- MCP server integration test: tools/list, recall, remember, explore, reflect
+- Fix dream/intelligence test timeouts
+
+**TypeScript compilation fixes** (prerequisite):
+- 22 errors: 4 module resolution + 18 implicit `any`
+- Type declarations for `@anthropic-ai/sdk`, graphology ecosystem
+- Explicit parameter types in analyzer.ts, intelligence.ts, extractor.ts
+
+Tasks:
+- Fix TypeScript compilation errors (22 errors across 5 files)
+- Implement `src/retrieval/reranker.ts` — cross-encoder reranking with BGE-reranker-base
+- Implement `src/retrieval/context.ts` — priority-class budget allocation
+- Implement `src/core/cache.ts` — LRU cache with TTL for search and embeddings
+- Add `mcp` CLI subcommand to `src/cli/index.ts`
+- Create `.claude-plugin/plugin.json` and `.mcp.json` for plugin packaging
+- Update `package.json` with `files`, `prepare` script for npm distribution
+- Write `docs/user-guide.md`, `docs/api-reference.md`, `docs/architecture.md`
+- Create `prompts/summarize.md` and `prompts/reflect.md` templates
+- Dead code audit: remove unused exports, orphan files, resolved TODOs
+- End-to-end tests: `tests/e2e/full-pipeline.test.ts`, `tests/e2e/mcp-server.test.ts`
+- Fix all test failures (target: 0 failures across all suites)
+- Install MCP server to global Claude Code instance
+- Install and verify launchd dream state daemon
+- **Milestone**: Production-ready system, installed and running
 
 ---
 
@@ -1060,10 +1126,10 @@ Tasks:
 
 ## Open Questions
 
-1. **Local LLM selection**: MLX Llama 3.1 8B vs Qwen 2.5 7B for extraction quality vs speed?
-2. **Reranker necessity**: Is cross-encoder reranking worth the latency for typical queries?
-3. **Graph algorithm**: Louvain vs Label Propagation for community detection?
-4. **Conflict resolution**: Auto-resolve via LLM or flag for user review?
-5. **Multi-user**: Is this ever multi-user, or strictly single-user local?
-6. **PKM integration**: Should Engram also index `~/markdown-notes/` or stay scoped to Claude conversations?
-7. **Plugin distribution**: Claude Code plugin marketplace or standalone tool?
+1. ~~**Local LLM selection**: MLX Llama 3.1 8B vs Qwen 2.5 7B for extraction quality vs speed?~~ **RESOLVED**: Ollama REST API with Qwen 2.5 7B Instruct (4-bit) as default, ~50-65 tok/s on M4. See Phase 5.
+2. ~~**Reranker necessity**: Is cross-encoder reranking worth the latency for typical queries?~~ **RESOLVED**: Yes — cross-encoders improve NDCG@10 by 5-15%, latency ~50-150ms for 20 candidates. BGE-reranker-base selected. See [phase-7-optimization-patterns.md §1](docs/research/phase-7-optimization-patterns.md).
+3. ~~**Graph algorithm**: Louvain vs Label Propagation for community detection?~~ **RESOLVED**: Louvain via graphology. Runs in ~50ms at engram's scale. See Phase 4.
+4. ~~**Conflict resolution**: Auto-resolve via LLM or flag for user review?~~ **RESOLVED**: Temporal recency > explicit correction > corroboration count. LLM classifies ambiguous cases. See Phase 3.
+5. **Multi-user**: Is this ever multi-user, or strictly single-user local? **ANSWER**: Single-user local. All data in `~/.local/share/engram/`.
+6. **PKM integration**: Should Engram also index `~/markdown-notes/` or stay scoped to Claude conversations? **DEFERRED**: Post-v1 feature.
+7. ~~**Plugin distribution**: Claude Code plugin marketplace or standalone tool?~~ **RESOLVED**: Hybrid — npm package + thin Claude Code plugin wrapper. See [claude-code-plugin-packaging.md §4](docs/research/claude-code-plugin-packaging.md).
