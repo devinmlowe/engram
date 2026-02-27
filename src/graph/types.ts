@@ -181,6 +181,7 @@ export interface ExploreOptions {
   depth?: number; // hops (default 1, max 3)
   relationshipTypes?: RelationshipType[];
   includeMemories?: boolean;
+  limit?: number; // max neighbors to return (default 25, max 50)
 }
 
 export interface ExploreResult {

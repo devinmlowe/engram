@@ -111,6 +111,8 @@ const ShowInputSchema = z.object({
 const ExploreInputSchema = z.object({
   entity: z.string().min(1, "Entity name is required"),
   depth: z.number().int().min(1).max(3).optional().default(1),
+  limit: z.number().int().min(1).max(50).optional().default(25),
+  budget: z.number().int().min(100).max(5000).optional().default(1500),
   relationship_types: z
     .array(
       z.enum([
@@ -285,6 +287,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             maximum: 3,
             default: 1,
             description: "Number of hops to traverse (1-3)",
+          },
+          limit: {
+            type: "number",
+            minimum: 1,
+            maximum: 50,
+            default: 25,
+            description: "Max neighbors to return, sorted by weight (1-50)",
+          },
+          budget: {
+            type: "number",
+            minimum: 100,
+            maximum: 5000,
+            default: 1500,
+            description: "Max tokens in response",
           },
           relationship_types: {
             type: "array",
@@ -461,33 +477,49 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const result = exploreEntity(getDb(), {
         entity: params.entity,
         depth: params.depth,
+        limit: params.limit,
         relationshipTypes: params.relationship_types as
           | RelationshipType[]
           | undefined,
       });
 
-      // Format as XML
+      // Format as XML with token budget
+      const budget = params.budget;
+      let tokenEstimate = 0;
       const lines: string[] = [];
-      lines.push(
-        `<engram_graph entity="${escapeXml(result.centerEntity.name)}" type="${result.centerEntity.type}">`,
-      );
+
+      const header = `<engram_graph entity="${escapeXml(result.centerEntity.name)}" type="${result.centerEntity.type}" total_neighbors="${result.neighbors.length}">`;
+      lines.push(header);
+      tokenEstimate += Math.ceil(header.length / 4);
+
       if (result.centerEntity.description) {
-        lines.push(
-          `  <description>${escapeXml(result.centerEntity.description)}</description>`,
-        );
+        const desc = `  <description>${escapeXml(result.centerEntity.description)}</description>`;
+        lines.push(desc);
+        tokenEstimate += Math.ceil(desc.length / 4);
       }
+
+      let included = 0;
       for (const neighbor of result.neighbors) {
         const dir = neighbor.relationship.direction;
         const attrs =
           dir === "outgoing"
             ? `direction="outgoing" type="${neighbor.relationship.type}" target="${escapeXml(neighbor.entity.name)}" weight="${neighbor.relationship.weight.toFixed(2)}"`
             : `direction="incoming" type="${neighbor.relationship.type}" source="${escapeXml(neighbor.entity.name)}" weight="${neighbor.relationship.weight.toFixed(2)}"`;
-        lines.push(`  <relationship ${attrs}>`);
-        if (neighbor.relationship.context) {
-          lines.push(`    ${escapeXml(neighbor.relationship.context)}`);
-        }
-        lines.push("  </relationship>");
+        const relLine = neighbor.relationship.context
+          ? `  <relationship ${attrs}>\n    ${escapeXml(neighbor.relationship.context)}\n  </relationship>`
+          : `  <relationship ${attrs} />`;
+        const relTokens = Math.ceil(relLine.length / 4);
+
+        if (tokenEstimate + relTokens > budget) break;
+        lines.push(relLine);
+        tokenEstimate += relTokens;
+        included++;
       }
+
+      if (included < result.neighbors.length) {
+        lines.push(`  <!-- ${result.neighbors.length - included} more neighbors omitted (budget) -->`);
+      }
+
       if (result.community) {
         lines.push(
           `  <community name="${escapeXml(result.community.name)}" entities="${result.community.entityCount}" />`,

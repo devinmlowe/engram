@@ -160,7 +160,7 @@ export function exploreEntity(
   db: Database.Database,
   options: ExploreOptions,
 ): ExploreResult {
-  const { entity: entityQuery, depth = 1, relationshipTypes } = options;
+  const { entity: entityQuery, depth = 1, relationshipTypes, limit = 25 } = options;
 
   // Find the center entity
   const centerEntity = findEntityByNameOrAlias(db, entityQuery);
@@ -177,9 +177,16 @@ export function exploreEntity(
     relationshipTypes,
   );
 
+  // Sort by weight descending so strongest connections survive truncation
+  rawNeighbors.sort((a, b) => b.relationship.weight - a.relationship.weight);
+
+  // Apply limit
+  const cappedLimit = Math.min(Math.max(limit, 1), 50);
+  const trimmed = rawNeighbors.slice(0, cappedLimit);
+
   // Build neighbor details
   const neighbors: ExploreResult["neighbors"] = [];
-  for (const n of rawNeighbors) {
+  for (const n of trimmed) {
     const neighborEntity = getEntity(db, n.entityId);
     if (!neighborEntity) continue;
 
