@@ -31,6 +31,7 @@ import type {
   Memory,
   MemoryType,
 } from "../core/types.js";
+import type { ReflectResult } from "../graph/types.js";
 
 // ─── Lazy State ────────────────────────────────────────────────
 
@@ -122,6 +123,11 @@ const ExploreInputSchema = z.object({
       ]),
     )
     .optional(),
+});
+
+const ReflectInputSchema = z.object({
+  mode: z.enum(["communities", "bridges", "temporal", "health", "all"]).optional().default("all"),
+  refresh: z.boolean().optional().default(false),
 });
 
 // ─── Server Setup ──────────────────────────────────────────────
@@ -307,6 +313,39 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         openWorldHint: false,
       },
     },
+    {
+      name: "reflect",
+      description:
+        "View emergent patterns and structure in the knowledge graph. " +
+        "Shows topic communities with meaningful names, bridge entities " +
+        "connecting different domains, temporal patterns, and graph health. " +
+        "Use after working on a topic to understand how it connects to " +
+        "other knowledge domains.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          mode: {
+            type: "string",
+            enum: ["communities", "bridges", "temporal", "health", "all"],
+            default: "all",
+            description: "What to reflect on.",
+          },
+          refresh: {
+            type: "boolean",
+            default: false,
+            description: "Force a fresh analysis instead of using cached results.",
+          },
+        },
+        additionalProperties: false,
+      },
+      annotations: {
+        title: "Reflect on Knowledge Graph",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
   ],
 }));
 
@@ -460,6 +499,34 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       };
     }
 
+    if (name === "reflect") {
+      const params = ReflectInputSchema.parse(args);
+      const database = getDb();
+
+      let result: ReflectResult | null;
+
+      if (params.refresh) {
+        if (!config) config = loadConfig();
+        const { runReflection } = await import("../graph/reflection.js");
+        result = await runReflection(database, config);
+      } else {
+        const { buildReflectResultFromCache } = await import("../graph/reflection.js");
+        result = buildReflectResultFromCache(database);
+      }
+
+      if (!result) {
+        return {
+          content: [{
+            type: "text",
+            text: `<engram_reflection mode="${params.mode}">\n  <status>No reflection data available. Run 'engram dream --phase reflect' first.</status>\n</engram_reflection>`,
+          }],
+        };
+      }
+
+      const xml = formatReflectXml(result, params.mode);
+      return { content: [{ type: "text", text: xml }] };
+    }
+
     throw new Error(`Unknown tool: ${name}`);
   } catch (error) {
     return {
@@ -510,6 +577,108 @@ function formatShowOutput(lines: string[], startLineNum: number): string {
   }
 
   return output;
+}
+
+// ─── Reflect Formatting ─────────────────────────────────────────
+
+function formatReflectXml(result: ReflectResult, mode: string): string {
+  const lines: string[] = [];
+  const timestamp = new Date(result.generatedAt * 1000).toISOString();
+
+  lines.push(
+    `<engram_reflection mode="${escapeXml(mode)}" generation="${result.generation}" timestamp="${timestamp}">`,
+  );
+
+  // Communities section
+  if (mode === "all" || mode === "communities") {
+    const avgCoherence = result.health.averageCoherence;
+    lines.push(
+      `  <communities count="${result.communities.length}" modularity="${result.health.modularity.toFixed(2)}">`,
+    );
+    for (const community of result.communities) {
+      lines.push(
+        `    <community name="${escapeXml(community.name)}" coherence="${community.coherenceScore.toFixed(2)}" entities="${community.entityCount}" memories="${community.memoryCount}">`,
+      );
+      lines.push(`      <description>${escapeXml(community.description)}</description>`);
+      if (community.topEntities.length > 0) {
+        lines.push("      <top_entities>");
+        for (const entity of community.topEntities) {
+          lines.push(
+            `        <entity name="${escapeXml(entity.name)}" type="${escapeXml(entity.type)}" />`,
+          );
+        }
+        lines.push("      </top_entities>");
+      }
+      lines.push("    </community>");
+    }
+    lines.push("  </communities>");
+  }
+
+  // Bridges section
+  if (mode === "all" || mode === "bridges") {
+    lines.push(`  <bridges count="${result.bridges.length}">`);
+    for (const bridge of result.bridges) {
+      lines.push(
+        `    <bridge entity="${escapeXml(bridge.entityName)}" type="${escapeXml(bridge.entityType)}" score="${bridge.bridgeScore.toFixed(2)}" span="${bridge.communitySpan}">`,
+      );
+      if (bridge.narrative) {
+        lines.push(`      <narrative>${escapeXml(bridge.narrative)}</narrative>`);
+      }
+      if (bridge.connectedCommunities.length > 0) {
+        lines.push("      <connects>");
+        for (const communityName of bridge.connectedCommunities) {
+          lines.push(`        <community name="${escapeXml(communityName)}" />`);
+        }
+        lines.push("      </connects>");
+      }
+      lines.push("    </bridge>");
+    }
+    lines.push("  </bridges>");
+  }
+
+  // Temporal patterns section
+  if (mode === "all" || mode === "temporal") {
+    lines.push(`  <temporal_patterns count="${result.temporalPatterns.length}">`);
+    for (const pattern of result.temporalPatterns) {
+      lines.push(
+        `    <pattern type="${escapeXml(pattern.type)}" confidence="${pattern.confidence.toFixed(1)}">`,
+      );
+      lines.push(`      <description>${escapeXml(pattern.description)}</description>`);
+      if (pattern.entityIds.length > 0) {
+        // Resolve entity names if possible, otherwise show IDs
+        lines.push(`      <entities>${escapeXml(pattern.entityIds.join(", "))}</entities>`);
+      }
+      lines.push("    </pattern>");
+    }
+    lines.push("  </temporal_patterns>");
+  }
+
+  // Health section
+  if (mode === "all" || mode === "health") {
+    lines.push("  <health>");
+    lines.push(`    <stat name="total_nodes" value="${result.health.totalNodes}" />`);
+    lines.push(`    <stat name="total_edges" value="${result.health.totalEdges}" />`);
+    lines.push(`    <stat name="modularity" value="${result.health.modularity.toFixed(2)}" />`);
+    lines.push(`    <stat name="communities" value="${result.health.communityCount}" />`);
+    lines.push(`    <stat name="orphan_nodes" value="${result.health.orphanNodes}" />`);
+    lines.push(`    <stat name="average_coherence" value="${result.health.averageCoherence.toFixed(2)}" />`);
+    lines.push("  </health>");
+  }
+
+  // Observations section (always included when available)
+  if (result.observations.length > 0) {
+    lines.push("  <observations>");
+    for (const obs of result.observations) {
+      lines.push(
+        `    <observation type="${escapeXml(obs.type)}" confidence="${obs.confidence.toFixed(1)}">${escapeXml(obs.content)}</observation>`,
+      );
+    }
+    lines.push("  </observations>");
+  }
+
+  lines.push("</engram_reflection>");
+
+  return lines.join("\n");
 }
 
 // ─── Main ──────────────────────────────────────────────────────

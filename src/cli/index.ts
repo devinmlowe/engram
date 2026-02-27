@@ -795,4 +795,126 @@ program
     }
   });
 
+// ─── reflect ─────────────────────────────────────────────────────
+
+program
+  .command("reflect")
+  .description("Show knowledge graph reflection and emergent patterns")
+  .option("-m, --mode <mode>", "Focus: communities, bridges, temporal, health, all", "all")
+  .option("--refresh", "Force fresh analysis (slower)")
+  .action(async (opts) => {
+    const config = loadConfig();
+    const db = initDatabase(config);
+    try {
+      if (opts.refresh) {
+        const { runReflection } = await import("../graph/reflection.js");
+        console.log("Running fresh reflection analysis...\n");
+        const result = await runReflection(db, config);
+        printReflectResult(result, opts.mode);
+      } else {
+        const { buildReflectResultFromCache } = await import("../graph/reflection.js");
+        const result = buildReflectResultFromCache(db);
+        if (!result) {
+          console.log("No reflection data. Run 'engram dream --phase reflect' first.");
+          return;
+        }
+        printReflectResult(result, opts.mode);
+      }
+    } finally {
+      db.close();
+    }
+  });
+
 program.parse();
+
+// ─── Reflect Formatting ──────────────────────────────────────────
+
+function printReflectResult(
+  result: import("../graph/types.js").ReflectResult,
+  mode: string,
+): void {
+  const timestamp = new Date(result.generatedAt * 1000).toLocaleString();
+  console.log(`Reflection (generation ${result.generation}, ${timestamp})\n`);
+
+  // Communities
+  if (mode === "all" || mode === "communities") {
+    console.log(`Communities (${result.communities.length}):`);
+    if (result.communities.length === 0) {
+      console.log("  (none detected)\n");
+    } else {
+      for (const community of result.communities) {
+        console.log(
+          `  ${community.name} (${community.entityCount} entities, coherence: ${community.coherenceScore.toFixed(2)}, memories: ${community.memoryCount})`,
+        );
+        console.log(`    ${community.description}`);
+        if (community.topEntities.length > 0) {
+          const entities = community.topEntities
+            .map((e) => `${e.name} [${e.type}]`)
+            .join(", ");
+          console.log(`    Top entities: ${entities}`);
+        }
+      }
+      console.log("");
+    }
+  }
+
+  // Bridges
+  if (mode === "all" || mode === "bridges") {
+    console.log(`Bridge Entities (${result.bridges.length}):`);
+    if (result.bridges.length === 0) {
+      console.log("  (none detected)\n");
+    } else {
+      for (const bridge of result.bridges) {
+        console.log(
+          `  ${bridge.entityName} [${bridge.entityType}] (score: ${bridge.bridgeScore.toFixed(2)}, spans ${bridge.communitySpan} communities)`,
+        );
+        if (bridge.narrative) {
+          console.log(`    ${bridge.narrative}`);
+        }
+        if (bridge.connectedCommunities.length > 0) {
+          console.log(`    Connects: ${bridge.connectedCommunities.join(", ")}`);
+        }
+      }
+      console.log("");
+    }
+  }
+
+  // Temporal patterns
+  if (mode === "all" || mode === "temporal") {
+    console.log(`Temporal Patterns (${result.temporalPatterns.length}):`);
+    if (result.temporalPatterns.length === 0) {
+      console.log("  (none detected)\n");
+    } else {
+      for (const pattern of result.temporalPatterns) {
+        console.log(
+          `  [${pattern.type}] (confidence: ${pattern.confidence.toFixed(1)})`,
+        );
+        console.log(`    ${pattern.description}`);
+      }
+      console.log("");
+    }
+  }
+
+  // Health
+  if (mode === "all" || mode === "health") {
+    console.log("Graph Health:");
+    console.log(`  Nodes:            ${result.health.totalNodes}`);
+    console.log(`  Edges:            ${result.health.totalEdges}`);
+    console.log(`  Modularity:       ${result.health.modularity.toFixed(2)}`);
+    console.log(`  Communities:      ${result.health.communityCount}`);
+    console.log(`  Orphan nodes:     ${result.health.orphanNodes}`);
+    console.log(`  Avg coherence:    ${result.health.averageCoherence.toFixed(2)}`);
+    console.log(`  Generations:      ${result.health.generationCount}`);
+    console.log("");
+  }
+
+  // Observations
+  if (result.observations.length > 0) {
+    console.log(`Observations (${result.observations.length}):`);
+    for (const obs of result.observations) {
+      console.log(`  [${obs.type}] (confidence: ${obs.confidence.toFixed(1)})`);
+      console.log(`    ${obs.content}`);
+    }
+    console.log("");
+  }
+}
