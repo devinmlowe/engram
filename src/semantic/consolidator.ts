@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import Anthropic from "@anthropic-ai/sdk";
 import type Database from "better-sqlite3";
 import type { Memory, MemoryType } from "../core/types.js";
+import { isOpenRouterAvailable, callOpenRouterTool } from "../core/openrouter.js";
 import type {
   ExtractedFact,
   DeduplicationResult,
@@ -55,21 +56,26 @@ const CONTRADICTION_THRESHOLD = 0.7;
 // ─── Initialization ─────────────────────────────────────────────
 
 /**
- * Initialize the Anthropic client for conflict resolution.
- * Uses the provided API key, or falls back to ANTHROPIC_API_KEY env var.
+ * Initialize the conflict resolution clients.
+ *
+ * Creates the Anthropic client if an API key is available.
+ * OpenRouter is used via the shared client when OPENROUTER_API_KEY is set.
+ * At least one provider must be configured.
  */
 export function initConsolidator(anthropicApiKey?: string): void {
   if (client) return;
 
   const apiKey = anthropicApiKey ?? process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    throw new Error(
-      "Anthropic API key required for conflict resolution. " +
-        "Set ANTHROPIC_API_KEY environment variable or pass key to initConsolidator().",
-    );
+  if (apiKey) {
+    client = new Anthropic({ apiKey });
   }
 
-  client = new Anthropic({ apiKey });
+  if (!client && !isOpenRouterAvailable()) {
+    throw new Error(
+      "No conflict resolution provider configured. " +
+        "Set ANTHROPIC_API_KEY or OPENROUTER_API_KEY environment variable.",
+    );
+  }
 }
 
 /**
@@ -358,20 +364,49 @@ async function resolveMemoryConflict(
 /**
  * Call the LLM to resolve a memory conflict.
  * Reads the conflict resolution prompt and uses tool_use for structured output.
+ * Prefers OpenRouter when available, falls back to Anthropic API.
  */
 async function callConflictResolution(
   existingMemory: Memory,
   newFact: ExtractedFact,
 ): Promise<ConflictResolution> {
-  if (!client) {
-    throw new Error(
-      "Consolidator not initialized. Call initConsolidator() first.",
-    );
+  const systemPrompt = loadConflictPrompt();
+  const userMessage = formatConflictInput(existingMemory, newFact);
+
+  // OpenRouter path
+  if (!client && isOpenRouterAvailable()) {
+    try {
+      const { result } = await callOpenRouterTool<Record<string, unknown>>(
+        [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userMessage },
+        ],
+        {
+          name: RESOLVE_CONFLICT_TOOL.name,
+          description: RESOLVE_CONFLICT_TOOL.description ?? "",
+          parameters: RESOLVE_CONFLICT_TOOL.input_schema as Record<string, unknown>,
+        },
+        { maxTokens: 1024 },
+      );
+
+      const action = normalizeAction(result.action as string);
+      return {
+        action,
+        reasoning: (result.reasoning as string) || "No reasoning provided.",
+        updatedContent:
+          action === "update" ? (result.updated_content as string) : undefined,
+      };
+    } catch {
+      // Fall through to Anthropic if OpenRouter fails
+    }
   }
 
-  const systemPrompt = loadConflictPrompt();
-
-  const userMessage = formatConflictInput(existingMemory, newFact);
+  // Anthropic path
+  if (!client) {
+    throw new Error(
+      "No conflict resolution provider available. Set ANTHROPIC_API_KEY or OPENROUTER_API_KEY.",
+    );
+  }
 
   const response = await client.messages.create({
     model: CONFLICT_MODEL,
@@ -388,7 +423,6 @@ async function callConflictResolution(
   );
 
   if (!toolUseBlock || toolUseBlock.type !== "tool_use") {
-    // Default to noop if LLM didn't use the tool
     return {
       action: "noop",
       reasoning: "LLM did not return a structured resolution.",
@@ -396,7 +430,6 @@ async function callConflictResolution(
   }
 
   const input = toolUseBlock.input as Record<string, unknown>;
-
   const action = normalizeAction(input.action as string);
 
   return {

@@ -13,6 +13,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import Anthropic from "@anthropic-ai/sdk";
 import type { MemoryType } from "../core/types.js";
+import { isOpenRouterAvailable, callOpenRouterTool } from "../core/openrouter.js";
 import type {
   ExtractedFact,
   ExtractionResult,
@@ -37,9 +38,6 @@ const VALID_MEMORY_TYPES: ReadonlySet<MemoryType> = new Set([
 
 const DEFAULT_MODEL = "claude-haiku-4-5-20251001";
 const FALLBACK_MODEL = "claude-sonnet-4-6";
-const DEFAULT_OPENROUTER_MODEL = "google/gemini-2.5-flash-lite";
-const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
-
 const DEFAULT_CONFIG: ExtractionConfig = {
   tier: "auto",
   reflexionEnabled: false,
@@ -125,7 +123,7 @@ export async function initExtractor(anthropicApiKey?: string): Promise<void> {
   }
 
   // Verify at least one extraction provider is available
-  if (!client && !process.env.OPENROUTER_API_KEY) {
+  if (!client && !isOpenRouterAvailable()) {
     throw new Error(
       "No extraction provider configured. " +
         "Set ANTHROPIC_API_KEY or OPENROUTER_API_KEY environment variable.",
@@ -312,111 +310,25 @@ export function parseExtractionResponse(
   return facts;
 }
 
-// ─── OpenRouter Types ───────────────────────────────────────────
-
-interface OpenRouterMessage {
-  role: "system" | "user" | "assistant";
-  content: string;
-}
-
-interface OpenRouterToolCall {
-  id: string;
-  type: "function";
-  function: {
-    name: string;
-    arguments: string;
-  };
-}
-
-interface OpenRouterResponse {
-  choices: Array<{
-    message: {
-      role: string;
-      content?: string;
-      tool_calls?: OpenRouterToolCall[];
-    };
-  }>;
-  model: string;
-}
-
 // ─── LLM Extraction Call ────────────────────────────────────────
 
 /**
- * Call OpenRouter's OpenAI-compatible API for fact extraction.
- *
- * Uses function calling (tool_use) to enforce structured JSON output,
- * mirroring the Anthropic tool_use pattern but in OpenAI format.
+ * Call OpenRouter for fact extraction via the shared client.
  */
 async function callOpenRouterExtraction(
   prompt: string,
 ): Promise<{ facts: ExtractedFact[]; model: string }> {
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) {
-    throw new Error("OPENROUTER_API_KEY not set");
-  }
-
-  const model = process.env.ENGRAM_OPENROUTER_MODEL ?? DEFAULT_OPENROUTER_MODEL;
-
-  // Convert Anthropic tool schema to OpenAI function calling format
-  const toolDef = {
-    type: "function" as const,
-    function: {
+  const { result, model } = await callOpenRouterTool<{ facts: unknown[] }>(
+    [{ role: "user", content: prompt }],
+    {
       name: EXTRACT_MEMORIES_TOOL.name,
-      description: EXTRACT_MEMORIES_TOOL.description,
-      parameters: EXTRACT_MEMORIES_TOOL.input_schema,
+      description: EXTRACT_MEMORIES_TOOL.description ?? "",
+      parameters: EXTRACT_MEMORIES_TOOL.input_schema as Record<string, unknown>,
     },
-  };
+  );
 
-  const messages: OpenRouterMessage[] = [
-    { role: "user", content: prompt },
-  ];
-
-  const response = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${apiKey}`,
-      "HTTP-Referer": "https://github.com/devinmlowe/engram",
-      "X-Title": "engram dream cycle",
-    },
-    body: JSON.stringify({
-      model,
-      messages,
-      tools: [toolDef],
-      tool_choice: { type: "function", function: { name: "extract_memories" } },
-      max_tokens: 4096,
-      temperature: 0,
-    }),
-  });
-
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`OpenRouter API error ${response.status}: ${body}`);
-  }
-
-  const data = (await response.json()) as OpenRouterResponse;
-
-  // Extract function call arguments from the response
-  const toolCalls = data.choices?.[0]?.message?.tool_calls;
-  if (!toolCalls || toolCalls.length === 0) {
-    // Some models return the JSON directly in content instead of tool_calls
-    const content = data.choices?.[0]?.message?.content;
-    if (content) {
-      try {
-        const parsed = JSON.parse(content) as Record<string, unknown>;
-        const facts = parseExtractionResponse(parsed);
-        return { facts, model: data.model ?? model };
-      } catch {
-        return { facts: [], model: data.model ?? model };
-      }
-    }
-    return { facts: [], model: data.model ?? model };
-  }
-
-  const args = toolCalls[0].function.arguments;
-  const parsed = JSON.parse(args) as Record<string, unknown>;
-  const facts = parseExtractionResponse(parsed);
-  return { facts, model: data.model ?? model };
+  const facts = parseExtractionResponse({ facts: result.facts });
+  return { facts, model };
 }
 
 /**
@@ -679,7 +591,7 @@ function resolveModels(
     default: {
       const models: Array<{ model: string; tier: "local" | "openrouter" | "haiku" | "sonnet" }> = [];
       // Prefer OpenRouter when available (10x cheaper than Haiku)
-      if (process.env.OPENROUTER_API_KEY) {
+      if (isOpenRouterAvailable()) {
         models.push({ model: "openrouter", tier: "openrouter" });
       }
       // Anthropic tiers as fallback

@@ -6,6 +6,7 @@ import {
   parseRelationshipExtractionResponse,
   extractEntities,
   extractRelationships,
+  initGraphExtractor,
   resetGraphExtractor,
   setGraphExtractorClient,
 } from "../../src/graph/extractor.js";
@@ -387,12 +388,19 @@ describe("parseRelationshipExtractionResponse", () => {
 // ─── Extraction with mock API client ────────────────────────────
 
 describe("extractEntities (mocked API)", () => {
+  let savedOpenRouterKey: string | undefined;
+
   beforeEach(() => {
     resetGraphExtractor();
+    savedOpenRouterKey = process.env.OPENROUTER_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
   });
 
   afterEach(() => {
     resetGraphExtractor();
+    if (savedOpenRouterKey !== undefined) {
+      process.env.OPENROUTER_API_KEY = savedOpenRouterKey;
+    }
   });
 
   it("returns correct EntityExtractionResult structure with mocked client", async () => {
@@ -454,20 +462,33 @@ describe("extractEntities (mocked API)", () => {
     });
   });
 
-  it("throws when no API client is initialized", async () => {
-    await expect(
-      extractEntities(makeExchanges(1), defaultMetadata),
-    ).rejects.toThrow("Graph extractor not initialized");
+  it("throws when no extraction provider is configured", async () => {
+    const savedAnthropicKey = process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    try {
+      await expect(initGraphExtractor()).rejects.toThrow("No graph extraction provider configured");
+    } finally {
+      if (savedAnthropicKey !== undefined) {
+        process.env.ANTHROPIC_API_KEY = savedAnthropicKey;
+      }
+    }
   });
 });
 
 describe("extractRelationships (mocked API)", () => {
+  let savedOpenRouterKey: string | undefined;
+
   beforeEach(() => {
     resetGraphExtractor();
+    savedOpenRouterKey = process.env.OPENROUTER_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
   });
 
   afterEach(() => {
     resetGraphExtractor();
+    if (savedOpenRouterKey !== undefined) {
+      process.env.OPENROUTER_API_KEY = savedOpenRouterKey;
+    }
   });
 
   it("returns correct RelationshipExtractionResult structure with mocked client", async () => {
@@ -534,13 +555,15 @@ describe("extractRelationships (mocked API)", () => {
     });
   });
 
-  it("throws when no API client is initialized", async () => {
-    const resolvedEntities = [
-      { index: 0, id: "ent-1", name: "engram", type: "project" as const },
-    ];
-
-    await expect(
-      extractRelationships(makeExchanges(1), defaultMetadata, resolvedEntities),
-    ).rejects.toThrow("Graph extractor not initialized");
+  it("throws when no extraction provider is configured", async () => {
+    const savedAnthropicKey = process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    try {
+      await expect(initGraphExtractor()).rejects.toThrow("No graph extraction provider configured");
+    } finally {
+      if (savedAnthropicKey !== undefined) {
+        process.env.ANTHROPIC_API_KEY = savedAnthropicKey;
+      }
+    }
   });
 });

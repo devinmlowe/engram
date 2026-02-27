@@ -14,6 +14,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import Anthropic from "@anthropic-ai/sdk";
 import type { EntityType, RelationshipType } from "../core/types.js";
+import { isOpenRouterAvailable, callOpenRouterTool } from "../core/openrouter.js";
 import type {
   ExtractedEntity,
   ExtractedRelationship,
@@ -128,21 +129,26 @@ const EXTRACT_RELATIONSHIPS_TOOL: Anthropic.Tool = {
 // ─── Initialization ─────────────────────────────────────────────
 
 /**
- * Initialize the Anthropic client for graph extraction.
- * Uses the provided API key, or falls back to ANTHROPIC_API_KEY env var.
+ * Initialize the graph extraction clients.
+ *
+ * Creates the Anthropic client if an API key is available.
+ * OpenRouter is used via the shared client when OPENROUTER_API_KEY is set.
+ * At least one provider must be configured.
  */
 export async function initGraphExtractor(anthropicApiKey?: string): Promise<void> {
   if (client) return;
 
   const apiKey = anthropicApiKey ?? process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    throw new Error(
-      "Anthropic API key required for graph extraction. " +
-        "Set ANTHROPIC_API_KEY environment variable or pass key to initGraphExtractor().",
-    );
+  if (apiKey) {
+    client = new Anthropic({ apiKey });
   }
 
-  client = new Anthropic({ apiKey });
+  if (!client && !isOpenRouterAvailable()) {
+    throw new Error(
+      "No graph extraction provider configured. " +
+        "Set ANTHROPIC_API_KEY or OPENROUTER_API_KEY environment variable.",
+    );
+  }
 }
 
 /**
@@ -411,15 +417,30 @@ export function parseRelationshipExtractionResponse(
 // ─── LLM Extraction Calls ───────────────────────────────────────
 
 /**
- * Call the Anthropic API for entity extraction with a specific model.
+ * Call an LLM for entity extraction, preferring OpenRouter when available.
  */
 async function callEntityExtraction(
   prompt: string,
   model: string,
 ): Promise<{ entities: ExtractedEntity[]; model: string }> {
+  // OpenRouter path: use shared client with function calling
+  if (model === "openrouter" || (!client && isOpenRouterAvailable())) {
+    const { result, model: usedModel } = await callOpenRouterTool<{ entities: unknown[] }>(
+      [{ role: "user", content: prompt }],
+      {
+        name: EXTRACT_ENTITIES_TOOL.name,
+        description: EXTRACT_ENTITIES_TOOL.description ?? "",
+        parameters: EXTRACT_ENTITIES_TOOL.input_schema as Record<string, unknown>,
+      },
+    );
+    const entities = parseEntityExtractionResponse({ entities: result.entities });
+    return { entities, model: usedModel };
+  }
+
+  // Anthropic path
   if (!client) {
     throw new Error(
-      "Graph extractor not initialized. Call initGraphExtractor() first.",
+      "Graph extractor not initialized. Set ANTHROPIC_API_KEY or OPENROUTER_API_KEY.",
     );
   }
 
@@ -431,7 +452,6 @@ async function callEntityExtraction(
     messages: [{ role: "user", content: prompt }],
   });
 
-  // Find the tool_use block in response
   const toolUseBlock = response.content.find(
     (block) => block.type === "tool_use",
   );
@@ -447,16 +467,34 @@ async function callEntityExtraction(
 }
 
 /**
- * Call the Anthropic API for relationship extraction with a specific model.
+ * Call an LLM for relationship extraction, preferring OpenRouter when available.
  */
 async function callRelationshipExtraction(
   prompt: string,
   model: string,
   entityCount: number,
 ): Promise<{ relationships: ExtractedRelationship[]; model: string }> {
+  // OpenRouter path
+  if (model === "openrouter" || (!client && isOpenRouterAvailable())) {
+    const { result, model: usedModel } = await callOpenRouterTool<{ relationships: unknown[] }>(
+      [{ role: "user", content: prompt }],
+      {
+        name: EXTRACT_RELATIONSHIPS_TOOL.name,
+        description: EXTRACT_RELATIONSHIPS_TOOL.description ?? "",
+        parameters: EXTRACT_RELATIONSHIPS_TOOL.input_schema as Record<string, unknown>,
+      },
+    );
+    const relationships = parseRelationshipExtractionResponse(
+      { relationships: result.relationships },
+      entityCount,
+    );
+    return { relationships, model: usedModel };
+  }
+
+  // Anthropic path
   if (!client) {
     throw new Error(
-      "Graph extractor not initialized. Call initGraphExtractor() first.",
+      "Graph extractor not initialized. Set ANTHROPIC_API_KEY or OPENROUTER_API_KEY.",
     );
   }
 
@@ -468,7 +506,6 @@ async function callRelationshipExtraction(
     messages: [{ role: "user", content: prompt }],
   });
 
-  // Find the tool_use block in response
   const toolUseBlock = response.content.find(
     (block) => block.type === "tool_use",
   );
@@ -503,12 +540,6 @@ export async function extractEntities(
   exchanges: ConversationExchange[],
   metadata: ConversationMetadata,
 ): Promise<EntityExtractionResult> {
-  if (!client) {
-    throw new Error(
-      "Graph extractor not initialized. Call initGraphExtractor() first.",
-    );
-  }
-
   const startTime = Date.now();
   const chunks = chunkConversation(exchanges);
 
@@ -519,18 +550,24 @@ export async function extractEntities(
   for (const chunk of chunks) {
     const prompt = buildEntityExtractionPrompt(chunk, metadata);
 
-    // Try Haiku first, fall back to Sonnet
+    // Try OpenRouter first, then Haiku, then Sonnet
     try {
-      const result = await callEntityExtraction(prompt, DEFAULT_MODEL);
+      const result = await callEntityExtraction(prompt, isOpenRouterAvailable() ? "openrouter" : DEFAULT_MODEL);
       allEntities.push(...result.entities);
       usedModel = result.model;
-      usedTier = "haiku";
     } catch {
-      // Fallback to Sonnet
-      const result = await callEntityExtraction(prompt, FALLBACK_MODEL);
-      allEntities.push(...result.entities);
-      usedModel = result.model;
-      usedTier = "sonnet";
+      // Fallback to Anthropic tiers
+      try {
+        const result = await callEntityExtraction(prompt, DEFAULT_MODEL);
+        allEntities.push(...result.entities);
+        usedModel = result.model;
+        usedTier = "haiku";
+      } catch {
+        const result = await callEntityExtraction(prompt, FALLBACK_MODEL);
+        allEntities.push(...result.entities);
+        usedModel = result.model;
+        usedTier = "sonnet";
+      }
     }
   }
 
@@ -569,12 +606,6 @@ export async function extractRelationships(
   metadata: ConversationMetadata,
   resolvedEntities: Array<{ index: number; id: string; name: string; type: EntityType }>,
 ): Promise<RelationshipExtractionResult> {
-  if (!client) {
-    throw new Error(
-      "Graph extractor not initialized. Call initGraphExtractor() first.",
-    );
-  }
-
   const startTime = Date.now();
 
   const entityList = resolvedEntities.map((e) => ({
@@ -593,26 +624,35 @@ export async function extractRelationships(
   let usedModel = DEFAULT_MODEL;
   let usedTier: "haiku" | "sonnet" = "haiku";
 
-  // Try Haiku first, fall back to Sonnet
+  // Try OpenRouter first, then Haiku, then Sonnet
   try {
     const result = await callRelationshipExtraction(
       prompt,
-      DEFAULT_MODEL,
+      isOpenRouterAvailable() ? "openrouter" : DEFAULT_MODEL,
       resolvedEntities.length,
     );
     relationships = result.relationships;
     usedModel = result.model;
-    usedTier = "haiku";
   } catch {
-    // Fallback to Sonnet
-    const result = await callRelationshipExtraction(
-      prompt,
-      FALLBACK_MODEL,
-      resolvedEntities.length,
-    );
-    relationships = result.relationships;
-    usedModel = result.model;
-    usedTier = "sonnet";
+    try {
+      const result = await callRelationshipExtraction(
+        prompt,
+        DEFAULT_MODEL,
+        resolvedEntities.length,
+      );
+      relationships = result.relationships;
+      usedModel = result.model;
+      usedTier = "haiku";
+    } catch {
+      const result = await callRelationshipExtraction(
+        prompt,
+        FALLBACK_MODEL,
+        resolvedEntities.length,
+      );
+      relationships = result.relationships;
+      usedModel = result.model;
+      usedTier = "sonnet";
+    }
   }
 
   const durationMs = Date.now() - startTime;

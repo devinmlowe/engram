@@ -9,6 +9,10 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import type { EngramConfig } from "../core/types.js";
+import {
+  callOpenRouterTool,
+  callOpenRouterText,
+} from "../core/openrouter.js";
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -70,7 +74,6 @@ function getClient(): Anthropic {
 const DEFAULT_OLLAMA_URL = "http://localhost:11434";
 const DEFAULT_OLLAMA_MODEL = "qwen2.5:7b";
 const DEFAULT_OPENROUTER_MODEL = "google/gemini-2.5-flash-lite";
-const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const DEFAULT_TIMEOUT_MS = 120_000;
 const AVAILABILITY_TIMEOUT_MS = 5_000;
 
@@ -263,10 +266,8 @@ async function ollamaGenerate(
 // ─── OpenRouter (Cloud Fallback) ─────────────────────────────────
 
 /**
- * Structured generation via OpenRouter's OpenAI-compatible API.
- *
- * Uses function calling to enforce schema. Returns null on failure
- * so the caller can fall through to the next tier.
+ * Structured generation via the shared OpenRouter client.
+ * Returns null on failure so the caller can fall through.
  */
 async function openrouterGenerateStructured<T>(
   systemPrompt: string,
@@ -274,72 +275,27 @@ async function openrouterGenerateStructured<T>(
   schema: Record<string, unknown>,
   config: IntelligenceConfig,
 ): Promise<GenerationResult<T> | null> {
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey || !config.openrouterModel) return null;
+  if (!config.openrouterModel) return null;
 
   try {
     const startMs = Date.now();
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), config.timeoutMs);
-
-    const response = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${apiKey}`,
-        "HTTP-Referer": "https://github.com/devinmlowe/engram",
-        "X-Title": "engram dream cycle",
+    const { result, model } = await callOpenRouterTool<T>(
+      [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+      {
+        name: "structured_output",
+        description: "Return structured data matching the schema",
+        parameters: { type: "object", ...schema },
       },
-      body: JSON.stringify({
-        model: config.openrouterModel,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ],
-        tools: [{
-          type: "function",
-          function: {
-            name: "structured_output",
-            description: "Return structured data matching the schema",
-            parameters: { type: "object", ...schema },
-          },
-        }],
-        tool_choice: { type: "function", function: { name: "structured_output" } },
-        max_tokens: 4096,
-        temperature: 0,
-      }),
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
-
-    if (!response.ok) return null;
-
-    const data = (await response.json()) as {
-      choices?: Array<{
-        message: {
-          content?: string;
-          tool_calls?: Array<{ function: { arguments: string } }>;
-        };
-      }>;
-      model?: string;
-    };
-
-    const toolCalls = data.choices?.[0]?.message?.tool_calls;
-    let parsed: T;
-
-    if (toolCalls && toolCalls.length > 0) {
-      parsed = JSON.parse(toolCalls[0].function.arguments) as T;
-    } else {
-      // Some models return JSON in content instead of tool_calls
-      const content = data.choices?.[0]?.message?.content;
-      if (!content) return null;
-      parsed = JSON.parse(content) as T;
-    }
+      { model: config.openrouterModel, timeoutMs: config.timeoutMs },
+    );
 
     return {
-      result: parsed,
+      result,
       source: "api",
-      model: data.model ?? config.openrouterModel,
+      model,
       durationMs: Date.now() - startMs,
     };
   } catch {
@@ -348,7 +304,7 @@ async function openrouterGenerateStructured<T>(
 }
 
 /**
- * Free-text generation via OpenRouter.
+ * Free-text generation via the shared OpenRouter client.
  * Returns null on failure so the caller can fall through.
  */
 async function openrouterGenerate(
@@ -356,49 +312,22 @@ async function openrouterGenerate(
   userPrompt: string,
   config: IntelligenceConfig,
 ): Promise<GenerationResult<string> | null> {
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey || !config.openrouterModel) return null;
+  if (!config.openrouterModel) return null;
 
   try {
     const startMs = Date.now();
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), config.timeoutMs);
-
-    const response = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${apiKey}`,
-        "HTTP-Referer": "https://github.com/devinmlowe/engram",
-        "X-Title": "engram dream cycle",
-      },
-      body: JSON.stringify({
-        model: config.openrouterModel,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ],
-        max_tokens: 4096,
-        temperature: 0,
-      }),
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
-
-    if (!response.ok) return null;
-
-    const data = (await response.json()) as {
-      choices?: Array<{ message: { content?: string } }>;
-      model?: string;
-    };
-
-    const content = data.choices?.[0]?.message?.content;
-    if (!content) return null;
+    const { result, model } = await callOpenRouterText(
+      [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+      { model: config.openrouterModel, timeoutMs: config.timeoutMs },
+    );
 
     return {
-      result: content,
+      result,
       source: "api",
-      model: data.model ?? config.openrouterModel,
+      model,
       durationMs: Date.now() - startMs,
     };
   } catch {
