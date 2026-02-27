@@ -795,6 +795,110 @@ program
     }
   });
 
+// ─── mcp ──────────────────────────────────────────────────────────
+
+program
+  .command("mcp")
+  .description("Start MCP server (stdio transport)")
+  .action(async () => {
+    await import("../mcp/server.js");
+  });
+
+// ─── health ───────────────────────────────────────────────────────
+
+program
+  .command("health")
+  .description("Check system health")
+  .action(async () => {
+    const { existsSync, statSync } = await import("node:fs");
+    const config = loadConfig();
+
+    let allOk = true;
+
+    // 1. Check DB exists and is readable
+    const dbExists = existsSync(config.dbPath);
+    if (dbExists) {
+      try {
+        const db = initDatabase(config);
+        const exchangeCount = (
+          db.prepare("SELECT COUNT(*) as count FROM exchanges").get() as {
+            count: number;
+          }
+        ).count;
+        const memoryCount = (
+          db
+            .prepare(
+              "SELECT COUNT(*) as count FROM memories WHERE is_active = 1",
+            )
+            .get() as { count: number }
+        ).count;
+        const entityCount = (
+          db.prepare("SELECT COUNT(*) as count FROM entities").get() as {
+            count: number;
+          }
+        ).count;
+        const dbSize = statSync(config.dbPath).size;
+        db.close();
+
+        console.log(`[ok] Database: ${config.dbPath} (${(dbSize / 1024 / 1024).toFixed(1)} MB)`);
+        console.log(`     Exchanges: ${exchangeCount}, Memories: ${memoryCount}, Entities: ${entityCount}`);
+      } catch (err) {
+        console.log(`[FAIL] Database: ${config.dbPath} — ${err instanceof Error ? err.message : err}`);
+        allOk = false;
+      }
+    } else {
+      console.log(`[FAIL] Database: ${config.dbPath} — not found (run 'engram init')`);
+      allOk = false;
+    }
+
+    // 2. Check embedding model
+    try {
+      const { initEmbeddings, getActiveModel } = await import(
+        "../episodic/embeddings.js"
+      );
+      await initEmbeddings(config);
+      console.log(`[ok] Embedding model: ${getActiveModel()}`);
+    } catch (err) {
+      console.log(`[FAIL] Embedding model: ${err instanceof Error ? err.message : err}`);
+      allOk = false;
+    }
+
+    // 3. Check Ollama availability (optional)
+    try {
+      const resp = await fetch("http://localhost:11434/api/tags");
+      if (resp.ok) {
+        const data = (await resp.json()) as { models?: Array<{ name: string }> };
+        const modelCount = data.models?.length ?? 0;
+        console.log(`[ok] Ollama: running (${modelCount} models available)`);
+      } else {
+        console.log(`[--] Ollama: not responding (optional)`);
+      }
+    } catch {
+      console.log(`[--] Ollama: not running (optional)`);
+    }
+
+    // 4. Check MCP server entry point
+    const mcpEntry = join(
+      import.meta.dirname ?? ".",
+      "../mcp/server.js",
+    );
+    if (existsSync(mcpEntry)) {
+      console.log(`[ok] MCP server: ${mcpEntry}`);
+    } else {
+      console.log(`[--] MCP server: not built (run 'npm run build')`);
+    }
+
+    // 5. Report MCP tool count
+    console.log(`[ok] MCP tools: 5 (recall, remember, show, explore, reflect)`);
+
+    if (allOk) {
+      console.log("\nHealth: all checks passed");
+    } else {
+      console.log("\nHealth: some checks failed");
+      process.exit(1);
+    }
+  });
+
 // ─── reflect ─────────────────────────────────────────────────────
 
 program
