@@ -5,8 +5,15 @@ import {
   type Tensor,
 } from "@xenova/transformers";
 import type { EngramConfig } from "../core/types.js";
+import { LRUCache } from "../core/cache.js";
 
 let embeddingPipeline: FeatureExtractionPipeline | null = null;
+
+/** Cache for query embeddings — avoids re-embedding identical queries within a session */
+const queryEmbeddingCache = new LRUCache<string, number[]>({
+  maxSize: 200,
+  ttlMs: 5 * 60 * 1000, // 5 minutes
+});
 let activeModel: "nomic" | "minilm" = "nomic";
 let activeDimensions = 256;
 
@@ -92,9 +99,15 @@ async function embed(text: string, prefix: string): Promise<number[]> {
 
 /**
  * Embed a search query. Uses `search_query:` prefix for nomic.
+ * Results are cached by query string to avoid redundant computation.
  */
 export async function embedQuery(text: string): Promise<number[]> {
-  return embed(text, "search_query: ");
+  const cached = queryEmbeddingCache.get(text);
+  if (cached) return cached;
+
+  const embedding = await embed(text, "search_query: ");
+  queryEmbeddingCache.set(text, embedding);
+  return embedding;
 }
 
 /**
@@ -206,4 +219,5 @@ export function resetEmbeddings(): void {
   embeddingPipeline = null;
   activeModel = "nomic";
   activeDimensions = 256;
+  queryEmbeddingCache.clear();
 }
