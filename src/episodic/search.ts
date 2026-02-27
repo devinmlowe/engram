@@ -4,10 +4,16 @@ import type {
   SearchResult,
   RecallResponse,
   SearchSource,
+  EngramConfig,
 } from "../core/types.js";
 import { embedQuery } from "./embeddings.js";
 import { searchSemantic } from "../semantic/search.js";
 import { searchGraph } from "../graph/search.js";
+import {
+  rerankResults,
+  isRerankerAvailable,
+} from "../retrieval/reranker.js";
+import { allocateBudget } from "../retrieval/context.js";
 
 // ─── RRF Fusion ────────────────────────────────────────────────
 
@@ -73,21 +79,13 @@ export function normalizeMinMaxFloored(
 
 /**
  * Greedily fill results within a token budget.
+ * @deprecated Use allocateBudget() from retrieval/context.ts for priority-aware budgeting.
  */
 export function budgetResults(
   results: SearchResult[],
   budget: number,
 ): SearchResult[] {
-  const selected: SearchResult[] = [];
-  let used = 0;
-
-  for (const result of results) {
-    if (used + result.tokenEstimate > budget) continue;
-    selected.push(result);
-    used += result.tokenEstimate;
-  }
-
-  return selected;
+  return allocateBudget(results, budget);
 }
 
 // ─── XML Formatting ────────────────────────────────────────────
@@ -417,7 +415,7 @@ const SEMANTIC_BOOST = 1.2;
 
 /**
  * Search across multiple memory sources (episodic + semantic + graph) with
- * cross-source RRF fusion.
+ * cross-source RRF fusion and optional cross-encoder reranking.
  *
  * Pipeline:
  * 1. Determine which sources to query (default: episodic + semantic)
@@ -425,12 +423,14 @@ const SEMANTIC_BOOST = 1.2;
  * 3. Apply semantic boost (1.2x) before cross-source RRF
  * 4. Fuse episodic + semantic with RRF, append graph results
  * 5. Normalize combined results
+ * 5b. If reranking enabled: rerank top 20 with cross-encoder → return top K
  * 6. Apply token budget: semantic first, then graph, then episodic
  * 7. Return RecallResponse
  */
 export async function searchMultiSource(
   db: Database.Database,
   options: SearchOptions,
+  config?: EngramConfig,
 ): Promise<RecallResponse> {
   const {
     query,
@@ -523,13 +523,40 @@ export async function searchMultiSource(
 
   const totalResults = allResults.length;
 
-  // 6. Apply token budget: semantic first, then graph (compact), then episodic
-  const semanticFirst = allResults.filter((r) => r.source === "semantic");
-  const graphSecond = allResults.filter((r) => r.source === "graph");
-  const episodicThird = allResults.filter((r) => r.source === "episodic");
-  const prioritized = [...semanticFirst, ...graphSecond, ...episodicThird];
+  // 5b. Cross-encoder reranking (if enabled)
+  const rerankerConfig = config?.search?.reranker;
+  if (rerankerConfig?.enabled) {
+    try {
+      // Take top 20 for reranking (optimal candidate window per research)
+      const rerankerCandidates = allResults.slice(0, 20);
+      const reranked = await rerankResults(query, rerankerCandidates, {
+        topK: rerankerConfig.topK,
+        blendWeight: rerankerConfig.blendWeight,
+        model: rerankerConfig.model,
+      });
 
-  const budgeted = budgetResults(prioritized, budget);
+      // If reranking succeeded (returned different count or order), use reranked results
+      // plus any remaining results beyond the reranked window
+      if (reranked.length > 0) {
+        const rerankedIds = new Set(reranked.map((r) => r.id));
+        const remaining = allResults.slice(20).filter((r) => !rerankedIds.has(r.id));
+        const budgeted = budgetResults([...reranked, ...remaining], budget);
+        const tokensUsed = budgeted.reduce((sum, r) => sum + r.tokenEstimate, 0);
+        return {
+          results: budgeted,
+          tokensUsed,
+          totalResults,
+          query,
+        };
+      }
+    } catch {
+      // Graceful degradation: continue with original ranking
+    }
+  }
+
+  // 6. Apply token budget with priority-aware allocation
+  //    allocateBudget() handles priority ordering: semantic 1.3x > graph 1.1x > episodic 1.0x
+  const budgeted = allocateBudget(allResults, budget);
   const tokensUsed = budgeted.reduce((sum, r) => sum + r.tokenEstimate, 0);
 
   return {

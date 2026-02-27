@@ -369,7 +369,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         depth: params.depth ?? "shallow",
       };
 
-      const response = await searchMultiSource(getDb(), searchOptions);
+      if (!config) config = loadConfig();
+      const response = await searchMultiSource(getDb(), searchOptions, config);
       const xml = formatRecallXml(response);
 
       return {
