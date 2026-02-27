@@ -17,6 +17,8 @@ export function initDatabase(config: EngramConfig): Database.Database {
   db.pragma("journal_mode = WAL");
   db.pragma("synchronous = NORMAL");
   db.pragma("foreign_keys = ON");
+  db.pragma("mmap_size = 268435456"); // 256MB memory-mapped I/O
+  db.pragma("cache_size = -64000"); // 64MB page cache
 
   // Load sqlite-vec extension for vector similarity search
   sqliteVec.load(db);
