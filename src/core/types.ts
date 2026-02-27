@@ -215,6 +215,15 @@ export interface DreamReport {
   clustersPruned?: number;
 }
 
+// ─── Reranking ──────────────────────────────────────────────────
+
+export interface RerankerConfig {
+  enabled: boolean;
+  model: string; // e.g. 'Xenova/bge-reranker-base'
+  topK: number; // final number of results after reranking
+  blendWeight: number; // weight for reranker score: final = blend*reranker + (1-blend)*rrf
+}
+
 // ─── Configuration ──────────────────────────────────────────────
 
 export interface EngramConfig {
@@ -235,6 +244,7 @@ export interface EngramConfig {
     defaultBudget: number; // 1500 tokens
     rrfK: number; // 60 (RRF fusion constant)
     rerankEnabled: boolean;
+    reranker: RerankerConfig;
   };
 
   dream: {

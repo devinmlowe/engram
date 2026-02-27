@@ -21,7 +21,13 @@ const defaults: EngramConfig = {
     defaultLimit: 10,
     defaultBudget: 1500,
     rrfK: 60,
-    rerankEnabled: false,
+    rerankEnabled: true,
+    reranker: {
+      enabled: true,
+      model: "Xenova/bge-reranker-base",
+      topK: 5,
+      blendWeight: 0.7,
+    },
   },
 
   dream: {
@@ -74,6 +80,16 @@ export function loadConfig(overrides?: Partial<EngramConfig>): EngramConfig {
     search: {
       ...defaults.search,
       ...overrides?.search,
+      rerankEnabled: env.ENGRAM_RERANK_ENABLED !== undefined
+        ? env.ENGRAM_RERANK_ENABLED !== "false" && env.ENGRAM_RERANK_ENABLED !== "0"
+        : (overrides?.search?.rerankEnabled ?? defaults.search.rerankEnabled),
+      reranker: {
+        ...defaults.search.reranker,
+        ...overrides?.search?.reranker,
+        enabled: env.ENGRAM_RERANK_ENABLED !== undefined
+          ? env.ENGRAM_RERANK_ENABLED !== "false" && env.ENGRAM_RERANK_ENABLED !== "0"
+          : (overrides?.search?.reranker?.enabled ?? defaults.search.reranker.enabled),
+      },
     },
 
     dream: {
