@@ -10,6 +10,13 @@
 
 import type Database from "better-sqlite3";
 import type { Entity, EntityType } from "./types.js";
+import {
+  insertVector,
+  searchVector,
+  deleteVector,
+  insertFtsRow,
+  deleteFtsRow,
+} from "../_core/db/index.js";
 
 // ─── Row Type Helpers ───────────────────────────────────────────
 
@@ -89,17 +96,15 @@ export function insertEntity(
         .get(entity.id) as { rowid: number } | undefined;
 
       if (row) {
-        db.prepare(
-          "INSERT INTO entities_fts(rowid, name, description) VALUES (?, ?, ?)",
-        ).run(row.rowid, entity.name, entity.description ?? null);
+        insertFtsRow(db, "entities_fts", row.rowid, {
+          name: entity.name,
+          description: entity.description ?? null,
+        });
       }
     }
 
     // 3. Insert into vec_entities (delete first — vec0 doesn't support REPLACE)
-    db.prepare("DELETE FROM vec_entities WHERE id = ?").run(entity.id);
-    db.prepare(
-      "INSERT INTO vec_entities(id, embedding) VALUES (?, ?)",
-    ).run(entity.id, Buffer.from(new Float32Array(embedding).buffer));
+    insertVector(db, "vec_entities", entity.id, embedding);
   });
 
   run();
@@ -131,9 +136,10 @@ export function updateEntity(
 
     // If name or description changed, delete old FTS entry
     if (needsFtsSync) {
-      db.prepare(
-        "INSERT INTO entities_fts(entities_fts, rowid, name, description) VALUES('delete', ?, ?, ?)",
-      ).run(existing.rowid, existing.name, existing.description);
+      deleteFtsRow(db, "entities_fts", existing.rowid, {
+        name: existing.name,
+        description: existing.description,
+      });
     }
 
     // Build dynamic SET clause
@@ -184,9 +190,10 @@ export function updateEntity(
           ? (updates.description ?? null)
           : existing.description;
 
-      db.prepare(
-        "INSERT INTO entities_fts(rowid, name, description) VALUES (?, ?, ?)",
-      ).run(existing.rowid, newName, newDescription);
+      insertFtsRow(db, "entities_fts", existing.rowid, {
+        name: newName,
+        description: newDescription,
+      });
     }
   });
 
@@ -202,14 +209,8 @@ export function updateEntityEmbedding(
   id: string,
   embedding: number[],
 ): void {
-  const run = db.transaction(() => {
-    db.prepare("DELETE FROM vec_entities WHERE id = ?").run(id);
-    db.prepare(
-      "INSERT INTO vec_entities(id, embedding) VALUES (?, ?)",
-    ).run(id, Buffer.from(new Float32Array(embedding).buffer));
-  });
-
-  run();
+  // insertVector handles delete+insert atomically
+  insertVector(db, "vec_entities", id, embedding);
 }
 
 /**
@@ -443,13 +444,14 @@ export function mergeEntities(
         .get(mergeId) as { rowid: number } | undefined;
 
       if (mergeRowid) {
-        db.prepare(
-          "INSERT INTO entities_fts(entities_fts, rowid, name, description) VALUES('delete', ?, ?, ?)",
-        ).run(mergeRowid.rowid, mergeRow.name, mergeRow.description);
+        deleteFtsRow(db, "entities_fts", mergeRowid.rowid, {
+          name: mergeRow.name,
+          description: mergeRow.description,
+        });
       }
     }
 
-    db.prepare("DELETE FROM vec_entities WHERE id = ?").run(mergeId);
+    deleteVector(db, "vec_entities", mergeId);
     db.prepare("DELETE FROM entities WHERE id = ?").run(mergeId);
   });
 
@@ -467,15 +469,7 @@ export function findNearestEntities(
   embedding: number[],
   limit: number = 10,
 ): Array<{ id: string; distance: number }> {
-  const queryBuf = Buffer.from(new Float32Array(embedding).buffer);
-
-  const results = db
-    .prepare(
-      "SELECT id, distance FROM vec_entities WHERE embedding MATCH ? AND k = ?",
-    )
-    .all(queryBuf, limit) as Array<{ id: string; distance: number }>;
-
-  return results;
+  return searchVector(db, "vec_entities", embedding, limit);
 }
 
 // ─── Full-Text Search ───────────────────────────────────────────
