@@ -1,7 +1,7 @@
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { initDatabase } from "../src/core/db.js";
+import { initDatabase } from "../src/_core/db/index.js";
 import { loadConfig } from "../src/_core/config/index.js";
 import type Database from "better-sqlite3";
 import type {

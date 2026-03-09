@@ -3,7 +3,7 @@ import { Command } from "commander";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { loadConfig } from "../_core/config/index.js";
-import { initDatabase } from "../core/db.js";
+import { initDatabase } from "../_core/db/index.js";
 
 const program = new Command();
 

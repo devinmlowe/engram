@@ -7,7 +7,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { existsSync, readFileSync } from "node:fs";
-import { initDatabase } from "../core/db.js";
+import { initDatabase } from "../_core/db/index.js";
 import { loadConfig } from "../_core/config/index.js";
 import {
   searchMultiSource,
