@@ -5,7 +5,7 @@ import {
   type Tensor,
 } from "@xenova/transformers";
 import type { EngramConfig } from "../core/types.js";
-import { LRUCache } from "../core/cache.js";
+import { LRUCache } from "../_core/cache/index.js";
 
 let embeddingPipeline: FeatureExtractionPipeline | null = null;
 
