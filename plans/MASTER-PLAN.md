@@ -49,7 +49,7 @@ Extract misplaced shared services from domain directories into `_core/`:
 
 ### [Phase 2: Thin Data Access Layer](./phase-2-plan.md)
 
-**Status:** Not started
+**Status:** COMPLETE (merged to integration branch)
 **Depends on:** Phase 1 complete and merged to integration branch
 **Resolves issues:** 5, 18
 
@@ -68,7 +68,7 @@ Implement thin DAL in `_core/db/`:
 
 ### [Phase 3: Unify Interfaces](./phase-3-plan.md)
 
-**Status:** Not started
+**Status:** COMPLETE (merged to integration branch)
 **Depends on:** Phase 1 complete and merged to integration branch
 **Runs in parallel with:** Phase 2
 **Resolves issues:** 12, 14, 21
@@ -89,7 +89,7 @@ Move `src/cli/`, `src/mcp/`, `src/web/` under `interfaces/`:
 
 ### [Phase 4: Decompose graph-server.ts](./phase-4-plan.md)
 
-**Status:** Not started
+**Status:** In progress
 **Depends on:** Phases 2 and 3 complete and merged to integration branch
 **Resolves issues:** 3, 5 (partially, web-specific SQL)
 
