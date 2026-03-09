@@ -24,7 +24,7 @@ import {
   getEntityByAlias,
 } from "./entity.js";
 import { getRelationshipsForEntity } from "./relationship.js";
-import { rrfFuse, normalizeMinMaxFloored } from "../episodic/search.js";
+import { rrfFuse, normalizeMinMaxFloored } from "../_core/search/rrf.js";
 
 // ─── Entity Lookup ───────────────────────────────────────────────
 

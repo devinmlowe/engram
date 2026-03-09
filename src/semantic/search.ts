@@ -15,7 +15,7 @@ import type {
 } from "../_core/types/index.js";
 import type { MemoryType, Memory } from "./types.js";
 import { embedQuery } from "../_core/embeddings/index.js";
-import { rrfFuse, normalizeMinMaxFloored } from "../episodic/search.js";
+import { rrfFuse, normalizeMinMaxFloored } from "../_core/search/rrf.js";
 import { computeRetrievalScore } from "./decay.js";
 
 // ─── Row Type Helpers ───────────────────────────────────────────

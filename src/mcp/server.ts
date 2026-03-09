@@ -13,7 +13,7 @@ import {
   searchMultiSource,
   formatRecallXml,
   escapeXml,
-} from "../episodic/search.js";
+} from "../_core/search/index.js";
 import { exploreEntity } from "../graph/search.js";
 import { initEmbeddings, embedDocument } from "../_core/embeddings/index.js";
 import {
