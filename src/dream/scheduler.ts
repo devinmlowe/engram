@@ -9,7 +9,7 @@
 
 import crypto from "node:crypto";
 import type Database from "better-sqlite3";
-import type { DreamPhase, DreamProgress, DreamReport } from "../core/types.js";
+import type { DreamPhase, DreamProgress, DreamReport } from "./types.js";
 
 // ─── Row Type Helpers ───────────────────────────────────────────
 

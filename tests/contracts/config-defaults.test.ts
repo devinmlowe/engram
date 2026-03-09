@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { loadConfig } from "../../src/core/config.js";
+import { loadConfig } from "../../src/_core/config/index.js";
 import { homedir } from "node:os";
 import { join } from "node:path";
 

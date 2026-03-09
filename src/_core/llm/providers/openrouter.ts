@@ -7,6 +7,8 @@
  * is set (10x cheaper than Anthropic Haiku for batch workloads).
  */
 
+import type { IntelligenceConfig, GenerationResult } from "../types.js";
+
 const DEFAULT_MODEL = "google/gemini-2.5-flash-lite";
 const BASE_URL = "https://openrouter.ai/api/v1";
 
@@ -183,5 +185,77 @@ export async function callOpenRouterText(
     return { result: content, model: data.model ?? model };
   } finally {
     clearTimeout(timeout);
+  }
+}
+
+// ─── Intelligence-Layer Wrappers ─────────────────────────────────
+
+/**
+ * Structured generation via the shared OpenRouter client.
+ * Returns null on failure so the caller can fall through.
+ */
+export async function openrouterGenerateStructured<T>(
+  systemPrompt: string,
+  userPrompt: string,
+  schema: Record<string, unknown>,
+  config: IntelligenceConfig,
+): Promise<GenerationResult<T> | null> {
+  if (!config.openrouterModel) return null;
+
+  try {
+    const startMs = Date.now();
+    const { result, model } = await callOpenRouterTool<T>(
+      [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+      {
+        name: "structured_output",
+        description: "Return structured data matching the schema",
+        parameters: { type: "object", ...schema },
+      },
+      { model: config.openrouterModel, timeoutMs: config.timeoutMs },
+    );
+
+    return {
+      result,
+      source: "api",
+      model,
+      durationMs: Date.now() - startMs,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Free-text generation via the shared OpenRouter client.
+ * Returns null on failure so the caller can fall through.
+ */
+export async function openrouterGenerate(
+  systemPrompt: string,
+  userPrompt: string,
+  config: IntelligenceConfig,
+): Promise<GenerationResult<string> | null> {
+  if (!config.openrouterModel) return null;
+
+  try {
+    const startMs = Date.now();
+    const { result, model } = await callOpenRouterText(
+      [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+      { model: config.openrouterModel, timeoutMs: config.timeoutMs },
+    );
+
+    return {
+      result,
+      source: "api",
+      model,
+      durationMs: Date.now() - startMs,
+    };
+  } catch {
+    return null;
   }
 }

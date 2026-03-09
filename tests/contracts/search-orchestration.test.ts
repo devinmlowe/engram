@@ -22,9 +22,9 @@ import {
   formatRecallXml,
   escapeXml,
 } from "../../src/episodic/search.js";
-import { initEmbeddings, resetEmbeddings, embedDocument } from "../../src/episodic/embeddings.js";
+import { initEmbeddings, resetEmbeddings, embedDocument } from "../../src/_core/embeddings/index.js";
 import { createTestDb, type TestDb } from "../helpers.js";
-import type { RecallResponse, SearchSource } from "../../src/core/types.js";
+import type { RecallResponse, SearchSource } from "../../src/_core/types/index.js";
 
 describe("Search Orchestration Contract", { timeout: 120_000 }, () => {
   let t: TestDb;

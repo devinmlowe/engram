@@ -6,7 +6,7 @@ import type { ReflectionObservation } from "../../src/graph/types.js";
 
 // ─── Mock intelligence layer ─────────────────────────────────────
 
-vi.mock("../../src/dream/intelligence.js", () => ({
+vi.mock("../../src/_core/llm/index.js", () => ({
   buildIntelligenceConfig: vi.fn(() => ({
     ollamaUrl: "http://localhost:11434",
     ollamaModel: "test-model",
@@ -32,7 +32,7 @@ vi.mock("../../src/dream/intelligence.js", () => ({
   })),
 }));
 
-import { generate } from "../../src/dream/intelligence.js";
+import { generate } from "../../src/_core/llm/index.js";
 import {
   linkMemoriesToCommunities,
   recomputeEdgeWeights,

@@ -1,12 +1,43 @@
 /**
- * Phase 3 semantic layer types.
+ * Semantic layer types.
  *
- * Defines the data structures for fact extraction, deduplication,
- * conflict resolution, memory health tracking, and FSRS-inspired
- * decay model constants.
+ * Defines the data structures for memories, conflicts, fact extraction,
+ * deduplication, conflict resolution, memory health tracking, and
+ * FSRS-inspired decay model constants.
  */
 
-import type { MemoryType } from "../core/types.js";
+import type { MemoryType } from "../_core/types/index.js";
+
+// Re-export MemoryType so semantic consumers can import from here
+export type { MemoryType } from "../_core/types/index.js";
+
+// ─── Core Semantic Types ────────────────────────────────────────
+
+export interface Memory {
+  id: string;
+  type: MemoryType;
+  content: string;
+  context?: string;
+  confidence: number;
+  importance: number;
+  accessCount: number;
+  lastAccessed?: number;
+  createdAt: number;
+  updatedAt?: number;
+  sourceExchanges: string[];
+  supersededBy?: string;
+  isActive: boolean;
+}
+
+export interface Conflict {
+  id: string;
+  memoryId: string;
+  conflictingMemoryId: string;
+  description: string;
+  resolution?: string;
+  resolvedAt?: number;
+  createdAt: number;
+}
 
 // ─── Extraction ─────────────────────────────────────────────────
 

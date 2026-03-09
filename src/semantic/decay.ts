@@ -14,7 +14,7 @@
  *   retrieval_score   = 0.55 * relevance + 0.25 * retrievability + 0.20 * importance
  */
 
-import type { Memory } from "../core/types.js";
+import type { Memory } from "./types.js";
 import type { MemoryHealth } from "./types.js";
 import {
   INITIAL_STABILITY,

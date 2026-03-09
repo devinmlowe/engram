@@ -1,4 +1,57 @@
-import type { EntityType, RelationshipType } from "../core/types.js";
+// ─── Core Graph Types ────────────────────────────────────────────
+
+export type EntityType =
+  | "project"
+  | "tool"
+  | "technology"
+  | "person"
+  | "concept"
+  | "file"
+  | "repo";
+
+export type RelationshipType =
+  | "uses"
+  | "depends_on"
+  | "related_to"
+  | "part_of"
+  | "configured_by"
+  | "solved_by";
+
+export interface Entity {
+  id: string;
+  name: string;
+  type: EntityType;
+  description?: string;
+  aliases: string[];
+  firstSeen: number;
+  lastSeen: number;
+  mentionCount: number;
+  createdAt: number;
+}
+
+export interface Relationship {
+  id: string;
+  sourceEntityId: string;
+  targetEntityId: string;
+  type: RelationshipType;
+  weight: number;
+  context?: string;
+  sourceMemories: string[];
+  createdAt: number;
+  updatedAt?: number;
+}
+
+export interface TopicCluster {
+  id: string;
+  name: string;
+  description?: string;
+  entityIds: string[];
+  memoryIds: string[];
+  coherenceScore: number;
+  createdAt: number;
+  updatedAt?: number;
+  generation: number;
+}
 
 // ─── Extraction ──────────────────────────────────────────────────
 

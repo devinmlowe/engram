@@ -24,7 +24,7 @@ import {
   embedExchange,
   getActiveDimensions,
   getActiveModel,
-} from "../../src/episodic/embeddings.js";
+} from "../../src/_core/embeddings/index.js";
 
 const EXPECTED_DIMS = 256;
 const NORM_TOLERANCE = 0.02; // L2 norm must be within 1.0 ± 0.02

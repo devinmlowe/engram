@@ -2,7 +2,7 @@ import { createReadStream, readFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { basename } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
-import type { Exchange, ToolCall } from "../core/types.js";
+import type { Exchange, ToolCall } from "./types.js";
 
 // ─── Types ─────────────────────────────────────────────────────
 

@@ -1,4 +1,13 @@
-import type { SearchResult, SearchSource } from "../core/types.js";
+/**
+ * Token budget allocation for search results.
+ *
+ * Priority-weighted greedy fill ensures high-signal sources (semantic, graph)
+ * are preferred over raw episodic exchanges within a token budget.
+ *
+ * Moved from retrieval/context.ts during Phase 1 core extraction.
+ */
+
+import type { SearchResult, SearchSource } from "../types/index.js";
 
 // ─── Priority Boost Factors ─────────────────────────────────────
 // Higher priority sources get multiplicative boost to their scores

@@ -7,15 +7,15 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { existsSync, readFileSync } from "node:fs";
-import { initDatabase } from "../core/db.js";
-import { loadConfig } from "../core/config.js";
+import { initDatabase } from "../_core/db/index.js";
+import { loadConfig } from "../_core/config/index.js";
 import {
   searchMultiSource,
   formatRecallXml,
   escapeXml,
-} from "../episodic/search.js";
+} from "../_core/search/index.js";
 import { exploreEntity } from "../graph/search.js";
-import { initEmbeddings, embedDocument } from "../episodic/embeddings.js";
+import { initEmbeddings, embedDocument } from "../_core/embeddings/index.js";
 import {
   insertMemory,
   findNearestMemories,
@@ -27,10 +27,9 @@ import type {
   EngramConfig,
   SearchOptions,
   SearchSource,
-  RelationshipType,
-  Memory,
-  MemoryType,
-} from "../core/types.js";
+} from "../_core/types/index.js";
+import type { RelationshipType } from "../graph/types.js";
+import type { Memory, MemoryType } from "../semantic/types.js";
 import type { ReflectResult } from "../graph/types.js";
 
 // ─── Lazy State ────────────────────────────────────────────────

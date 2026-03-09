@@ -6,15 +6,15 @@ import {
 } from "../../src/semantic/memory.js";
 import { createTestDb } from "../helpers.js";
 import type { TestDb } from "../helpers.js";
-import type { Memory } from "../../src/core/types.js";
+import type { Memory } from "../../src/semantic/types.js";
 
 // ─── Mock embeddings to avoid loading the real model ────────────
 
-vi.mock("../../src/episodic/embeddings.js", () => ({
+vi.mock("../../src/_core/embeddings/index.js", () => ({
   embedQuery: vi.fn(),
 }));
 
-import { embedQuery } from "../../src/episodic/embeddings.js";
+import { embedQuery } from "../../src/_core/embeddings/index.js";
 
 const mockedEmbedQuery = vi.mocked(embedQuery);
 

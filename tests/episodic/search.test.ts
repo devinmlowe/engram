@@ -9,10 +9,11 @@ import {
 } from "../../src/episodic/search.js";
 import { insertExchange } from "../../src/episodic/store.js";
 import { insertMemory } from "../../src/semantic/memory.js";
-import { initEmbeddings, embedExchange, embedDocument } from "../../src/episodic/embeddings.js";
+import { initEmbeddings, embedExchange, embedDocument } from "../../src/_core/embeddings/index.js";
 import { createTestDb, createSyntheticExchange } from "../helpers.js";
 import type { TestDb } from "../helpers.js";
-import type { SearchResult, RecallResponse, Memory } from "../../src/core/types.js";
+import type { SearchResult, RecallResponse } from "../../src/_core/types/index.js";
+import type { Memory } from "../../src/semantic/types.js";
 
 // ─── Unit Tests (no DB) ───────────────────────────────────────
 

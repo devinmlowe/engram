@@ -16,7 +16,7 @@ import {
   createTestRelationship,
 } from "../helpers.js";
 import type { TestDb } from "../helpers.js";
-import type { RecallResponse, SearchResult } from "../../src/core/types.js";
+import type { RecallResponse, SearchResult } from "../../src/_core/types/index.js";
 
 let t: TestDb;
 

@@ -2,7 +2,7 @@ import Database from "better-sqlite3";
 import * as sqliteVec from "sqlite-vec";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { EngramConfig } from "./types.js";
+import type { EngramConfig } from "../types/index.js";
 
 /**
  * Initialize the Engram database with all tables, indexes, and virtual tables.

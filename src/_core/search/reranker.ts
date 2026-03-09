@@ -4,9 +4,11 @@
  * Uses BGE-reranker-base via @xenova/transformers for local inference.
  * Singleton model loader keeps the model warm after first load.
  * Gracefully degrades when the model is unavailable.
+ *
+ * Moved from retrieval/reranker.ts during Phase 1 core extraction.
  */
 
-import type { SearchResult, RerankerConfig } from "../core/types.js";
+import type { SearchResult, RerankerConfig } from "../types/index.js";
 
 // ─── Types ──────────────────────────────────────────────────────
 

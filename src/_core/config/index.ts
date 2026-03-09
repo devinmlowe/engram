@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { EngramConfig } from "./types.js";
+import type { EngramConfig } from "../types/index.js";
 
 const HOME = homedir();
 

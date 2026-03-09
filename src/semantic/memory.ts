@@ -9,7 +9,7 @@
  */
 
 import type Database from "better-sqlite3";
-import type { Memory, MemoryType, Conflict } from "../core/types.js";
+import type { Memory, MemoryType, Conflict } from "./types.js";
 
 // ─── Row Type Helpers ───────────────────────────────────────────
 

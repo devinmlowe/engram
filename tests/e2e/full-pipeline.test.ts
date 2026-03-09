@@ -9,10 +9,11 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { createTestDb, createSyntheticExchange, createTestEntity, createTestRelationship } from "../helpers.js";
 import type { TestDb } from "../helpers.js";
-import type { Memory, MemoryType, SearchSource } from "../../src/core/types.js";
+import type { SearchSource } from "../../src/_core/types/index.js";
+import type { Memory, MemoryType } from "../../src/semantic/types.js";
 
 // Mock embeddings to avoid model loading
-vi.mock("../../src/episodic/embeddings.js", () => {
+vi.mock("../../src/_core/embeddings/index.js", () => {
   const dims = 256;
   let callCount = 0;
 
@@ -142,7 +143,7 @@ describe("Full Pipeline E2E", () => {
   describe("Semantic Layer", () => {
     it("inserts and retrieves semantic memories", async () => {
       const { db } = testDb;
-      const { embedDocument } = await import("../../src/episodic/embeddings.js");
+      const { embedDocument } = await import("../../src/_core/embeddings/index.js");
       const { insertMemory, getMemory, findNearestMemories } = await import("../../src/semantic/memory.js");
 
       const memories: Memory[] = [
@@ -214,7 +215,7 @@ describe("Full Pipeline E2E", () => {
       const { db } = testDb;
       const { insertEntity } = await import("../../src/graph/entity.js");
       const { findOrCreateRelationship } = await import("../../src/graph/relationship.js");
-      const { embedDocument } = await import("../../src/episodic/embeddings.js");
+      const { embedDocument } = await import("../../src/_core/embeddings/index.js");
 
       const entities = [
         createTestEntity({ id: "e2e-ent-sqlite", name: "SQLite", type: "technology", description: "Embedded database" }),
@@ -298,7 +299,7 @@ describe("Full Pipeline E2E", () => {
 
   describe("Context Budget", () => {
     it("respects priority ordering in budget allocation", async () => {
-      const { allocateBudget } = await import("../../src/retrieval/context.js");
+      const { allocateBudget } = await import("../../src/_core/search/budget.js");
 
       const results = [
         { id: "r1", source: "episodic" as SearchSource, score: 0.9, content: "A".repeat(400), metadata: {}, tokenEstimate: 100 },
@@ -319,7 +320,7 @@ describe("Full Pipeline E2E", () => {
 
   describe("Cache", () => {
     it("LRU cache works correctly", async () => {
-      const { LRUCache } = await import("../../src/core/cache.js");
+      const { LRUCache } = await import("../../src/_core/cache/index.js");
 
       const cache = new LRUCache<string, number>({ maxSize: 3, ttlMs: 60000 });
       cache.set("a", 1);

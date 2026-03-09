@@ -13,7 +13,7 @@ import {
 } from "../../src/semantic/memory.js";
 import { createTestDb } from "../helpers.js";
 import type { TestDb } from "../helpers.js";
-import type { Memory, Conflict } from "../../src/core/types.js";
+import type { Memory, Conflict } from "../../src/semantic/types.js";
 
 let t: TestDb;
 

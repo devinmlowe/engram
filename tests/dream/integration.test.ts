@@ -22,7 +22,7 @@ vi.mock("../../src/episodic/sync.js", () => ({
   }),
 }));
 
-vi.mock("../../src/episodic/embeddings.js", () => ({
+vi.mock("../../src/_core/embeddings/index.js", () => ({
   initEmbeddings: vi.fn().mockResolvedValue(undefined),
 }));
 

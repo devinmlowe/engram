@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { initDatabase } from "../../src/core/db.js";
+import { initDatabase } from "../../src/_core/db/index.js";
 import { createTestDb, type TestDb } from "../helpers.js";
 
 describe("Database Schema Contract", () => {
