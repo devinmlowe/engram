@@ -2,8 +2,8 @@
 import { Command } from "commander";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { loadConfig } from "../_core/config/index.js";
-import { getDatabase, closeDatabase } from "../_core/db/index.js";
+import { loadConfig } from "../../_core/config/index.js";
+import { getDatabase, closeDatabase } from "../../_core/db/index.js";
 
 const program = new Command();
 
@@ -21,7 +21,7 @@ program
   .option("-f, --force", "Force re-index all conversations")
   .option("-n, --dry-run", "Show what would be synced without indexing")
   .action(async (opts) => {
-    const { syncConversations } = await import("../episodic/sync.js");
+    const { syncConversations } = await import("../../episodic/sync.js");
     const config = loadConfig();
     const db = getDatabase(config);
 
@@ -61,24 +61,24 @@ program
   .option("--before <date>", "Only results before date (YYYY-MM-DD)")
   .option("--budget <tokens>", "Token budget for results", "1500")
   .action(async (query, opts) => {
-    const { searchEpisodic, formatRecallXml } = await import(
-      "../episodic/search.js"
+    const { unifiedSearch, formatRecallXml } = await import(
+      "../shared/search.js"
     );
-    const { initEmbeddings } = await import("../_core/embeddings/index.js");
+    const { initEmbeddings } = await import("../../_core/embeddings/index.js");
     const config = loadConfig();
     const db = getDatabase(config);
 
     try {
       await initEmbeddings(config);
 
-      const response = await searchEpisodic(db, {
+      const response = await unifiedSearch(db, {
         query,
         mode: opts.mode as "hybrid" | "vector" | "text",
         limit: parseInt(opts.limit, 10),
         budget: parseInt(opts.budget, 10),
         after: opts.after,
         before: opts.before,
-      });
+      }, config);
 
       if (response.results.length === 0) {
         console.log("No results found.");
@@ -107,14 +107,10 @@ program
     "0.7",
   )
   .action(async (content, opts) => {
-    const { initEmbeddings, embedDocument } = await import(
-      "../_core/embeddings/index.js"
+    const { initEmbeddings } = await import(
+      "../../_core/embeddings/index.js"
     );
-    const {
-      insertMemory,
-      findNearestMemories,
-      recordAccess,
-    } = await import("../semantic/memory.js");
+    const { rememberFact } = await import("../shared/remember.js");
 
     const config = loadConfig();
     const db = getDatabase(config);
@@ -141,42 +137,17 @@ program
         process.exit(1);
       }
 
-      // 1. Embed the content
-      const embedding = await embedDocument(content);
+      const result = await rememberFact(db, {
+        content,
+        type: type as import("../../_core/types/index.js").MemoryType,
+        importance,
+      });
 
-      // 2. Check for near-duplicates
-      const neighbors = findNearestMemories(db, embedding, 3);
-      for (const neighbor of neighbors) {
-        const similarity =
-          1 - (neighbor.distance * neighbor.distance) / 2;
-        if (similarity >= 0.95) {
-          recordAccess(db, neighbor.id);
-          console.log(`Updated existing memory: ${neighbor.id}`);
-          return;
-        }
+      if (result.action === "updated") {
+        console.log(`Updated existing memory: ${result.memoryId}`);
+      } else {
+        console.log(`Remembered: ${content}`);
       }
-
-      // 3. Insert new memory
-      const newId = crypto.randomUUID();
-      const now = Math.floor(Date.now() / 1000);
-
-      insertMemory(
-        db,
-        {
-          id: newId,
-          type: type as import("../_core/types/index.js").MemoryType,
-          content,
-          confidence: 0.9,
-          importance,
-          accessCount: 0,
-          createdAt: now,
-          sourceExchanges: [],
-          isActive: true,
-        },
-        embedding,
-      );
-
-      console.log(`Remembered: ${content}`);
     } finally {
       closeDatabase();
     }
@@ -195,12 +166,12 @@ program
   .option("--reflexion", "Enable reflexion pass for completeness")
   .option("--dry-run", "Show extracted facts without consolidating")
   .action(async (conversationId, opts) => {
-    const { initEmbeddings } = await import("../_core/embeddings/index.js");
+    const { initEmbeddings } = await import("../../_core/embeddings/index.js");
     const { initExtractor, extractFromConversation } = await import(
-      "../semantic/extractor.js"
+      "../../semantic/extractor.js"
     );
     const { consolidateFacts, initConsolidator } = await import(
-      "../semantic/consolidator.js"
+      "../../semantic/consolidator.js"
     );
 
     const config = loadConfig();
@@ -449,7 +420,7 @@ program
   .description("Initialize database and pre-download embedding model")
   .action(async () => {
     const { initEmbeddings, getActiveModel } = await import(
-      "../_core/embeddings/index.js"
+      "../../_core/embeddings/index.js"
     );
     const config = loadConfig();
 
@@ -483,7 +454,7 @@ program
   .option("--force", "Force re-migration (ignore checkpoints)")
   .action(async (opts) => {
     const { runMigration, formatProgress } = await import(
-      "../migration/migrate.js"
+      "../../migration/migrate.js"
     );
 
     try {
@@ -542,7 +513,7 @@ program
     join(homedir(), ".config/superpowers/conversation-index/db.sqlite"),
   )
   .action(async (opts) => {
-    const { runValidation } = await import("../migration/validate.js");
+    const { runValidation } = await import("../../migration/validate.js");
 
     try {
       console.log("Running validation checks...\n");
@@ -595,7 +566,7 @@ program
   .option("--search <query>", "Search entities by name")
   .action(async (opts) => {
     const { getAllEntities, ftsSearchEntities, getEntity } = await import(
-      "../graph/entity.js"
+      "../../graph/entity.js"
     );
     const config = loadConfig();
     const db = getDatabase(config);
@@ -645,10 +616,10 @@ program
   .option("-t, --type <type>", "Filter by relationship type")
   .action(async (entity, opts) => {
     const { getEntityByName, getEntityByAlias, getEntity } = await import(
-      "../graph/entity.js"
+      "../../graph/entity.js"
     );
     const { getRelationshipsForEntity } = await import(
-      "../graph/relationship.js"
+      "../../graph/relationship.js"
     );
     const config = loadConfig();
     const db = getDatabase(config);
@@ -692,7 +663,7 @@ program
   .option("-d, --depth <n>", "Traversal depth (1-3)", "1")
   .option("-t, --type <type>", "Filter by relationship type")
   .action(async (entity, opts) => {
-    const { exploreEntity } = await import("../graph/search.js");
+    const { explore: exploreEntity } = await import("../shared/explore.js");
     const config = loadConfig();
     const db = getDatabase(config);
     try {
@@ -744,8 +715,8 @@ program
   .option("--dry-run", "Show what would be processed without making changes")
   .option("--verbose", "Show detailed progress")
   .action(async (opts) => {
-    const { runDream } = await import("../dream/daemon.js");
-    const { initEmbeddings } = await import("../_core/embeddings/index.js");
+    const { runDream } = await import("../../dream/daemon.js");
+    const { initEmbeddings } = await import("../../_core/embeddings/index.js");
     const config = loadConfig();
     const db = getDatabase(config);
 
@@ -753,7 +724,7 @@ program
       await initEmbeddings(config);
 
       const phases = opts.phase
-        ? [opts.phase as import("../_core/types/index.js").DreamPhase]
+        ? [opts.phase as import("../../dream/types.js").DreamPhase]
         : undefined;
 
       const report = await runDream(db, config, {
@@ -854,7 +825,7 @@ program
     // 2. Check embedding model
     try {
       const { initEmbeddings, getActiveModel } = await import(
-        "../_core/embeddings/index.js"
+        "../../_core/embeddings/index.js"
       );
       await initEmbeddings(config);
       console.log(`[ok] Embedding model: ${getActiveModel()}`);
@@ -880,7 +851,7 @@ program
     // 4. Check MCP server entry point
     const mcpEntry = join(
       import.meta.dirname ?? ".",
-      "../mcp/server.js",
+      "../mcp/server.js",  // relative from interfaces/cli/ to interfaces/mcp/
     );
     if (existsSync(mcpEntry)) {
       console.log(`[ok] MCP server: ${mcpEntry}`);
@@ -911,12 +882,12 @@ program
     const db = getDatabase(config);
     try {
       if (opts.refresh) {
-        const { runReflection } = await import("../graph/reflection.js");
+        const { runReflection } = await import("../../graph/reflection.js");
         console.log("Running fresh reflection analysis...\n");
         const result = await runReflection(db, config);
         printReflectResult(result, opts.mode);
       } else {
-        const { buildReflectResultFromCache } = await import("../graph/reflection.js");
+        const { buildReflectResultFromCache } = await import("../../graph/reflection.js");
         const result = buildReflectResultFromCache(db);
         if (!result) {
           console.log("No reflection data. Run 'engram dream --phase reflect' first.");
@@ -934,7 +905,7 @@ program.parse();
 // ─── Reflect Formatting ──────────────────────────────────────────
 
 function printReflectResult(
-  result: import("../graph/types.js").ReflectResult,
+  result: import("../../graph/types.js").ReflectResult,
   mode: string,
 ): void {
   const timestamp = new Date(result.generatedAt * 1000).toLocaleString();

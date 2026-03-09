@@ -7,30 +7,21 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { existsSync, readFileSync } from "node:fs";
-import { getDatabase } from "../_core/db/index.js";
-import { loadConfig } from "../_core/config/index.js";
-import {
-  searchMultiSource,
-  formatRecallXml,
-  escapeXml,
-} from "../_core/search/index.js";
-import { exploreEntity } from "../graph/search.js";
-import { initEmbeddings, embedDocument } from "../_core/embeddings/index.js";
-import {
-  insertMemory,
-  findNearestMemories,
-  recordAccess,
-  getMemory,
-} from "../semantic/memory.js";
+import { getDatabase } from "../../_core/db/index.js";
+import { loadConfig } from "../../_core/config/index.js";
+import { escapeXml } from "../../_core/search/index.js";
+import { initEmbeddings } from "../../_core/embeddings/index.js";
+import { rememberFact } from "../shared/remember.js";
+import { unifiedSearch, formatRecallXml } from "../shared/search.js";
+import { explore } from "../shared/explore.js";
 import type Database from "better-sqlite3";
 import type {
   EngramConfig,
-  SearchOptions,
   SearchSource,
-} from "../_core/types/index.js";
-import type { RelationshipType } from "../graph/types.js";
-import type { Memory, MemoryType } from "../semantic/types.js";
-import type { ReflectResult } from "../graph/types.js";
+} from "../../_core/types/index.js";
+import type { RelationshipType } from "../../graph/types.js";
+import type { MemoryType } from "../../semantic/types.js";
+import type { ReflectResult } from "../../graph/types.js";
 
 // ─── Lazy State ────────────────────────────────────────────────
 
@@ -66,8 +57,6 @@ const VALID_MEMORY_TYPES: readonly MemoryType[] = [
 
 const VALID_SOURCES: readonly SearchSource[] = ["episodic", "semantic", "graph"];
 
-/** Auto-merge threshold for near-duplicate detection */
-const REMEMBER_DEDUP_THRESHOLD = 0.95;
 
 // ─── Input Schemas ─────────────────────────────────────────────
 
@@ -374,7 +363,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const params = RecallInputSchema.parse(args);
       await ensureEmbeddings();
 
-      const searchOptions: SearchOptions = {
+      if (!config) config = loadConfig();
+      const response = await unifiedSearch(getDb(), {
         query: params.query,
         sources: (params.sources ?? ["episodic", "semantic"]) as SearchSource[],
         mode: "hybrid",
@@ -382,10 +372,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         after: params.after,
         before: params.before,
         depth: params.depth ?? "shallow",
-      };
-
-      if (!config) config = loadConfig();
-      const response = await searchMultiSource(getDb(), searchOptions, config);
+      }, config);
       const xml = formatRecallXml(response);
 
       return {
@@ -397,49 +384,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const params = RememberInputSchema.parse(args);
       await ensureEmbeddings();
 
-      const database = getDb();
-
-      // 1. Embed the content
-      const embedding = await embedDocument(params.content);
-
-      // 2. Check for near-duplicates
-      const neighbors = findNearestMemories(database, embedding, 3);
-
-      for (const neighbor of neighbors) {
-        // Convert L2 distance to cosine similarity for unit vectors
-        const similarity = 1 - (neighbor.distance * neighbor.distance) / 2;
-
-        if (similarity >= REMEMBER_DEDUP_THRESHOLD) {
-          // Near-duplicate found — update existing memory
-          recordAccess(database, neighbor.id);
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Updated existing memory: ${neighbor.id}`,
-              },
-            ],
-          };
-        }
-      }
-
-      // 3. No duplicate — insert new memory
-      const newId = crypto.randomUUID();
-      const now = Math.floor(Date.now() / 1000);
-
-      const memory: Memory = {
-        id: newId,
-        type: params.type as MemoryType,
+      const result = await rememberFact(getDb(), {
         content: params.content,
-        confidence: 0.9, // User-stated facts get high confidence
+        type: params.type as MemoryType,
         importance: params.importance,
-        accessCount: 0,
-        createdAt: now,
-        sourceExchanges: [],
-        isActive: true,
-      };
+      });
 
-      insertMemory(database, memory, embedding);
+      if (result.action === "updated") {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Updated existing memory: ${result.memoryId}`,
+            },
+          ],
+        };
+      }
 
       return {
         content: [
@@ -473,7 +433,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     if (name === "explore") {
       const params = ExploreInputSchema.parse(args);
 
-      const result = exploreEntity(getDb(), {
+      const result = explore(getDb(), {
         entity: params.entity,
         depth: params.depth,
         limit: params.limit,
@@ -539,10 +499,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       if (params.refresh) {
         if (!config) config = loadConfig();
-        const { runReflection } = await import("../graph/reflection.js");
+        const { runReflection } = await import("../../graph/reflection.js");
         result = await runReflection(database, config);
       } else {
-        const { buildReflectResultFromCache } = await import("../graph/reflection.js");
+        const { buildReflectResultFromCache } = await import("../../graph/reflection.js");
         result = buildReflectResultFromCache(database);
       }
 

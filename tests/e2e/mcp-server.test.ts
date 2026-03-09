@@ -111,7 +111,7 @@ describe("MCP Server Tool Definitions", () => {
     // Read the server source to verify tool names are registered
     const { readFileSync } = await import("node:fs");
     const serverSource = readFileSync(
-      new URL("../../src/mcp/server.ts", import.meta.url),
+      new URL("../../src/interfaces/mcp/server.ts", import.meta.url),
       "utf-8",
     );
 
@@ -123,7 +123,7 @@ describe("MCP Server Tool Definitions", () => {
   it("recall tool has correct input schema shape", async () => {
     const { readFileSync } = await import("node:fs");
     const serverSource = readFileSync(
-      new URL("../../src/mcp/server.ts", import.meta.url),
+      new URL("../../src/interfaces/mcp/server.ts", import.meta.url),
       "utf-8",
     );
 
@@ -139,7 +139,7 @@ describe("MCP Server Tool Definitions", () => {
   it("remember tool accepts content, type, importance", async () => {
     const { readFileSync } = await import("node:fs");
     const serverSource = readFileSync(
-      new URL("../../src/mcp/server.ts", import.meta.url),
+      new URL("../../src/interfaces/mcp/server.ts", import.meta.url),
       "utf-8",
     );
 
@@ -229,7 +229,7 @@ describe("CLI Entry Points", () => {
   it("CLI has mcp command registered", async () => {
     const { readFileSync } = await import("node:fs");
     const cliSource = readFileSync(
-      new URL("../../src/cli/index.ts", import.meta.url),
+      new URL("../../src/interfaces/cli/index.ts", import.meta.url),
       "utf-8",
     );
 
@@ -239,7 +239,7 @@ describe("CLI Entry Points", () => {
   it("CLI has health command registered", async () => {
     const { readFileSync } = await import("node:fs");
     const cliSource = readFileSync(
-      new URL("../../src/cli/index.ts", import.meta.url),
+      new URL("../../src/interfaces/cli/index.ts", import.meta.url),
       "utf-8",
     );
 
@@ -249,7 +249,7 @@ describe("CLI Entry Points", () => {
   it("MCP server has shebang line", async () => {
     const { readFileSync } = await import("node:fs");
     const serverSource = readFileSync(
-      new URL("../../src/mcp/server.ts", import.meta.url),
+      new URL("../../src/interfaces/mcp/server.ts", import.meta.url),
       "utf-8",
     );
 
@@ -259,7 +259,7 @@ describe("CLI Entry Points", () => {
   it("CLI has shebang line", async () => {
     const { readFileSync } = await import("node:fs");
     const cliSource = readFileSync(
-      new URL("../../src/cli/index.ts", import.meta.url),
+      new URL("../../src/interfaces/cli/index.ts", import.meta.url),
       "utf-8",
     );
 
