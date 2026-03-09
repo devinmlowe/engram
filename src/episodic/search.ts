@@ -4,7 +4,7 @@ import type {
   SearchResult,
   RecallResponse,
 } from "../_core/types/index.js";
-import { embedQuery } from "./embeddings.js";
+import { embedQuery } from "../_core/embeddings/index.js";
 import {
   rrfFuse,
   normalizeMinMaxFloored,

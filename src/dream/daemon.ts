@@ -232,7 +232,7 @@ async function runIngestPhase(
   }
 
   const { syncConversations } = await import("../episodic/sync.js");
-  const { initEmbeddings } = await import("../episodic/embeddings.js");
+  const { initEmbeddings } = await import("../_core/embeddings/index.js");
 
   await initEmbeddings(config);
 
@@ -298,7 +298,7 @@ async function runExtractPhase(
   const { initGraphExtractor, extractEntities, extractRelationships } = await import("../graph/extractor.js");
   const { resolveEntities } = await import("../graph/resolver.js");
   const { findOrCreateRelationship } = await import("../graph/relationship.js");
-  const { initEmbeddings } = await import("../episodic/embeddings.js");
+  const { initEmbeddings } = await import("../_core/embeddings/index.js");
 
   await initEmbeddings(config);
   await initExtractor();
@@ -377,7 +377,7 @@ async function runConsolidatePhase(
   }
 
   const { initConsolidator, consolidateFacts } = await import("../semantic/consolidator.js");
-  const { initEmbeddings } = await import("../episodic/embeddings.js");
+  const { initEmbeddings } = await import("../_core/embeddings/index.js");
 
   await initEmbeddings(config);
   initConsolidator();
@@ -533,7 +533,7 @@ async function runPrunePhase(
     // Reconstruct Memory object for the decay functions
     const memory = {
       id: row.id,
-      type: row.type as import("../core/types.js").MemoryType,
+      type: row.type as import("../_core/types/index.js").MemoryType,
       content: row.content,
       confidence: row.confidence,
       importance: row.importance,

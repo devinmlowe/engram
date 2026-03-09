@@ -11,7 +11,7 @@ import type Database from "better-sqlite3";
 import type { EngramConfig } from "../_core/types/index.js";
 import type { Conversation } from "./types.js";
 import { parseConversationFile, shouldSkipConversation } from "./parser.js";
-import { initEmbeddings, embedExchange } from "./embeddings.js";
+import { initEmbeddings, embedExchange } from "../_core/embeddings/index.js";
 import { insertExchange, upsertConversation, getConversation } from "./store.js";
 
 // ─── Types ─────────────────────────────────────────────────────

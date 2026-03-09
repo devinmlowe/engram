@@ -7,7 +7,7 @@ import {
   resetIntelligence,
   setClient,
   type IntelligenceConfig,
-} from "../../src/dream/intelligence.js";
+} from "../../src/_core/llm/index.js";
 import { loadConfig } from "../../src/_core/config/index.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────

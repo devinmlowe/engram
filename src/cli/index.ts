@@ -64,7 +64,7 @@ program
     const { searchEpisodic, formatRecallXml } = await import(
       "../episodic/search.js"
     );
-    const { initEmbeddings } = await import("../episodic/embeddings.js");
+    const { initEmbeddings } = await import("../_core/embeddings/index.js");
     const config = loadConfig();
     const db = initDatabase(config);
 
@@ -108,7 +108,7 @@ program
   )
   .action(async (content, opts) => {
     const { initEmbeddings, embedDocument } = await import(
-      "../episodic/embeddings.js"
+      "../_core/embeddings/index.js"
     );
     const {
       insertMemory,
@@ -164,7 +164,7 @@ program
         db,
         {
           id: newId,
-          type: type as import("../core/types.js").MemoryType,
+          type: type as import("../_core/types/index.js").MemoryType,
           content,
           confidence: 0.9,
           importance,
@@ -195,7 +195,7 @@ program
   .option("--reflexion", "Enable reflexion pass for completeness")
   .option("--dry-run", "Show extracted facts without consolidating")
   .action(async (conversationId, opts) => {
-    const { initEmbeddings } = await import("../episodic/embeddings.js");
+    const { initEmbeddings } = await import("../_core/embeddings/index.js");
     const { initExtractor, extractFromConversation } = await import(
       "../semantic/extractor.js"
     );
@@ -449,7 +449,7 @@ program
   .description("Initialize database and pre-download embedding model")
   .action(async () => {
     const { initEmbeddings, getActiveModel } = await import(
-      "../episodic/embeddings.js"
+      "../_core/embeddings/index.js"
     );
     const config = loadConfig();
 
@@ -745,7 +745,7 @@ program
   .option("--verbose", "Show detailed progress")
   .action(async (opts) => {
     const { runDream } = await import("../dream/daemon.js");
-    const { initEmbeddings } = await import("../episodic/embeddings.js");
+    const { initEmbeddings } = await import("../_core/embeddings/index.js");
     const config = loadConfig();
     const db = initDatabase(config);
 
@@ -753,7 +753,7 @@ program
       await initEmbeddings(config);
 
       const phases = opts.phase
-        ? [opts.phase as import("../core/types.js").DreamPhase]
+        ? [opts.phase as import("../_core/types/index.js").DreamPhase]
         : undefined;
 
       const report = await runDream(db, config, {
@@ -854,7 +854,7 @@ program
     // 2. Check embedding model
     try {
       const { initEmbeddings, getActiveModel } = await import(
-        "../episodic/embeddings.js"
+        "../_core/embeddings/index.js"
       );
       await initEmbeddings(config);
       console.log(`[ok] Embedding model: ${getActiveModel()}`);

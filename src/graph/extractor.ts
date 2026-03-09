@@ -14,7 +14,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import Anthropic from "@anthropic-ai/sdk";
 import type { EntityType, RelationshipType } from "./types.js";
-import { isOpenRouterAvailable, callOpenRouterTool } from "../core/openrouter.js";
+import { isOpenRouterAvailable, callOpenRouterTool } from "../_core/llm/providers/openrouter.js";
 import type {
   ExtractedEntity,
   ExtractedRelationship,

@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 import Anthropic from "@anthropic-ai/sdk";
 import type Database from "better-sqlite3";
 import type { Memory, MemoryType } from "./types.js";
-import { isOpenRouterAvailable, callOpenRouterTool } from "../core/openrouter.js";
+import { isOpenRouterAvailable, callOpenRouterTool } from "../_core/llm/providers/openrouter.js";
 import type {
   ExtractedFact,
   DeduplicationResult,

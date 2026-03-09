@@ -48,8 +48,8 @@ vi.mock("../../src/_core/embeddings/index.js", () => {
 });
 
 // Mock config to use test database (pass through to real loadConfig so createTestDb works)
-vi.mock("../../src/core/config.js", async () => {
-  const actual = await vi.importActual<typeof import("../../src/core/config.js")>("../../src/core/config.js");
+vi.mock("../../src/_core/config/index.js", async () => {
+  const actual = await vi.importActual<typeof import("../../src/_core/config/index.js")>("../../src/_core/config/index.js");
   return {
     ...actual,
     loadConfig: vi.fn().mockImplementation(actual.loadConfig),
@@ -173,7 +173,7 @@ describe("MCP Tool Behaviors (unit-level)", () => {
   });
 
   it("remember deduplication works", async () => {
-    const { embedDocument } = await import("../../src/episodic/embeddings.js");
+    const { embedDocument } = await import("../../src/_core/embeddings/index.js");
     const { insertMemory, findNearestMemories } = await import(
       "../../src/semantic/memory.js"
     );

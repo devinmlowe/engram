@@ -13,7 +13,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import Anthropic from "@anthropic-ai/sdk";
 import type { MemoryType } from "./types.js";
-import { isOpenRouterAvailable, callOpenRouterTool } from "../core/openrouter.js";
+import { isOpenRouterAvailable, callOpenRouterTool } from "../_core/llm/providers/openrouter.js";
 import type {
   ExtractedFact,
   ExtractionResult,
@@ -341,9 +341,9 @@ async function callExtraction(
   // Local model route: use intelligence layer instead of Anthropic SDK
   if (model === "local") {
     const { generateStructured, buildIntelligenceConfig } = await import(
-      "../dream/intelligence.js"
+      "../_core/llm/index.js"
     );
-    const { loadConfig } = await import("../core/config.js");
+    const { loadConfig } = await import("../_core/config/index.js");
     const config = loadConfig();
     const intelligenceConfig = buildIntelligenceConfig(config);
 

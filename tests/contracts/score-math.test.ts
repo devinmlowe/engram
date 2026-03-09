@@ -14,7 +14,7 @@ import {
   rrfFuse,
   normalizeMinMaxFloored,
 } from "../../src/episodic/search.js";
-import { allocateBudget } from "../../src/retrieval/context.js";
+import { allocateBudget } from "../../src/_core/search/budget.js";
 import type { SearchResult } from "../../src/_core/types/index.js";
 
 // ── RRF Fusion Pinned Outputs ────────────────────────────────────

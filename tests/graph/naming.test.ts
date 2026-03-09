@@ -7,7 +7,7 @@ import { persistAnalysis, analyzeGraph } from "../../src/graph/analyzer.js";
 
 // ─── Mock intelligence layer ─────────────────────────────────────
 
-vi.mock("../../src/dream/intelligence.js", () => ({
+vi.mock("../../src/_core/llm/index.js", () => ({
   generateStructured: vi.fn(),
   buildIntelligenceConfig: vi.fn(() => ({
     ollamaUrl: "http://localhost:11434",
@@ -19,12 +19,12 @@ vi.mock("../../src/dream/intelligence.js", () => ({
 }));
 
 // Import after mock is set up
-import { generateStructured } from "../../src/dream/intelligence.js";
+import { generateStructured } from "../../src/_core/llm/index.js";
 import {
   generateCommunityName,
   nameCommunities,
 } from "../../src/graph/naming.js";
-import type { IntelligenceConfig } from "../../src/dream/intelligence.js";
+import type { IntelligenceConfig } from "../../src/_core/llm/index.js";
 
 const mockedGenerateStructured = vi.mocked(generateStructured);
 
