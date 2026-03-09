@@ -10,6 +10,7 @@
 import crypto from "node:crypto";
 import type Database from "better-sqlite3";
 import type { DreamPhase, DreamProgress, DreamReport } from "./types.js";
+import { insertRow, getById, count } from "../_core/db/index.js";
 
 // ─── Row Type Helpers ───────────────────────────────────────────
 
@@ -38,9 +39,7 @@ export function createRun(db: Database.Database): string {
   const id = crypto.randomUUID();
   const now = Math.floor(Date.now() / 1000);
 
-  db.prepare(
-    "INSERT INTO dream_runs (id, started_at) VALUES (?, ?)",
-  ).run(id, now);
+  insertRow(db, "dream_runs", { id, started_at: now });
 
   return id;
 }
@@ -165,9 +164,9 @@ export function recordCheckpoint(
     .get(runId, phase, itemId);
 
   if (!existing) {
-    db.prepare(
-      "INSERT INTO dream_checkpoints (id, run_id, phase, item_id, processed_at) VALUES (?, ?, ?, ?, ?)",
-    ).run(id, runId, phase, itemId, now);
+    insertRow(db, "dream_checkpoints", {
+      id, run_id: runId, phase, item_id: itemId, processed_at: now,
+    });
   }
 }
 
