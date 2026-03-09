@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "description": "Cognitive memory system for Claude Code — episodic storage, semantic extraction, knowledge graph, and dream-state consolidation",
   "type": "module",
-  "main": "dist/cli/index.js",
+  "main": "dist/interfaces/cli/index.js",
   "bin": {
-    "engram": "dist/cli/index.js"
+    "engram": "dist/interfaces/cli/index.js"
   },
   "files": [
     "dist",
@@ -17,12 +17,12 @@
   "scripts": {
     "build": "tsc",
     "prepare": "npm run build",
-    "dev": "tsx src/cli/index.ts",
+    "dev": "tsx src/interfaces/cli/index.ts",
     "test": "vitest",
     "test:run": "vitest run",
-    "mcp": "tsx src/mcp/server.ts",
-    "dream": "tsx src/cli/index.ts dream",
-    "migrate": "tsx src/cli/index.ts migrate",
+    "mcp": "tsx src/interfaces/mcp/server.ts",
+    "dream": "tsx src/interfaces/cli/index.ts dream",
+    "migrate": "tsx src/interfaces/cli/index.ts migrate",
     "lint": "tsc --noEmit"
   },
   "keywords": [
