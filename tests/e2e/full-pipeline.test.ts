@@ -13,7 +13,7 @@ import type { SearchSource } from "../../src/_core/types/index.js";
 import type { Memory, MemoryType } from "../../src/semantic/types.js";
 
 // Mock embeddings to avoid model loading
-vi.mock("../../src/episodic/embeddings.js", () => {
+vi.mock("../../src/_core/embeddings/index.js", () => {
   const dims = 256;
   let callCount = 0;
 

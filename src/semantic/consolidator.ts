@@ -21,7 +21,7 @@ import type {
   DeduplicationResult,
   ConflictResolution,
 } from "./types.js";
-import { embedDocument } from "../episodic/embeddings.js";
+import { embedDocument } from "../_core/embeddings/index.js";
 import {
   findNearestMemories,
   getMemory,

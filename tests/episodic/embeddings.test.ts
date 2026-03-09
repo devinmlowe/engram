@@ -7,7 +7,7 @@ import {
   embedExchange,
   getActiveDimensions,
   getActiveModel,
-} from "../../src/episodic/embeddings.js";
+} from "../../src/_core/embeddings/index.js";
 import { cosineSimilarity } from "../helpers.js";
 
 describe("Embeddings", () => {

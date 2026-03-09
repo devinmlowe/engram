@@ -12,7 +12,7 @@ import type { Exchange, ToolCall, Conversation } from "../episodic/types.js";
 import { initDatabase, rebuildFts } from "../_core/db/index.js";
 import { loadConfig } from "../_core/config/index.js";
 import { extractProjectName } from "../episodic/sync.js";
-import { initEmbeddings, embedDocumentBatch } from "../episodic/embeddings.js";
+import { initEmbeddings, embedDocumentBatch } from "../_core/embeddings/index.js";
 import { upsertConversation } from "../episodic/store.js";
 import type {
   MigrationBatchConfig,

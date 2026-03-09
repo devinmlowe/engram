@@ -25,12 +25,12 @@ vi.mock("../../src/semantic/nli.js", () => ({
 }));
 
 // Mock embeddings — we don't want to load the real model in unit tests
-vi.mock("../../src/episodic/embeddings.js", () => ({
+vi.mock("../../src/_core/embeddings/index.js", () => ({
   embedDocument: vi.fn(),
 }));
 
 import { classifyNli } from "../../src/semantic/nli.js";
-import { embedDocument } from "../../src/episodic/embeddings.js";
+import { embedDocument } from "../../src/_core/embeddings/index.js";
 
 const mockedClassifyNli = vi.mocked(classifyNli);
 const mockedEmbedDocument = vi.mocked(embedDocument);

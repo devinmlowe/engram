@@ -14,7 +14,7 @@ import type {
   SearchResult,
 } from "../_core/types/index.js";
 import type { MemoryType, Memory } from "./types.js";
-import { embedQuery } from "../episodic/embeddings.js";
+import { embedQuery } from "../_core/embeddings/index.js";
 import { rrfFuse, normalizeMinMaxFloored } from "../episodic/search.js";
 import { computeRetrievalScore } from "./decay.js";
 

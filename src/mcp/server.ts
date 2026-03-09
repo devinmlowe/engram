@@ -15,7 +15,7 @@ import {
   escapeXml,
 } from "../episodic/search.js";
 import { exploreEntity } from "../graph/search.js";
-import { initEmbeddings, embedDocument } from "../episodic/embeddings.js";
+import { initEmbeddings, embedDocument } from "../_core/embeddings/index.js";
 import {
   insertMemory,
   findNearestMemories,

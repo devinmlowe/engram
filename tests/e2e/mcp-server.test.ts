@@ -11,7 +11,7 @@ import { createTestDb, createSyntheticExchange, createTestEntity } from "../help
 import type { TestDb } from "../helpers.js";
 
 // Mock embeddings
-vi.mock("../../src/episodic/embeddings.js", () => {
+vi.mock("../../src/_core/embeddings/index.js", () => {
   const dims = 256;
 
   function deterministicVector(seed: string): Float32Array {

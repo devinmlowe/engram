@@ -32,7 +32,7 @@ vi.mock("../../src/semantic/nli.js", () => ({
   classifyNli: vi.fn(),
 }));
 
-vi.mock("../../src/episodic/embeddings.js", () => {
+vi.mock("../../src/_core/embeddings/index.js", () => {
   // Produce deterministic embeddings based on content
   function hashEmbedding(text: string, dims: number = 256): number[] {
     let hash = 0;
@@ -75,7 +75,7 @@ import {
   embedDocument,
   embedQuery,
   embedExchange,
-} from "../../src/episodic/embeddings.js";
+} from "../../src/_core/embeddings/index.js";
 
 const mockedClassifyNli = vi.mocked(classifyNli);
 const mockedEmbedDocument = vi.mocked(embedDocument);

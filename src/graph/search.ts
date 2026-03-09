@@ -15,7 +15,7 @@ import type {
 } from "../_core/types/index.js";
 import type { Entity, RelationshipType } from "./types.js";
 import type { ExploreOptions, ExploreResult } from "./types.js";
-import { embedQuery } from "../episodic/embeddings.js";
+import { embedQuery } from "../_core/embeddings/index.js";
 import {
   findNearestEntities,
   ftsSearchEntities,
