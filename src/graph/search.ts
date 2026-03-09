@@ -12,9 +12,8 @@ import type Database from "better-sqlite3";
 import type {
   SearchOptions,
   SearchResult,
-  Entity,
-  RelationshipType,
-} from "../core/types.js";
+} from "../_core/types/index.js";
+import type { Entity, RelationshipType } from "./types.js";
 import type { ExploreOptions, ExploreResult } from "./types.js";
 import { embedQuery } from "../episodic/embeddings.js";
 import {

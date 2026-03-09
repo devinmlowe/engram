@@ -8,7 +8,7 @@
  */
 
 import type Database from "better-sqlite3";
-import type { EngramConfig } from "../core/types.js";
+import type { EngramConfig } from "../_core/types/index.js";
 import type {
   ReflectResult,
   ReflectionObservation,

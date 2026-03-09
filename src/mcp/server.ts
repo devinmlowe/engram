@@ -27,10 +27,9 @@ import type {
   EngramConfig,
   SearchOptions,
   SearchSource,
-  RelationshipType,
-  Memory,
-  MemoryType,
-} from "../core/types.js";
+} from "../_core/types/index.js";
+import type { RelationshipType } from "../graph/types.js";
+import type { Memory, MemoryType } from "../semantic/types.js";
 import type { ReflectResult } from "../graph/types.js";
 
 // ─── Lazy State ────────────────────────────────────────────────

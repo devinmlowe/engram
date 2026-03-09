@@ -8,7 +8,8 @@ import {
 } from "node:fs";
 import { join, basename, dirname } from "node:path";
 import type Database from "better-sqlite3";
-import type { EngramConfig, Conversation } from "../core/types.js";
+import type { EngramConfig } from "../_core/types/index.js";
+import type { Conversation } from "./types.js";
 import { parseConversationFile, shouldSkipConversation } from "./parser.js";
 import { initEmbeddings, embedExchange } from "./embeddings.js";
 import { insertExchange, upsertConversation, getConversation } from "./store.js";

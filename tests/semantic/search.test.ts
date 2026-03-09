@@ -6,7 +6,7 @@ import {
 } from "../../src/semantic/memory.js";
 import { createTestDb } from "../helpers.js";
 import type { TestDb } from "../helpers.js";
-import type { Memory } from "../../src/core/types.js";
+import type { Memory } from "../../src/semantic/types.js";
 
 // ─── Mock embeddings to avoid loading the real model ────────────
 

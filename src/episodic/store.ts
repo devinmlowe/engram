@@ -1,5 +1,5 @@
 import type Database from "better-sqlite3";
-import type { Exchange, ToolCall, Conversation } from "../core/types.js";
+import type { Exchange, ToolCall, Conversation } from "./types.js";
 
 /**
  * Insert an exchange with its embedding and tool calls in a single transaction.

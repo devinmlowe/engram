@@ -8,7 +8,7 @@
 
 import Database from "better-sqlite3";
 import { basename, dirname } from "node:path";
-import type { Exchange, ToolCall, Conversation } from "../core/types.js";
+import type { Exchange, ToolCall, Conversation } from "../episodic/types.js";
 import { initDatabase, rebuildFts } from "../_core/db/index.js";
 import { loadConfig } from "../_core/config/index.js";
 import { extractProjectName } from "../episodic/sync.js";

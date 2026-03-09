@@ -8,7 +8,7 @@
  */
 
 import Anthropic from "@anthropic-ai/sdk";
-import type { EngramConfig } from "../core/types.js";
+import type { EngramConfig } from "../_core/types/index.js";
 import {
   callOpenRouterTool,
   callOpenRouterText,

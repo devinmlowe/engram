@@ -23,7 +23,7 @@ import {
 import { insertExchange } from "../../src/episodic/store.js";
 import { createTestDb, createSyntheticExchange } from "../helpers.js";
 import type { TestDb } from "../helpers.js";
-import type { Memory } from "../../src/core/types.js";
+import type { Memory } from "../../src/semantic/types.js";
 import type { ExtractedFact } from "../../src/semantic/types.js";
 
 // ─── Mocks ──────────────────────────────────────────────────────

@@ -6,7 +6,7 @@
  * Gracefully degrades when the model is unavailable.
  */
 
-import type { SearchResult, RerankerConfig } from "../core/types.js";
+import type { SearchResult, RerankerConfig } from "../_core/types/index.js";
 
 // ─── Types ──────────────────────────────────────────────────────
 

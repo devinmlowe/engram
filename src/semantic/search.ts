@@ -12,9 +12,8 @@ import type Database from "better-sqlite3";
 import type {
   SearchOptions,
   SearchResult,
-  MemoryType,
-  Memory,
-} from "../core/types.js";
+} from "../_core/types/index.js";
+import type { MemoryType, Memory } from "./types.js";
 import { embedQuery } from "../episodic/embeddings.js";
 import { rrfFuse, normalizeMinMaxFloored } from "../episodic/search.js";
 import { computeRetrievalScore } from "./decay.js";

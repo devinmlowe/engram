@@ -17,7 +17,8 @@
 import { writeFileSync, readFileSync, existsSync, mkdirSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
 import type Database from "better-sqlite3";
-import type { DreamPhase, DreamReport, EngramConfig } from "../core/types.js";
+import type { DreamPhase, DreamReport } from "./types.js";
+import type { EngramConfig } from "../_core/types/index.js";
 import type { ExtractedFact } from "../semantic/types.js";
 import {
   createRun,

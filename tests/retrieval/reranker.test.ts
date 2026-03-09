@@ -6,7 +6,7 @@ import {
   resetReranker,
   isRerankerAvailable,
 } from "../../src/retrieval/reranker.js";
-import type { SearchResult } from "../../src/core/types.js";
+import type { SearchResult } from "../../src/_core/types/index.js";
 
 // ─── Score Normalization Tests ──────────────────────────────────
 

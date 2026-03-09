@@ -13,7 +13,7 @@ import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import Anthropic from "@anthropic-ai/sdk";
-import type { EntityType, RelationshipType } from "../core/types.js";
+import type { EntityType, RelationshipType } from "./types.js";
 import { isOpenRouterAvailable, callOpenRouterTool } from "../core/openrouter.js";
 import type {
   ExtractedEntity,

@@ -1,4 +1,4 @@
-import type { SearchResult, SearchSource } from "../core/types.js";
+import type { SearchResult, SearchSource } from "../_core/types/index.js";
 
 // ─── Priority Boost Factors ─────────────────────────────────────
 // Higher priority sources get multiplicative boost to their scores

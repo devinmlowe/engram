@@ -9,7 +9,8 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { createTestDb, createSyntheticExchange, createTestEntity, createTestRelationship } from "../helpers.js";
 import type { TestDb } from "../helpers.js";
-import type { Memory, MemoryType, SearchSource } from "../../src/core/types.js";
+import type { SearchSource } from "../../src/_core/types/index.js";
+import type { Memory, MemoryType } from "../../src/semantic/types.js";
 
 // Mock embeddings to avoid model loading
 vi.mock("../../src/episodic/embeddings.js", () => {

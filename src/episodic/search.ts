@@ -5,7 +5,7 @@ import type {
   RecallResponse,
   SearchSource,
   EngramConfig,
-} from "../core/types.js";
+} from "../_core/types/index.js";
 import { embedQuery } from "./embeddings.js";
 import { searchSemantic } from "../semantic/search.js";
 import { searchGraph } from "../graph/search.js";
