@@ -229,7 +229,7 @@ describe("CLI Entry Points", () => {
   it("CLI has mcp command registered", async () => {
     const { readFileSync } = await import("node:fs");
     const cliSource = readFileSync(
-      new URL("../../src/cli/index.ts", import.meta.url),
+      new URL("../../src/interfaces/cli/index.ts", import.meta.url),
       "utf-8",
     );
 
@@ -239,7 +239,7 @@ describe("CLI Entry Points", () => {
   it("CLI has health command registered", async () => {
     const { readFileSync } = await import("node:fs");
     const cliSource = readFileSync(
-      new URL("../../src/cli/index.ts", import.meta.url),
+      new URL("../../src/interfaces/cli/index.ts", import.meta.url),
       "utf-8",
     );
 
@@ -259,7 +259,7 @@ describe("CLI Entry Points", () => {
   it("CLI has shebang line", async () => {
     const { readFileSync } = await import("node:fs");
     const cliSource = readFileSync(
-      new URL("../../src/cli/index.ts", import.meta.url),
+      new URL("../../src/interfaces/cli/index.ts", import.meta.url),
       "utf-8",
     );
 
