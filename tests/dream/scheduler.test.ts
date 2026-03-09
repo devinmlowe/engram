@@ -13,7 +13,7 @@ import {
 } from "../../src/dream/scheduler.js";
 import { createTestDb } from "../helpers.js";
 import type { TestDb } from "../helpers.js";
-import type { DreamReport } from "../../src/core/types.js";
+import type { DreamReport } from "../../src/dream/types.js";
 
 let t: TestDb;
 

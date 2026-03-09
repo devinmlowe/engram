@@ -19,7 +19,7 @@ import {
   recordEntityMention,
   updateEntity,
 } from "./entity.js";
-import { embedDocument } from "../episodic/embeddings.js";
+import { embedDocument } from "../_core/embeddings/index.js";
 
 /**
  * Resolve a single extracted entity against the knowledge graph.

@@ -12,7 +12,7 @@ import type { ExtractedEntity } from "../../src/graph/types.js";
 // Mock embeddings module — resolver calls embedDocument for stage 3+4.
 // Return a deterministic but unique vector based on input text hash,
 // so different entity names produce different embeddings.
-vi.mock("../../src/episodic/embeddings.js", () => ({
+vi.mock("../../src/_core/embeddings/index.js", () => ({
   embedDocument: vi.fn().mockImplementation(async (text: string) => {
     // Simple hash-based vector: each char code contributes to different dims
     const vec = new Array(256).fill(0);

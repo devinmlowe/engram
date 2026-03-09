@@ -1,16 +1,12 @@
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { initDatabase } from "../src/core/db.js";
-import { loadConfig } from "../src/core/config.js";
+import { initDatabase } from "../src/_core/db/index.js";
+import { loadConfig } from "../src/_core/config/index.js";
 import type Database from "better-sqlite3";
-import type {
-  EngramConfig,
-  Exchange,
-  ToolCall,
-  Entity,
-  Relationship,
-} from "../src/core/types.js";
+import type { EngramConfig } from "../src/_core/types/index.js";
+import type { Exchange, ToolCall } from "../src/episodic/types.js";
+import type { Entity, Relationship } from "../src/graph/types.js";
 
 export interface TestDb {
   db: Database.Database;

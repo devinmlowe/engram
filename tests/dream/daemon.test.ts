@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createTestDb } from "../helpers.js";
 import type { TestDb } from "../helpers.js";
-import type { DreamPhase } from "../../src/core/types.js";
+import type { DreamPhase } from "../../src/dream/types.js";
 
 // ─── Mock Setup ──────────────────────────────────────────────────
 // Module-level mocks must be declared before imports that use them.
@@ -17,7 +17,7 @@ vi.mock("../../src/episodic/sync.js", () => ({
   }),
 }));
 
-vi.mock("../../src/episodic/embeddings.js", () => ({
+vi.mock("../../src/_core/embeddings/index.js", () => ({
   initEmbeddings: vi.fn().mockResolvedValue(undefined),
 }));
 

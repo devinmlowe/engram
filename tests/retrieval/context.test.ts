@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { allocateBudget, estimateTokens } from "../../src/retrieval/context.js";
-import type { SearchResult } from "../../src/core/types.js";
+import { allocateBudget, estimateTokens } from "../../src/_core/search/budget.js";
+import type { SearchResult } from "../../src/_core/types/index.js";
 
 function makeResult(
   id: string,

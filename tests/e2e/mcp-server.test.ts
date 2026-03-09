@@ -11,7 +11,7 @@ import { createTestDb, createSyntheticExchange, createTestEntity } from "../help
 import type { TestDb } from "../helpers.js";
 
 // Mock embeddings
-vi.mock("../../src/episodic/embeddings.js", () => {
+vi.mock("../../src/_core/embeddings/index.js", () => {
   const dims = 256;
 
   function deterministicVector(seed: string): Float32Array {
@@ -48,8 +48,8 @@ vi.mock("../../src/episodic/embeddings.js", () => {
 });
 
 // Mock config to use test database (pass through to real loadConfig so createTestDb works)
-vi.mock("../../src/core/config.js", async () => {
-  const actual = await vi.importActual<typeof import("../../src/core/config.js")>("../../src/core/config.js");
+vi.mock("../../src/_core/config/index.js", async () => {
+  const actual = await vi.importActual<typeof import("../../src/_core/config/index.js")>("../../src/_core/config/index.js");
   return {
     ...actual,
     loadConfig: vi.fn().mockImplementation(actual.loadConfig),
@@ -111,7 +111,7 @@ describe("MCP Server Tool Definitions", () => {
     // Read the server source to verify tool names are registered
     const { readFileSync } = await import("node:fs");
     const serverSource = readFileSync(
-      new URL("../../src/mcp/server.ts", import.meta.url),
+      new URL("../../src/interfaces/mcp/server.ts", import.meta.url),
       "utf-8",
     );
 
@@ -123,7 +123,7 @@ describe("MCP Server Tool Definitions", () => {
   it("recall tool has correct input schema shape", async () => {
     const { readFileSync } = await import("node:fs");
     const serverSource = readFileSync(
-      new URL("../../src/mcp/server.ts", import.meta.url),
+      new URL("../../src/interfaces/mcp/server.ts", import.meta.url),
       "utf-8",
     );
 
@@ -139,7 +139,7 @@ describe("MCP Server Tool Definitions", () => {
   it("remember tool accepts content, type, importance", async () => {
     const { readFileSync } = await import("node:fs");
     const serverSource = readFileSync(
-      new URL("../../src/mcp/server.ts", import.meta.url),
+      new URL("../../src/interfaces/mcp/server.ts", import.meta.url),
       "utf-8",
     );
 
@@ -173,7 +173,7 @@ describe("MCP Tool Behaviors (unit-level)", () => {
   });
 
   it("remember deduplication works", async () => {
-    const { embedDocument } = await import("../../src/episodic/embeddings.js");
+    const { embedDocument } = await import("../../src/_core/embeddings/index.js");
     const { insertMemory, findNearestMemories } = await import(
       "../../src/semantic/memory.js"
     );
@@ -229,7 +229,7 @@ describe("CLI Entry Points", () => {
   it("CLI has mcp command registered", async () => {
     const { readFileSync } = await import("node:fs");
     const cliSource = readFileSync(
-      new URL("../../src/cli/index.ts", import.meta.url),
+      new URL("../../src/interfaces/cli/index.ts", import.meta.url),
       "utf-8",
     );
 
@@ -239,7 +239,7 @@ describe("CLI Entry Points", () => {
   it("CLI has health command registered", async () => {
     const { readFileSync } = await import("node:fs");
     const cliSource = readFileSync(
-      new URL("../../src/cli/index.ts", import.meta.url),
+      new URL("../../src/interfaces/cli/index.ts", import.meta.url),
       "utf-8",
     );
 
@@ -249,7 +249,7 @@ describe("CLI Entry Points", () => {
   it("MCP server has shebang line", async () => {
     const { readFileSync } = await import("node:fs");
     const serverSource = readFileSync(
-      new URL("../../src/mcp/server.ts", import.meta.url),
+      new URL("../../src/interfaces/mcp/server.ts", import.meta.url),
       "utf-8",
     );
 
@@ -259,7 +259,7 @@ describe("CLI Entry Points", () => {
   it("CLI has shebang line", async () => {
     const { readFileSync } = await import("node:fs");
     const cliSource = readFileSync(
-      new URL("../../src/cli/index.ts", import.meta.url),
+      new URL("../../src/interfaces/cli/index.ts", import.meta.url),
       "utf-8",
     );
 

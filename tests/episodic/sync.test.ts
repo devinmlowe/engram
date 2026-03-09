@@ -9,7 +9,7 @@ import {
   extractProjectName,
 } from "../../src/episodic/sync.js";
 import { getConversation } from "../../src/episodic/store.js";
-import { initEmbeddings } from "../../src/episodic/embeddings.js";
+import { initEmbeddings } from "../../src/_core/embeddings/index.js";
 import { createTestDb } from "../helpers.js";
 import type { TestDb } from "../helpers.js";
 

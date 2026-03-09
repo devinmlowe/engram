@@ -6,9 +6,9 @@
  */
 
 import type Database from "better-sqlite3";
-import type { IntelligenceConfig } from "../dream/intelligence.js";
+import type { IntelligenceConfig } from "../_core/llm/index.js";
 import type { CommunityNaming, CommunityResult } from "./types.js";
-import { generateStructured } from "../dream/intelligence.js";
+import { generateStructured } from "../_core/llm/index.js";
 
 // ─── Schema ──────────────────────────────────────────────────────
 

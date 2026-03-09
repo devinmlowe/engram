@@ -9,7 +9,7 @@
  */
 
 import type Database from "better-sqlite3";
-import type { Relationship, RelationshipType } from "../core/types.js";
+import type { Relationship, RelationshipType } from "./types.js";
 import type { EdgeWeightFactors } from "./types.js";
 
 // ─── Row Type Helpers ───────────────────────────────────────────

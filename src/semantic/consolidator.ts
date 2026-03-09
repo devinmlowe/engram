@@ -14,14 +14,14 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import Anthropic from "@anthropic-ai/sdk";
 import type Database from "better-sqlite3";
-import type { Memory, MemoryType } from "../core/types.js";
-import { isOpenRouterAvailable, callOpenRouterTool } from "../core/openrouter.js";
+import type { Memory, MemoryType } from "./types.js";
+import { isOpenRouterAvailable, callOpenRouterTool } from "../_core/llm/providers/openrouter.js";
 import type {
   ExtractedFact,
   DeduplicationResult,
   ConflictResolution,
 } from "./types.js";
-import { embedDocument } from "../episodic/embeddings.js";
+import { embedDocument } from "../_core/embeddings/index.js";
 import {
   findNearestMemories,
   getMemory,

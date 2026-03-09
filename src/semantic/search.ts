@@ -12,11 +12,10 @@ import type Database from "better-sqlite3";
 import type {
   SearchOptions,
   SearchResult,
-  MemoryType,
-  Memory,
-} from "../core/types.js";
-import { embedQuery } from "../episodic/embeddings.js";
-import { rrfFuse, normalizeMinMaxFloored } from "../episodic/search.js";
+} from "../_core/types/index.js";
+import type { MemoryType, Memory } from "./types.js";
+import { embedQuery } from "../_core/embeddings/index.js";
+import { rrfFuse, normalizeMinMaxFloored } from "../_core/search/rrf.js";
 import { computeRetrievalScore } from "./decay.js";
 
 // ─── Row Type Helpers ───────────────────────────────────────────

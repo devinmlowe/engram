@@ -14,7 +14,7 @@ import {
   CONTRADICTION_PENALTY,
   PRUNE_THRESHOLD,
 } from "../../src/semantic/types.js";
-import type { Memory } from "../../src/core/types.js";
+import type { Memory } from "../../src/semantic/types.js";
 
 const NOW = 1700000000; // fixed reference timestamp
 

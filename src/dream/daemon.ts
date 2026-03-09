@@ -17,7 +17,8 @@
 import { writeFileSync, readFileSync, existsSync, mkdirSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
 import type Database from "better-sqlite3";
-import type { DreamPhase, DreamReport, EngramConfig } from "../core/types.js";
+import type { DreamPhase, DreamReport } from "./types.js";
+import type { EngramConfig } from "../_core/types/index.js";
 import type { ExtractedFact } from "../semantic/types.js";
 import {
   createRun,
@@ -231,7 +232,7 @@ async function runIngestPhase(
   }
 
   const { syncConversations } = await import("../episodic/sync.js");
-  const { initEmbeddings } = await import("../episodic/embeddings.js");
+  const { initEmbeddings } = await import("../_core/embeddings/index.js");
 
   await initEmbeddings(config);
 
@@ -297,7 +298,7 @@ async function runExtractPhase(
   const { initGraphExtractor, extractEntities, extractRelationships } = await import("../graph/extractor.js");
   const { resolveEntities } = await import("../graph/resolver.js");
   const { findOrCreateRelationship } = await import("../graph/relationship.js");
-  const { initEmbeddings } = await import("../episodic/embeddings.js");
+  const { initEmbeddings } = await import("../_core/embeddings/index.js");
 
   await initEmbeddings(config);
   await initExtractor();
@@ -376,7 +377,7 @@ async function runConsolidatePhase(
   }
 
   const { initConsolidator, consolidateFacts } = await import("../semantic/consolidator.js");
-  const { initEmbeddings } = await import("../episodic/embeddings.js");
+  const { initEmbeddings } = await import("../_core/embeddings/index.js");
 
   await initEmbeddings(config);
   initConsolidator();
@@ -532,7 +533,7 @@ async function runPrunePhase(
     // Reconstruct Memory object for the decay functions
     const memory = {
       id: row.id,
-      type: row.type as import("../core/types.js").MemoryType,
+      type: row.type as import("../_core/types/index.js").MemoryType,
       content: row.content,
       confidence: row.confidence,
       importance: row.importance,

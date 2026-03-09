@@ -10,8 +10,8 @@
  */
 
 import Database from "better-sqlite3";
-import { initDatabase } from "../core/db.js";
-import { loadConfig } from "../core/config.js";
+import { initDatabase } from "../_core/db/index.js";
+import { loadConfig } from "../_core/config/index.js";
 import type { ValidationResult } from "./types.js";
 import { EXCLUDED_PROJECT } from "./types.js";
 

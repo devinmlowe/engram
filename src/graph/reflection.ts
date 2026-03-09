@@ -8,7 +8,7 @@
  */
 
 import type Database from "better-sqlite3";
-import type { EngramConfig } from "../core/types.js";
+import type { EngramConfig } from "../_core/types/index.js";
 import type {
   ReflectResult,
   ReflectionObservation,
@@ -18,12 +18,12 @@ import type {
   GraphAnalysisResult,
   ObservationType,
 } from "./types.js";
-import type { IntelligenceConfig } from "../dream/intelligence.js";
+import type { IntelligenceConfig } from "../_core/llm/index.js";
 import { analyzeGraph, persistAnalysis, persistBridgeScores, getBridgeScores } from "./analyzer.js";
 import { nameCommunities } from "./naming.js";
 import { analyzeTemporalPatterns, getTemporalPatterns } from "./temporal.js";
 import { computeEdgeWeight, updateRelationshipWeight } from "./relationship.js";
-import { buildIntelligenceConfig, generate } from "../dream/intelligence.js";
+import { buildIntelligenceConfig, generate } from "../_core/llm/index.js";
 
 // ─── Memory Linking ─────────────────────────────────────────────
 
