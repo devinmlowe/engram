@@ -24,7 +24,7 @@ import {
   setClient,
   type IntelligenceConfig,
 } from "../../src/dream/intelligence.js";
-import { loadConfig } from "../../src/core/config.js";
+import { loadConfig } from "../../src/_core/config/index.js";
 
 // ── Helpers ──────────────────────────────────────────────────────
 

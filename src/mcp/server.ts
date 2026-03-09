@@ -8,7 +8,7 @@ import {
 import { z } from "zod";
 import { existsSync, readFileSync } from "node:fs";
 import { initDatabase } from "../core/db.js";
-import { loadConfig } from "../core/config.js";
+import { loadConfig } from "../_core/config/index.js";
 import {
   searchMultiSource,
   formatRecallXml,

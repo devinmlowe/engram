@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { initDatabase, rebuildFts } from "../../src/core/db.js";
-import { loadConfig } from "../../src/core/config.js";
+import { loadConfig } from "../../src/_core/config/index.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";

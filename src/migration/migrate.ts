@@ -10,7 +10,7 @@ import Database from "better-sqlite3";
 import { basename, dirname } from "node:path";
 import type { Exchange, ToolCall, Conversation } from "../core/types.js";
 import { initDatabase, rebuildFts } from "../core/db.js";
-import { loadConfig } from "../core/config.js";
+import { loadConfig } from "../_core/config/index.js";
 import { extractProjectName } from "../episodic/sync.js";
 import { initEmbeddings, embedDocumentBatch } from "../episodic/embeddings.js";
 import { upsertConversation } from "../episodic/store.js";
