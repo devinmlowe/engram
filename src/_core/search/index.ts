@@ -32,3 +32,6 @@ export {
 
 // Multi-source orchestration
 export { searchMultiSource, budgetResults } from "./orchestrator.js";
+
+// Text chunking
+export { chunkConversation } from "./text.js";

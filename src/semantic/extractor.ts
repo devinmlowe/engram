@@ -184,43 +184,9 @@ export function buildExtractionPrompt(
 
 // ─── Chunking ───────────────────────────────────────────────────
 
-/**
- * Split a conversation into processable chunks.
- *
- * If the conversation fits within maxTurns, returns a single chunk.
- * Otherwise, splits into windows of chunkSize with overlap to preserve
- * context across chunk boundaries. Original exchange indexes are preserved.
- */
-export function chunkConversation(
-  exchanges: ConversationExchange[],
-  chunkSize: number = DEFAULT_CONFIG.chunkSize,
-  overlap: number = DEFAULT_CONFIG.chunkOverlap,
-): ConversationExchange[][] {
-  if (exchanges.length <= DEFAULT_CONFIG.maxTurns) {
-    return [exchanges];
-  }
-
-  const chunks: ConversationExchange[][] = [];
-  let start = 0;
-
-  while (start < exchanges.length) {
-    const end = Math.min(start + chunkSize, exchanges.length);
-    chunks.push(exchanges.slice(start, end));
-
-    // Advance by chunkSize minus overlap, but at least 1 to avoid infinite loop
-    const step = Math.max(chunkSize - overlap, 1);
-    start += step;
-
-    // If the remaining exchanges would be smaller than overlap, include them
-    // in the last chunk and stop
-    if (start < exchanges.length && exchanges.length - start <= overlap) {
-      chunks.push(exchanges.slice(start));
-      break;
-    }
-  }
-
-  return chunks;
-}
+// Import from shared location; re-export for backward compatibility
+import { chunkConversation } from "../_core/search/text.js";
+export { chunkConversation };
 
 // ─── Response Parsing ───────────────────────────────────────────
 

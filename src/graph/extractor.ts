@@ -22,10 +22,7 @@ import type {
   RelationshipExtractionResult,
 } from "./types.js";
 import type { ConversationExchange, ConversationMetadata } from "../semantic/extractor.js";
-import { chunkConversation } from "../semantic/extractor.js";
-
-// Re-export for convenience
-export { chunkConversation } from "../semantic/extractor.js";
+import { chunkConversation } from "../_core/search/text.js";
 
 // ─── Module State ───────────────────────────────────────────────
 
