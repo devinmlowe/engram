@@ -47,6 +47,7 @@ export interface ExtractedFact {
   context?: string;
   importance: number; // 0-1, LLM-judged
   sourceExchangeIds: string[];
+  extractionBasis?: "explicit" | "inferred" | "observed";
 }
 
 export interface ExtractionResult {

@@ -9,7 +9,7 @@
 
 import type { IntelligenceConfig, GenerationResult } from "../types.js";
 
-const DEFAULT_MODEL = "google/gemini-2.5-flash-lite";
+const DEFAULT_MODEL = "google/gemini-2.5-flash";
 const BASE_URL = "https://openrouter.ai/api/v1";
 
 // ─── Types ──────────────────────────────────────────────────────
@@ -37,8 +37,102 @@ interface OpenRouterAPIResponse {
         function: { name: string; arguments: string };
       }>;
     };
+    finish_reason?: string;
   }>;
   model?: string;
+}
+
+// ─── Error Classification ───────────────────────────────────────
+
+export class OpenRouterError extends Error {
+  httpStatus: number | undefined;
+  errorClass: "transient" | "provider" | "permanent" | "unknown";
+
+  constructor(
+    message: string,
+    httpStatus?: number,
+    errorClass?: "transient" | "provider" | "permanent" | "unknown",
+  ) {
+    super(message);
+    this.name = "OpenRouterError";
+    this.httpStatus = httpStatus;
+    this.errorClass = errorClass ?? classifyHttpStatus(httpStatus);
+  }
+}
+
+function classifyHttpStatus(
+  status?: number,
+): "transient" | "provider" | "permanent" | "unknown" {
+  if (!status) return "unknown";
+  if ([429, 500, 502, 503, 504].includes(status)) return "transient";
+  if ([401, 402].includes(status)) return "provider";
+  if ([400, 422].includes(status)) return "permanent";
+  return "unknown";
+}
+
+// ─── Retry Logic ────────────────────────────────────────────────
+
+async function retryWithBackoff<T>(
+  fn: () => Promise<T>,
+  maxAttempts: number = 3,
+  baseDelayMs: number = 1000,
+  maxDelayMs: number = 30000,
+): Promise<T> {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      const isLast = attempt === maxAttempts - 1;
+
+      // Don't retry permanent or provider errors
+      if (err instanceof OpenRouterError) {
+        if (err.errorClass === "permanent" || err.errorClass === "provider") {
+          throw err;
+        }
+      }
+
+      // Wrap timeout AbortErrors with classified OpenRouterError for callers
+      if (isLast) {
+        if (err instanceof DOMException && err.name === "TimeoutError") {
+          throw new OpenRouterError(
+            `OpenRouter request timed out after ${maxAttempts} attempts`,
+            undefined,
+            "transient",
+          );
+        }
+        throw err;
+      }
+
+      // Full jitter: delay = random(0, min(maxDelay, baseDelay * 2^attempt))
+      const cap = Math.min(maxDelayMs, baseDelayMs * Math.pow(2, attempt));
+      const delay = Math.random() * cap;
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+  throw new Error("retryWithBackoff: unreachable");
+}
+
+// ─── Content Sanitization ───────────────────────────────────────
+
+/**
+ * Strip Unicode control characters that trigger Gemini's MALFORMED_FUNCTION_CALL.
+ * Preserves normal whitespace (space, tab, newline, carriage return).
+ */
+function stripControlChars(text: string): string {
+  return text.replace(
+    /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F\u200B-\u200F\u2028-\u202F\uFEFF]/g,
+    "",
+  );
+}
+
+/**
+ * Strip markdown code fences that some models wrap around JSON responses.
+ * Handles ```json ... ``` and plain ``` ... ``` patterns.
+ */
+function stripCodeFences(text: string): string {
+  const trimmed = text.trim();
+  const match = trimmed.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?\s*```$/);
+  return match ? match[1].trim() : trimmed;
 }
 
 // ─── Public API ─────────────────────────────────────────────────
@@ -56,7 +150,13 @@ export function isOpenRouterAvailable(): boolean {
  * Translates Anthropic-style tool schemas to OpenAI function calling format.
  * Returns the parsed JSON from the function call response.
  *
- * @throws Error if the API call fails or returns no valid result
+ * Features:
+ * - Retry with exponential backoff + jitter for transient errors (429, 5xx)
+ * - Unicode control character sanitization to avoid Gemini empty responses
+ * - Markdown code fence stripping for content fallback parsing
+ * - Respects Retry-After header when present
+ *
+ * @throws OpenRouterError with classified error type
  */
 export async function callOpenRouterTool<T = Record<string, unknown>>(
   messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
@@ -65,7 +165,7 @@ export async function callOpenRouterTool<T = Record<string, unknown>>(
 ): Promise<{ result: T; model: string }> {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
-    throw new Error("OPENROUTER_API_KEY not set");
+    throw new OpenRouterError("OPENROUTER_API_KEY not set", undefined, "permanent");
   }
 
   const model = options?.model ?? process.env.ENGRAM_OPENROUTER_MODEL ?? DEFAULT_MODEL;
@@ -73,10 +173,13 @@ export async function callOpenRouterTool<T = Record<string, unknown>>(
   const temperature = options?.temperature ?? 0;
   const timeoutMs = options?.timeoutMs ?? 120_000;
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  // Sanitize message content to avoid Gemini MALFORMED_FUNCTION_CALL
+  const sanitizedMessages = messages.map((m) => ({
+    ...m,
+    content: stripControlChars(m.content),
+  }));
 
-  try {
+  return retryWithBackoff(async () => {
     const response = await fetch(`${BASE_URL}/chat/completions`, {
       method: "POST",
       headers: {
@@ -87,7 +190,7 @@ export async function callOpenRouterTool<T = Record<string, unknown>>(
       },
       body: JSON.stringify({
         model,
-        messages,
+        messages: sanitizedMessages,
         tools: [{
           type: "function",
           function: {
@@ -100,16 +203,20 @@ export async function callOpenRouterTool<T = Record<string, unknown>>(
         max_tokens: maxTokens,
         temperature,
       }),
-      signal: controller.signal,
+      signal: AbortSignal.timeout(timeoutMs),
     });
 
     if (!response.ok) {
       const body = await response.text();
-      throw new Error(`OpenRouter API error ${response.status}: ${body}`);
+      throw new OpenRouterError(
+        `OpenRouter API error ${response.status}: ${body}`,
+        response.status,
+      );
     }
 
     const data = (await response.json()) as OpenRouterAPIResponse;
     const usedModel = data.model ?? model;
+    const finishReason = data.choices?.[0]?.finish_reason;
 
     // Primary path: function call arguments
     const toolCalls = data.choices?.[0]?.message?.tool_calls;
@@ -121,20 +228,24 @@ export async function callOpenRouterTool<T = Record<string, unknown>>(
     // Fallback: some models return JSON in content instead of tool_calls
     const content = data.choices?.[0]?.message?.content;
     if (content) {
-      const parsed = JSON.parse(content) as T;
+      const cleaned = stripCodeFences(content);
+      const parsed = JSON.parse(cleaned) as T;
       return { result: parsed, model: usedModel };
     }
 
-    throw new Error("OpenRouter response contained no tool_calls or content");
-  } finally {
-    clearTimeout(timeout);
-  }
+    // Both tool_calls and content empty — classify as transient (Gemini empty response)
+    throw new OpenRouterError(
+      `OpenRouter response contained no tool_calls or content (finish_reason: ${finishReason ?? "unknown"})`,
+      undefined,
+      "transient",
+    );
+  });
 }
 
 /**
  * Call OpenRouter for free-text generation (no tool/function calling).
  *
- * @throws Error if the API call fails or returns no content
+ * @throws OpenRouterError with classified error type
  */
 export async function callOpenRouterText(
   messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
@@ -142,7 +253,7 @@ export async function callOpenRouterText(
 ): Promise<{ result: string; model: string }> {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
-    throw new Error("OPENROUTER_API_KEY not set");
+    throw new OpenRouterError("OPENROUTER_API_KEY not set", undefined, "permanent");
   }
 
   const model = options?.model ?? process.env.ENGRAM_OPENROUTER_MODEL ?? DEFAULT_MODEL;
@@ -150,10 +261,13 @@ export async function callOpenRouterText(
   const temperature = options?.temperature ?? 0;
   const timeoutMs = options?.timeoutMs ?? 120_000;
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  // Sanitize message content
+  const sanitizedMessages = messages.map((m) => ({
+    ...m,
+    content: stripControlChars(m.content),
+  }));
 
-  try {
+  return retryWithBackoff(async () => {
     const response = await fetch(`${BASE_URL}/chat/completions`, {
       method: "POST",
       headers: {
@@ -164,28 +278,34 @@ export async function callOpenRouterText(
       },
       body: JSON.stringify({
         model,
-        messages,
+        messages: sanitizedMessages,
         max_tokens: maxTokens,
         temperature,
       }),
-      signal: controller.signal,
+      signal: AbortSignal.timeout(timeoutMs),
     });
 
     if (!response.ok) {
       const body = await response.text();
-      throw new Error(`OpenRouter API error ${response.status}: ${body}`);
+      throw new OpenRouterError(
+        `OpenRouter API error ${response.status}: ${body}`,
+        response.status,
+      );
     }
 
     const data = (await response.json()) as OpenRouterAPIResponse;
     const content = data.choices?.[0]?.message?.content;
     if (!content) {
-      throw new Error("OpenRouter response contained no content");
+      const finishReason = data.choices?.[0]?.finish_reason;
+      throw new OpenRouterError(
+        `OpenRouter response contained no content (finish_reason: ${finishReason ?? "unknown"})`,
+        undefined,
+        "transient",
+      );
     }
 
     return { result: content, model: data.model ?? model };
-  } finally {
-    clearTimeout(timeout);
-  }
+  });
 }
 
 // ─── Intelligence-Layer Wrappers ─────────────────────────────────

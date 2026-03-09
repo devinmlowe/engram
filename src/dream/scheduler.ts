@@ -123,7 +123,8 @@ export function getIncompleteRun(
 // ─── Checkpointing ──────────────────────────────────────────────
 
 /**
- * Check whether a specific item has been checkpointed for a given phase and run.
+ * Check whether a specific item has been successfully checkpointed for a given phase and run.
+ * Only considers checkpoints with status = 'success' — error checkpoints do not block retries.
  */
 export function isCheckpointed(
   db: Database.Database,
@@ -133,7 +134,7 @@ export function isCheckpointed(
 ): boolean {
   const row = db
     .prepare(
-      "SELECT 1 FROM dream_checkpoints WHERE run_id = ? AND phase = ? AND item_id = ?",
+      "SELECT 1 FROM dream_checkpoints WHERE run_id = ? AND phase = ? AND item_id = ? AND status = 'success'",
     )
     .get(runId, phase, itemId);
 
@@ -141,9 +142,8 @@ export function isCheckpointed(
 }
 
 /**
- * Record a checkpoint for a specific item in a given phase and run.
- * Idempotent — uses a unique constraint check to avoid duplicate inserts.
- * The id is a new UUID for each checkpoint record.
+ * Record a successful checkpoint for a specific item in a given phase and run.
+ * Idempotent — checks existence before inserting.
  */
 export function recordCheckpoint(
   db: Database.Database,
@@ -154,24 +154,63 @@ export function recordCheckpoint(
   const id = crypto.randomUUID();
   const now = Math.floor(Date.now() / 1000);
 
-  // Use INSERT OR IGNORE with a conflict check on (run_id, phase, item_id).
-  // Since there's no unique index on that combination in the schema,
-  // we check existence first and skip if already present.
+  // Check for existing success checkpoint
   const existing = db
     .prepare(
-      "SELECT 1 FROM dream_checkpoints WHERE run_id = ? AND phase = ? AND item_id = ?",
+      "SELECT 1 FROM dream_checkpoints WHERE run_id = ? AND phase = ? AND item_id = ? AND status = 'success'",
     )
     .get(runId, phase, itemId);
 
   if (!existing) {
     insertRow(db, "dream_checkpoints", {
-      id, run_id: runId, phase, item_id: itemId, processed_at: now,
+      id, run_id: runId, phase, item_id: itemId, processed_at: now, status: "success",
     });
   }
 }
 
 /**
- * Get all checkpointed item IDs for a given phase and run.
+ * Record a failure checkpoint for an item. Preserves error details for debugging
+ * and retry logic. Does NOT block the item from being retried.
+ */
+export function recordFailure(
+  db: Database.Database,
+  runId: string,
+  phase: string,
+  itemId: string,
+  details: {
+    provider?: string;
+    errorClass?: "transient" | "provider" | "permanent" | "unknown";
+    errorMessage?: string;
+  },
+): void {
+  const id = crypto.randomUUID();
+  const now = Math.floor(Date.now() / 1000);
+
+  // Count previous attempts for this item in this run+phase
+  const prevRow = db
+    .prepare(
+      "SELECT COUNT(*) as count FROM dream_checkpoints WHERE run_id = ? AND phase = ? AND item_id = ?",
+    )
+    .get(runId, phase, itemId) as { count: number };
+
+  db.prepare(
+    `INSERT INTO dream_checkpoints (id, run_id, phase, item_id, processed_at, status, provider, error_class, error_message, attempt_count)
+     VALUES (?, ?, ?, ?, ?, 'error', ?, ?, ?, ?)`,
+  ).run(
+    id,
+    runId,
+    phase,
+    itemId,
+    now,
+    details.provider ?? null,
+    details.errorClass ?? "unknown",
+    details.errorMessage ?? null,
+    prevRow.count + 1,
+  );
+}
+
+/**
+ * Get all successfully checkpointed item IDs for a given phase and run.
  * Returns a Set for O(1) lookups during processing.
  */
 export function getCheckpointedItems(
@@ -181,18 +220,61 @@ export function getCheckpointedItems(
 ): Set<string> {
   const rows = db
     .prepare(
-      "SELECT item_id FROM dream_checkpoints WHERE run_id = ? AND phase = ?",
+      "SELECT item_id FROM dream_checkpoints WHERE run_id = ? AND phase = ? AND status = 'success'",
     )
     .all(runId, phase) as Array<{ item_id: string }>;
 
   return new Set(rows.map((r) => r.item_id));
 }
 
+/**
+ * Get items that failed on a provider but haven't succeeded on any.
+ * Returns items eligible for retry, with their most recent error details.
+ */
+export function getRetryableItems(
+  db: Database.Database,
+  runId: string,
+  phase: string = "extract",
+): Array<{ itemId: string; errorClass: string; provider: string | null; attempts: number }> {
+  const rows = db
+    .prepare(`
+      SELECT
+        dc.item_id,
+        dc.error_class,
+        dc.provider,
+        dc.attempt_count
+      FROM dream_checkpoints dc
+      WHERE dc.run_id = ? AND dc.phase = ? AND dc.status = 'error'
+        AND dc.item_id NOT IN (
+          SELECT item_id FROM dream_checkpoints
+          WHERE run_id = ? AND phase = ? AND status = 'success'
+        )
+        AND dc.processed_at = (
+          SELECT MAX(dc2.processed_at) FROM dream_checkpoints dc2
+          WHERE dc2.run_id = dc.run_id AND dc2.phase = dc.phase AND dc2.item_id = dc.item_id
+        )
+      ORDER BY dc.processed_at ASC
+    `)
+    .all(runId, phase, runId, phase) as Array<{
+      item_id: string;
+      error_class: string | null;
+      provider: string | null;
+      attempt_count: number | null;
+    }>;
+
+  return rows.map((r) => ({
+    itemId: r.item_id,
+    errorClass: r.error_class ?? "unknown",
+    provider: r.provider,
+    attempts: r.attempt_count ?? 1,
+  }));
+}
+
 // ─── Work Queue ─────────────────────────────────────────────────
 
 /**
- * Get conversation IDs that have not been checkpointed for the extract phase
- * in the given run. These are conversations that still need processing.
+ * Get conversation IDs that have not been successfully checkpointed for the extract phase
+ * in the given run. Only success checkpoints count — error checkpoints do not block retries.
  */
 export function getUnprocessedConversations(
   db: Database.Database,
@@ -203,7 +285,7 @@ export function getUnprocessedConversations(
       SELECT id FROM conversations
       WHERE id NOT IN (
         SELECT item_id FROM dream_checkpoints
-        WHERE run_id = ? AND phase = 'extract'
+        WHERE run_id = ? AND phase = 'extract' AND status = 'success'
       )
       ORDER BY last_indexed DESC
     `)
@@ -258,10 +340,10 @@ export function getPhaseProgress(
     )
     .get(runId, phase) as { count: number };
 
-  // Count errors (checkpoints with 'error:' prefix in item_id)
+  // Count errors (checkpoints with status = 'error')
   const errorRow = db
     .prepare(
-      "SELECT COUNT(*) as count FROM dream_checkpoints WHERE run_id = ? AND phase = ? AND item_id LIKE 'error:%'",
+      "SELECT COUNT(*) as count FROM dream_checkpoints WHERE run_id = ? AND phase = ? AND status = 'error'",
     )
     .get(runId, phase) as { count: number };
 

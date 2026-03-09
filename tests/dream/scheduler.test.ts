@@ -6,6 +6,7 @@ import {
   getIncompleteRun,
   isCheckpointed,
   recordCheckpoint,
+  recordFailure,
   getCheckpointedItems,
   getUnprocessedConversations,
   prioritizeConversations,
@@ -511,12 +512,16 @@ describe("Progress Tracking", () => {
       expect(progress.total).toBe(3);
     });
 
-    it("counts errors from error-prefixed checkpoints", () => {
+    it("counts errors from error status checkpoints", () => {
       const runId = createRun(t.db);
       insertConversation("conv-001");
 
       recordCheckpoint(t.db, runId, "extract", "conv-001");
-      recordCheckpoint(t.db, runId, "extract", "error:conv-002");
+      recordFailure(t.db, runId, "extract", "conv-002", {
+        provider: "openrouter",
+        errorClass: "transient",
+        errorMessage: "LLM timeout",
+      });
 
       const progress = getPhaseProgress(t.db, runId, "extract");
 

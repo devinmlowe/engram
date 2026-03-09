@@ -49,6 +49,6 @@ launchctl load ~/Library/LaunchAgents/com.engram.dreamstate.plist
 
 - [ ] List all `process.env.*` references the code depends on
 - [ ] Add each to the plist `EnvironmentVariables` dict
-- [ ] Use stable paths for interpreters (not fnm multishell paths)
+- [x] Use stable paths for interpreters (not fnm multishell paths) — resolved via `resolve_node()` in `scripts/install-daemon.sh`, which prefers `~/.local/share/fnm/aliases/default/bin/node` over ephemeral multishell paths
 - [ ] Test with `launchctl start <label>` after changes
 - [ ] Check logs at the paths defined in `StandardOutPath` / `StandardErrorPath`

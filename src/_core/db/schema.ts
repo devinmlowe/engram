@@ -282,6 +282,17 @@ function createSchema(db: Database.Database, config: EngramConfig): void {
       ON reflection_observations(generation);
   `);
 
+  // ─── Schema Migrations (idempotent ALTER TABLE) ────────────────
+  // Add checkpoint status tracking for retry logic
+  idempotentAlter(db, "dream_checkpoints", "status", "ALTER TABLE dream_checkpoints ADD COLUMN status TEXT DEFAULT 'success'");
+  idempotentAlter(db, "dream_checkpoints", "provider", "ALTER TABLE dream_checkpoints ADD COLUMN provider TEXT");
+  idempotentAlter(db, "dream_checkpoints", "error_class", "ALTER TABLE dream_checkpoints ADD COLUMN error_class TEXT");
+  idempotentAlter(db, "dream_checkpoints", "error_message", "ALTER TABLE dream_checkpoints ADD COLUMN error_message TEXT");
+  idempotentAlter(db, "dream_checkpoints", "attempt_count", "ALTER TABLE dream_checkpoints ADD COLUMN attempt_count INTEGER DEFAULT 1");
+
+  // Add extraction_basis metadata to memories
+  idempotentAlter(db, "memories", "extraction_basis", "ALTER TABLE memories ADD COLUMN extraction_basis TEXT DEFAULT 'observed'");
+
   // FTS5 virtual tables (created separately — can't use IF NOT EXISTS)
   createFtsIfNeeded(db, "exchanges_fts", `
     CREATE VIRTUAL TABLE exchanges_fts USING fts5(
@@ -332,6 +343,23 @@ function createFtsIfNeeded(
     .get(tableName);
   if (!exists) {
     db.exec(createSql);
+  }
+}
+
+/**
+ * Idempotent ALTER TABLE — adds a column only if it doesn't already exist.
+ * Uses PRAGMA table_info to check for the column's presence.
+ */
+function idempotentAlter(
+  db: Database.Database,
+  table: string,
+  column: string,
+  alterSql: string,
+): void {
+  const columns = db.pragma(`table_info(${table})`) as Array<{ name: string }>;
+  const exists = columns.some((c) => c.name === column);
+  if (!exists) {
+    db.exec(alterSql);
   }
 }
 

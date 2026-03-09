@@ -20,6 +20,33 @@ ensure_dirs() {
     mkdir -p "${HOME}/.local/share/engram"
 }
 
+resolve_node() {
+    local fnm_default="${HOME}/.local/share/fnm/aliases/default/bin/node"
+    local homebrew="/opt/homebrew/bin/node"
+    local system="/usr/local/bin/node"
+
+    if [ -x "$fnm_default" ]; then
+        echo "$fnm_default"
+    elif [ -x "$homebrew" ]; then
+        echo "$homebrew"
+    elif [ -x "$system" ]; then
+        echo "$system"
+    else
+        local fallback
+        fallback="$(which node 2>/dev/null)"
+        if [ -n "$fallback" ]; then
+            if echo "$fallback" | grep -q "fnm_multishells"; then
+                echo "WARNING: Resolved node path is an ephemeral fnm multishell path." >&2
+                echo "         The daemon may break after reboot. Consider setting fnm default." >&2
+            fi
+            echo "$fallback"
+        else
+            echo "ERROR: No node binary found." >&2
+            exit 1
+        fi
+    fi
+}
+
 install_daemon() {
     ensure_dirs
 
@@ -32,10 +59,14 @@ install_daemon() {
     echo "Building engram..."
     (cd "$ENGRAM_DIR" && npm run build)
 
+    # Resolve a stable node binary path (avoid fnm multishell ephemeral paths)
+    NODE_BIN="$(resolve_node)"
+    echo "Using node: $NODE_BIN ($($NODE_BIN --version))"
+
     # Generate plist with correct paths
     sed -e "s|/usr/local/lib/engram|${ENGRAM_DIR}|g" \
         -e "s|/Users/USER|${HOME}|g" \
-        -e "s|/usr/local/bin/node|$(which node)|g" \
+        -e "s|/usr/local/bin/node|${NODE_BIN}|g" \
         "$PLIST_SRC" > "$PLIST_DST"
 
     # Copy ANTHROPIC_API_KEY if set
@@ -43,6 +74,12 @@ install_daemon() {
         # Insert API key into EnvironmentVariables
         /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:ANTHROPIC_API_KEY string ${ANTHROPIC_API_KEY}" "$PLIST_DST" 2>/dev/null || \
         /usr/libexec/PlistBuddy -c "Set :EnvironmentVariables:ANTHROPIC_API_KEY ${ANTHROPIC_API_KEY}" "$PLIST_DST"
+    fi
+
+    # Copy OPENROUTER_API_KEY if set
+    if [ -n "${OPENROUTER_API_KEY:-}" ]; then
+        /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:OPENROUTER_API_KEY string ${OPENROUTER_API_KEY}" "$PLIST_DST" 2>/dev/null || \
+        /usr/libexec/PlistBuddy -c "Set :EnvironmentVariables:OPENROUTER_API_KEY ${OPENROUTER_API_KEY}" "$PLIST_DST"
     fi
 
     # Add local model if configured

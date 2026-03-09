@@ -20,14 +20,17 @@ import type Database from "better-sqlite3";
 import type { DreamPhase, DreamReport } from "./types.js";
 import type { EngramConfig } from "../_core/types/index.js";
 import type { ExtractedFact } from "../semantic/types.js";
+import { OpenRouterError } from "../_core/llm/providers/openrouter.js";
 import {
   createRun,
   completeRun,
   failRun,
   getIncompleteRun,
   recordCheckpoint,
+  recordFailure,
   getCheckpointedItems,
   getUnprocessedConversations,
+  getRetryableItems,
   prioritizeConversations,
 } from "./scheduler.js";
 
@@ -339,9 +342,61 @@ async function runExtractPhase(
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       logEntry(logPath, "extract", `Error processing conversation ${convId}: ${errorMsg}`);
-      recordCheckpoint(db, runId, "extract", `error:${convId}`);
+      recordFailure(db, runId, "extract", convId, {
+        provider: "auto",
+        errorClass: classifyError(err),
+        errorMessage: errorMsg.slice(0, 500),
+      });
       errors++;
       // Skip and continue to next conversation
+    }
+  }
+
+  // Retry pass: re-process transient failures
+  if (!shuttingDown && !options.conversationId) {
+    const retryable = getRetryableItems(db, runId, "extract");
+    const retryTargets = retryable.filter(
+      (r) => r.errorClass === "transient" || r.errorClass === "unknown",
+    );
+
+    if (retryTargets.length > 0) {
+      logEntry(logPath, "extract", `Retry pass: ${retryTargets.length} items eligible for retry`);
+
+      for (const item of retryTargets) {
+        if (shuttingDown) break;
+
+        try {
+          const result = await processConversation(
+            db, item.itemId, config, logPath,
+            extractFromConversation,
+            extractEntities,
+            resolveEntities,
+            extractRelationships,
+            findOrCreateRelationship,
+          );
+
+          allFacts.push({ conversationId: item.itemId, facts: result.facts });
+
+          report.newMemories += result.memoriesCreated;
+          report.newEntities += result.entitiesCreated;
+          report.newRelationships += result.relationshipsCreated;
+          report.conflictsDetected += result.conflictsDetected;
+
+          recordCheckpoint(db, runId, "extract", item.itemId);
+          processed++;
+          errors--; // Recovered from previous error
+
+          options.onProgress?.("extract", processed, toProcess.length + retryTargets.length, errors);
+        } catch (retryErr) {
+          const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
+          logEntry(logPath, "extract", `Retry failed for ${item.itemId}: ${retryMsg}`);
+          recordFailure(db, runId, "extract", item.itemId, {
+            provider: "auto",
+            errorClass: classifyError(retryErr) === item.errorClass ? "permanent" : classifyError(retryErr),
+            errorMessage: retryMsg.slice(0, 500),
+          });
+        }
+      }
     }
   }
 
@@ -780,4 +835,28 @@ function updatePhasesCompleted(
 ): void {
   db.prepare("UPDATE dream_runs SET phases_completed = ? WHERE id = ?")
     .run(JSON.stringify(phases), runId);
+}
+
+/**
+ * Classify an error for checkpoint recording.
+ * Maps HTTP status codes, OpenRouterError classes, and error message patterns
+ * to one of: transient, provider, permanent, unknown.
+ */
+function classifyError(err: unknown): "transient" | "provider" | "permanent" | "unknown" {
+  if (err instanceof OpenRouterError) {
+    return err.errorClass;
+  }
+
+  const msg = err instanceof Error ? err.message : String(err);
+
+  // HTTP status patterns
+  if (/\b(429|500|502|503|504)\b/.test(msg)) return "transient";
+  if (/\b(401|402)\b/.test(msg) || /credit|balance|unauthorized/i.test(msg)) return "provider";
+  if (/\b(400|422)\b/.test(msg)) return "permanent";
+
+  // Content patterns
+  if (/no tool_calls or content/i.test(msg)) return "transient";
+  if (/parse error|validation error|invalid json/i.test(msg)) return "permanent";
+
+  return "unknown";
 }

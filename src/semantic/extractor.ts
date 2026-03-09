@@ -77,6 +77,11 @@ const EXTRACT_MEMORIES_TOOL: Anthropic.Tool = {
               type: "array",
               items: { type: "integer" },
             },
+            extraction_basis: {
+              type: "string",
+              enum: ["explicit", "inferred", "observed"],
+              description: "How this fact was derived: explicit (user stated), inferred (from behavior), observed (factual from conversation)",
+            },
           },
           required: [
             "type",
@@ -199,6 +204,7 @@ interface RawFact {
   context?: string;
   importance?: number;
   source_exchange_indexes?: number[];
+  extraction_basis?: string;
 }
 
 /**
@@ -264,12 +270,19 @@ export function parseExtractionResponse(
       ? raw.source_exchange_indexes.map((idx) => String(idx))
       : [];
 
+    // Validate extraction_basis
+    const validBases = new Set(["explicit", "inferred", "observed"]);
+    const extractionBasis = (raw.extraction_basis && validBases.has(raw.extraction_basis))
+      ? raw.extraction_basis as "explicit" | "inferred" | "observed"
+      : "observed";
+
     facts.push({
       type: raw.type as MemoryType,
       content: raw.content.trim(),
       context: raw.context && typeof raw.context === "string" ? raw.context.trim() : undefined,
       importance,
       sourceExchangeIds,
+      extractionBasis,
     });
   }
 

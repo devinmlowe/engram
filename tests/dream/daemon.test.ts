@@ -390,15 +390,16 @@ describe("Error handling", () => {
 
     const report = await runDream(t.db, t.config);
 
-    // The error checkpoint should be recorded
+    // The error checkpoint should be recorded with status = 'error'
     const checkpoints = t.db
       .prepare(
-        "SELECT * FROM dream_checkpoints WHERE phase = 'extract' AND item_id LIKE 'error:%'",
+        "SELECT * FROM dream_checkpoints WHERE phase = 'extract' AND item_id = 'conv-001' AND status = 'error'",
       )
       .all() as Array<Record<string, unknown>>;
 
     expect(checkpoints.length).toBeGreaterThanOrEqual(1);
-    expect(checkpoints[0].item_id).toMatch(/^error:conv-001$/);
+    expect(checkpoints[0].item_id).toBe("conv-001");
+    expect(checkpoints[0].error_class).toBeTruthy();
   });
 });
 
@@ -433,6 +434,15 @@ describe("Phase runners", () => {
     it("processes unprocessed conversations", async () => {
       seedConversation("conv-001");
       seedConversation("conv-002");
+
+      // Reset to default mock (previous tests may leave persistent mockImplementation)
+      vi.mocked(extractFromConversation).mockResolvedValue({
+        facts: [{ type: "fact", content: "test fact", importance: 0.7, sourceExchangeIds: [] }],
+        model: "test-model",
+        tier: "haiku",
+        confidence: 8,
+        durationMs: 100,
+      });
 
       await runDream(t.db, t.config, { phases: ["extract"] });
 
@@ -475,7 +485,7 @@ describe("Phase runners", () => {
 
       const checkpoints = t.db
         .prepare(
-          "SELECT item_id FROM dream_checkpoints WHERE run_id = ? AND phase = 'extract' AND item_id NOT LIKE 'error:%'",
+          "SELECT item_id FROM dream_checkpoints WHERE run_id = ? AND phase = 'extract' AND status = 'success'",
         )
         .all(run.id) as Array<{ item_id: string }>;
 

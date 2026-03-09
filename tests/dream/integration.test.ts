@@ -245,7 +245,7 @@ describe("Dream daemon integration", () => {
 
     // Should have extract checkpoints for each conversation
     const extractCps = checkpoints.filter(
-      (c) => c.phase === "extract" && !(c.item_id as string).startsWith("error:"),
+      (c) => c.phase === "extract" && c.status === "success",
     );
     expect(extractCps).toHaveLength(3);
 
@@ -382,14 +382,15 @@ describe("Dream daemon integration", () => {
     expect(extractPhase!.itemsProcessed).toBe(2); // 2 succeeded
     expect(extractPhase!.errors).toBe(1); // 1 failed
 
-    // Check that error checkpoint was recorded
+    // Check that error checkpoint was recorded with new status-based schema
     const errorCps = t.db
       .prepare(
-        "SELECT * FROM dream_checkpoints WHERE phase = 'extract' AND item_id LIKE 'error:%'",
+        "SELECT * FROM dream_checkpoints WHERE phase = 'extract' AND item_id = 'conv-fail' AND status = 'error'",
       )
       .all() as Array<Record<string, unknown>>;
-    expect(errorCps).toHaveLength(1);
-    expect(errorCps[0].item_id).toBe("error:conv-fail");
+    expect(errorCps.length).toBeGreaterThanOrEqual(1);
+    expect(errorCps[0].item_id).toBe("conv-fail");
+    expect(errorCps[0].error_class).toBeTruthy();
 
     // But the run should still complete successfully overall
     const run = t.db
