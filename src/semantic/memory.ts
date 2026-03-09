@@ -10,6 +10,13 @@
 
 import type Database from "better-sqlite3";
 import type { Memory, MemoryType, Conflict } from "./types.js";
+import {
+  insertVector,
+  searchVector,
+  deleteVector,
+  insertFtsRow,
+  deleteFtsRow,
+} from "../_core/db/index.js";
 
 // ─── Row Type Helpers ───────────────────────────────────────────
 
@@ -111,19 +118,14 @@ export function insertMemory(
       .get(memory.id) as { rowid: number } | undefined;
 
     if (row) {
-      db.prepare(
-        "INSERT INTO memories_fts(rowid, content, context) VALUES (?, ?, ?)",
-      ).run(row.rowid, memory.content, memory.context ?? null);
+      insertFtsRow(db, "memories_fts", row.rowid, {
+        content: memory.content,
+        context: memory.context ?? null,
+      });
     }
 
     // 3. Insert into vec_memories (delete first — vec0 doesn't support REPLACE)
-    db.prepare("DELETE FROM vec_memories WHERE id = ?").run(memory.id);
-    db.prepare(
-      "INSERT INTO vec_memories(id, embedding) VALUES (?, ?)",
-    ).run(
-      memory.id,
-      Buffer.from(new Float32Array(embedding).buffer),
-    );
+    insertVector(db, "vec_memories", memory.id, embedding);
   });
 
   run();
@@ -151,9 +153,10 @@ export function updateMemory(
 
     // If content or context changed, delete old FTS entry
     if (needsFtsSync) {
-      db.prepare(
-        "INSERT INTO memories_fts(memories_fts, rowid, content, context) VALUES('delete', ?, ?, ?)",
-      ).run(existing.rowid, existing.content, existing.context);
+      deleteFtsRow(db, "memories_fts", existing.rowid, {
+        content: existing.content,
+        context: existing.context,
+      });
     }
 
     // Build dynamic SET clause
@@ -214,9 +217,10 @@ export function updateMemory(
         ? (updates.context ?? null)
         : existing.context;
 
-      db.prepare(
-        "INSERT INTO memories_fts(rowid, content, context) VALUES (?, ?, ?)",
-      ).run(existing.rowid, newContent, newContext);
+      insertFtsRow(db, "memories_fts", existing.rowid, {
+        content: newContent,
+        context: newContext,
+      });
     }
   });
 
@@ -350,15 +354,9 @@ export function findNearestMemories(
   embedding: number[],
   limit: number = 10,
 ): Array<{ id: string; distance: number }> {
-  const queryBuf = Buffer.from(new Float32Array(embedding).buffer);
-
   // Query vec_memories for candidates, then filter by active status
   // We request more candidates than needed to account for inactive filtering
-  const candidates = db
-    .prepare(
-      "SELECT id, distance FROM vec_memories WHERE embedding MATCH ? AND k = ?",
-    )
-    .all(queryBuf, limit * 2) as Array<{ id: string; distance: number }>;
+  const candidates = searchVector(db, "vec_memories", embedding, limit * 2);
 
   // Filter to active memories only
   const results: Array<{ id: string; distance: number }> = [];

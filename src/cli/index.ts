@@ -3,7 +3,7 @@ import { Command } from "commander";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { loadConfig } from "../_core/config/index.js";
-import { initDatabase } from "../_core/db/index.js";
+import { getDatabase, closeDatabase } from "../_core/db/index.js";
 
 const program = new Command();
 
@@ -23,7 +23,7 @@ program
   .action(async (opts) => {
     const { syncConversations } = await import("../episodic/sync.js");
     const config = loadConfig();
-    const db = initDatabase(config);
+    const db = getDatabase(config);
 
     try {
       console.log("Syncing conversations...");
@@ -46,7 +46,7 @@ program
         }
       }
     } finally {
-      db.close();
+      closeDatabase();
     }
   });
 
@@ -66,7 +66,7 @@ program
     );
     const { initEmbeddings } = await import("../_core/embeddings/index.js");
     const config = loadConfig();
-    const db = initDatabase(config);
+    const db = getDatabase(config);
 
     try {
       await initEmbeddings(config);
@@ -87,7 +87,7 @@ program
 
       console.log(formatRecallXml(response));
     } finally {
-      db.close();
+      closeDatabase();
     }
   });
 
@@ -117,7 +117,7 @@ program
     } = await import("../semantic/memory.js");
 
     const config = loadConfig();
-    const db = initDatabase(config);
+    const db = getDatabase(config);
 
     try {
       await initEmbeddings(config);
@@ -178,7 +178,7 @@ program
 
       console.log(`Remembered: ${content}`);
     } finally {
-      db.close();
+      closeDatabase();
     }
   });
 
@@ -204,7 +204,7 @@ program
     );
 
     const config = loadConfig();
-    const db = initDatabase(config);
+    const db = getDatabase(config);
 
     try {
       await initEmbeddings(config);
@@ -310,7 +310,7 @@ program
       console.log(`  Conflicts: ${actions.conflict}`);
       console.log(`  Skipped:  ${actions.skip}`);
     } finally {
-      db.close();
+      closeDatabase();
     }
   });
 
@@ -322,7 +322,7 @@ program
   .action(async () => {
     const { statSync } = await import("node:fs");
     const config = loadConfig();
-    const db = initDatabase(config);
+    const db = getDatabase(config);
 
     try {
       const exchangeCount = (
@@ -438,7 +438,7 @@ program
         `  Last Sync:     ${lastSync.ts ? new Date(lastSync.ts * 1000).toISOString() : "never"}`,
       );
     } finally {
-      db.close();
+      closeDatabase();
     }
   });
 
@@ -454,8 +454,8 @@ program
     const config = loadConfig();
 
     console.log("Initializing database...");
-    const db = initDatabase(config);
-    db.close();
+    const db = getDatabase(config);
+    closeDatabase();
     console.log(`  Database: ${config.dbPath}`);
 
     console.log("Downloading embedding model...");
@@ -598,7 +598,7 @@ program
       "../graph/entity.js"
     );
     const config = loadConfig();
-    const db = initDatabase(config);
+    const db = getDatabase(config);
     try {
       if (opts.search) {
         const results = ftsSearchEntities(db, opts.search, parseInt(opts.limit, 10));
@@ -633,7 +633,7 @@ program
         }
       }
     } finally {
-      db.close();
+      closeDatabase();
     }
   });
 
@@ -651,7 +651,7 @@ program
       "../graph/relationship.js"
     );
     const config = loadConfig();
-    const db = initDatabase(config);
+    const db = getDatabase(config);
     try {
       // Find entity
       const found =
@@ -680,7 +680,7 @@ program
         if (rel.context) console.log(`    ${rel.context}`);
       }
     } finally {
-      db.close();
+      closeDatabase();
     }
   });
 
@@ -694,7 +694,7 @@ program
   .action(async (entity, opts) => {
     const { exploreEntity } = await import("../graph/search.js");
     const config = loadConfig();
-    const db = initDatabase(config);
+    const db = getDatabase(config);
     try {
       const depth = parseInt(opts.depth, 10);
       const result = exploreEntity(db, {
@@ -727,7 +727,7 @@ program
         );
       }
     } finally {
-      db.close();
+      closeDatabase();
     }
   });
 
@@ -747,7 +747,7 @@ program
     const { runDream } = await import("../dream/daemon.js");
     const { initEmbeddings } = await import("../_core/embeddings/index.js");
     const config = loadConfig();
-    const db = initDatabase(config);
+    const db = getDatabase(config);
 
     try {
       await initEmbeddings(config);
@@ -791,7 +791,7 @@ program
       const durationSec = report.completedAt - report.startedAt;
       console.log(`  Duration:          ${durationSec}s`);
     } finally {
-      db.close();
+      closeDatabase();
     }
   });
 
@@ -819,7 +819,7 @@ program
     const dbExists = existsSync(config.dbPath);
     if (dbExists) {
       try {
-        const db = initDatabase(config);
+        const db = getDatabase(config);
         const exchangeCount = (
           db.prepare("SELECT COUNT(*) as count FROM exchanges").get() as {
             count: number;
@@ -838,7 +838,7 @@ program
           }
         ).count;
         const dbSize = statSync(config.dbPath).size;
-        db.close();
+        closeDatabase();
 
         console.log(`[ok] Database: ${config.dbPath} (${(dbSize / 1024 / 1024).toFixed(1)} MB)`);
         console.log(`     Exchanges: ${exchangeCount}, Memories: ${memoryCount}, Entities: ${entityCount}`);
@@ -908,7 +908,7 @@ program
   .option("--refresh", "Force fresh analysis (slower)")
   .action(async (opts) => {
     const config = loadConfig();
-    const db = initDatabase(config);
+    const db = getDatabase(config);
     try {
       if (opts.refresh) {
         const { runReflection } = await import("../graph/reflection.js");
@@ -925,7 +925,7 @@ program
         printReflectResult(result, opts.mode);
       }
     } finally {
-      db.close();
+      closeDatabase();
     }
   });
 

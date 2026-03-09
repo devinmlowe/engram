@@ -7,7 +7,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { existsSync, readFileSync } from "node:fs";
-import { initDatabase } from "../_core/db/index.js";
+import { getDatabase } from "../_core/db/index.js";
 import { loadConfig } from "../_core/config/index.js";
 import {
   searchMultiSource,
@@ -41,7 +41,7 @@ let embeddingsReady = false;
 function getDb(): Database.Database {
   if (!db) {
     config = loadConfig();
-    db = initDatabase(config);
+    db = getDatabase(config);
   }
   return db;
 }
