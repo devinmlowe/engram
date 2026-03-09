@@ -27,7 +27,7 @@ Each phase worktree merges back to `refactor/src-extraction` upon exit criteria 
 
 ### [Phase 1: Extract _core/ Shared Services](./phase-1-plan.md)
 
-**Status:** Not started
+**Status:** COMPLETE (merged to integration branch)
 **Depends on:** Nothing (first phase)
 **Resolves issues:** 1, 6, 7, 8, 9, 16, 19, 20 (9 of 21 structural issues)
 
