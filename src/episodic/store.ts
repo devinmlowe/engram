@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
 import type { Exchange, ToolCall, Conversation } from "./types.js";
+import { insertVector } from "../_core/db/index.js";
 
 /**
  * Insert an exchange with its embedding and tool calls in a single transaction.
@@ -60,13 +61,7 @@ export function insertExchange(
     }
 
     // 3. Insert into vec0 (delete first — vec0 doesn't support REPLACE)
-    db.prepare("DELETE FROM vec_exchanges WHERE id = ?").run(exchange.id);
-    db.prepare(
-      "INSERT INTO vec_exchanges(id, embedding) VALUES (?, ?)",
-    ).run(
-      exchange.id,
-      Buffer.from(new Float32Array(embedding).buffer),
-    );
+    insertVector(db, "vec_exchanges", exchange.id, embedding);
 
     // 4. Insert tool calls
     for (const tc of toolCalls) {
