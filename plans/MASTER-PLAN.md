@@ -89,7 +89,7 @@ Move `src/cli/`, `src/mcp/`, `src/web/` under `interfaces/`:
 
 ### [Phase 4: Decompose graph-server.ts](./phase-4-plan.md)
 
-**Status:** In progress
+**Status:** COMPLETE (merged to integration branch)
 **Depends on:** Phases 2 and 3 complete and merged to integration branch
 **Resolves issues:** 3, 5 (partially, web-specific SQL)
 
