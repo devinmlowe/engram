@@ -812,7 +812,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         query: params.query,
       });
 
-      const sessionMeta = `<session id="${result.sessionId}" budget_remaining="${result.budgetRemaining}" result_count="${result.resultCount}" />`;
+      const qm = result.qualityMetrics;
+      const sessionMeta = `<session id="${result.sessionId}" budget_remaining="${result.budgetRemaining}" result_count="${result.resultCount}" avg_score="${qm.averageScore.toFixed(3)}" recommend="${qm.recommendAction}" />`;
 
       return {
         content: [{ type: "text", text: `${sessionMeta}\n${xml}` }],

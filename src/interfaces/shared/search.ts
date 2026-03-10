@@ -20,7 +20,8 @@ import {
   getSessionStore,
   drillIntoResult,
 } from "../../_core/search/index.js";
-import type { RecallSession, DrillResult } from "../../_core/search/session.js";
+import type { RecallSession, DrillResult, QualityMetrics } from "../../_core/search/session.js";
+import { computeQualityMetrics } from "../../_core/search/session.js";
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -40,6 +41,7 @@ export interface RecallSessionResult {
   results: SearchResult[];
   budgetRemaining: number;
   resultCount: number;
+  qualityMetrics: QualityMetrics;
 }
 
 export interface RecallDrillResult {
@@ -112,6 +114,7 @@ export async function createOrRefineRecallSession(
         results: [],
         budgetRemaining: 0,
         resultCount: session.results.length,
+        qualityMetrics: computeQualityMetrics([]),
       };
     }
 
@@ -133,6 +136,7 @@ export async function createOrRefineRecallSession(
       results: response.results,
       budgetRemaining: store.getRemainingBudget(params.sessionId),
       resultCount: session.results.length,
+      qualityMetrics: computeQualityMetrics(response.results),
     };
   }
 
@@ -158,6 +162,7 @@ export async function createOrRefineRecallSession(
     results: response.results,
     budgetRemaining: store.getRemainingBudget(session.id),
     resultCount: response.results.length,
+    qualityMetrics: computeQualityMetrics(response.results),
   };
 }
 
