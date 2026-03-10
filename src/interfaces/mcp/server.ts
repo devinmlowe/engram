@@ -115,6 +115,7 @@ const RememberBatchInputSchema = z.object({
     ]).optional().default("fact"),
     importance: z.number().min(0).max(1).optional(),
     source: z.enum(["user", "dream", "rlm", "import"]).optional(),
+    relates_to_entities: z.array(z.string()).max(10).optional(),
   })).min(1, "At least one memory is required").max(50, "Maximum batch size is 50"),
 });
 
@@ -319,7 +320,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         "Store multiple facts, preferences, decisions, or other knowledge items " +
         "as semantic memories in a single call. Supports up to 50 items per batch. " +
         "Automatically deduplicates against existing memories and within the batch. " +
-        "Use for bulk ingestion from RLM agents or dream pipeline.",
+        "Use for bulk ingestion from RLM agents or dream pipeline. Optionally link " +
+        "each memory to existing graph entities via relates_to_entities.",
       inputSchema: {
         type: "object",
         properties: {
@@ -356,6 +358,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
                   type: "string",
                   enum: ["user", "dream", "rlm", "import"],
                   description: "Source of this memory",
+                },
+                relates_to_entities: {
+                  type: "array",
+                  items: { type: "string" },
+                  maxItems: 10,
+                  description:
+                    "Entity names to link this memory to. Bumps mention counts " +
+                    "and creates pairwise related_to relationships between entities.",
                 },
               },
               required: ["content"],
@@ -782,6 +792,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         type: m.type as MemoryType,
         importance: m.importance,
         source: m.source as MemorySource | undefined,
+        relates_to_entities: m.relates_to_entities,
       }));
 
       const result = await storeMemoryBatch(getDb(), batchInput);
@@ -795,6 +806,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               created: result.created,
               deduplicated: result.deduplicated,
               errors: result.errors,
+              entitiesLinked: result.entitiesLinked,
               details: result.details,
             }, null, 2),
           },
