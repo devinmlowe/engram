@@ -3,7 +3,7 @@ module: config
 level: L2
 derives-from: ../SPEC.md
 status: draft
-verified-by: ../../tests/core/config.test.ts
+verified-by: ../../../tests/core/config.test.ts
 ---
 
 # Config

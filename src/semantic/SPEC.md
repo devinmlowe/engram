@@ -1,13 +1,13 @@
 ---
 module: semantic
 level: L1
-derives-from: ../SPEC.md
+derives-from: ../../SPEC.md
 status: draft
-verified-by: ../tests/semantic/
+verified-by: ../../tests/semantic/
 decision-log:
-  - ../decisions/005-unified-llm-factory.md
-  - ../decisions/006-shared-search-contract.md
-  - ../decisions/007-hybrid-type-ownership.md
+  - ../../decisions/005-unified-llm-factory.md
+  - ../../decisions/006-shared-search-contract.md
+  - ../../decisions/007-hybrid-type-ownership.md
 ---
 
 # Semantic

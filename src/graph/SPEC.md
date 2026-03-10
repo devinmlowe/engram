@@ -1,13 +1,13 @@
 ---
 module: graph
 level: L1
-derives-from: ../SPEC.md
+derives-from: ../../SPEC.md
 status: draft
-verified-by: ../tests/graph/
+verified-by: ../../tests/graph/
 decision-log:
-  - ../decisions/005-unified-llm-factory.md
-  - ../decisions/006-shared-search-contract.md
-  - ../decisions/007-hybrid-type-ownership.md
+  - ../../decisions/005-unified-llm-factory.md
+  - ../../decisions/006-shared-search-contract.md
+  - ../../decisions/007-hybrid-type-ownership.md
 ---
 
 # Graph

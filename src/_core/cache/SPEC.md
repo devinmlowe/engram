@@ -3,7 +3,7 @@ module: cache
 level: L2
 derives-from: ../SPEC.md
 status: draft
-verified-by: ../../tests/core/cache.test.ts
+verified-by: ../../../tests/core/cache.test.ts
 ---
 
 # Cache

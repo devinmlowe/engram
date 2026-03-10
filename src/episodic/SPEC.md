@@ -1,13 +1,13 @@
 ---
 module: episodic
 level: L1
-derives-from: ../SPEC.md
+derives-from: ../../SPEC.md
 status: draft
-verified-by: ../tests/episodic/
+verified-by: ../../tests/episodic/
 decision-log:
-  - ../decisions/003-core-shared-infrastructure.md
-  - ../decisions/006-shared-search-contract.md
-  - ../decisions/007-hybrid-type-ownership.md
+  - ../../decisions/003-core-shared-infrastructure.md
+  - ../../decisions/006-shared-search-contract.md
+  - ../../decisions/007-hybrid-type-ownership.md
 ---
 
 # Episodic

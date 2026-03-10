@@ -3,10 +3,10 @@ module: llm
 level: L2
 derives-from: ../SPEC.md
 status: draft
-verified-by: ../../tests/core/llm.test.ts
+verified-by: ../../../tests/core/llm.test.ts
 decision-log:
-  - ../../decisions/005-unified-llm-factory.md
-  - ../../decisions/002-llm-agnostic.md
+  - ../../../decisions/005-unified-llm-factory.md
+  - ../../../decisions/002-llm-agnostic.md
 ---
 
 # LLM

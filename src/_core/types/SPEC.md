@@ -3,9 +3,9 @@ module: types
 level: L2
 derives-from: ../SPEC.md
 status: draft
-verified-by: ../../tests/core/types.test.ts
+verified-by: ../../../tests/core/types.test.ts
 decision-log:
-  - ../../decisions/007-hybrid-type-ownership.md
+  - ../../../decisions/007-hybrid-type-ownership.md
 ---
 
 # Types

@@ -3,9 +3,9 @@ module: embeddings
 level: L2
 derives-from: ../SPEC.md
 status: draft
-verified-by: ../../tests/core/embeddings.test.ts
+verified-by: ../../../tests/core/embeddings.test.ts
 decision-log:
-  - ../../decisions/003-core-shared-infrastructure.md
+  - ../../../decisions/003-core-shared-infrastructure.md
 ---
 
 # Embeddings

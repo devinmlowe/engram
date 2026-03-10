@@ -283,11 +283,11 @@ The current 65KB SPEC.md contains valuable content that maps to SRC locations:
 | Vision, Architecture Overview | Root SPEC.md Purpose section |
 | Phase descriptions | decisions/ ADRs or domain SPEC.md sections |
 | Database Schema | `_shared/core/SPEC.md` Interface Contract |
-| Episodic Layer details | `episodic/SPEC.md` |
-| Semantic Layer details | `semantic/SPEC.md` |
-| Knowledge Graph details | `graph/SPEC.md` |
-| Dream State details | `dream/SPEC.md` |
-| MCP Server tools | `interfaces/mcp/SPEC.md` |
+| Episodic Layer details | `src/episodic/SPEC.md` |
+| Semantic Layer details | `src/semantic/SPEC.md` |
+| Knowledge Graph details | `src/graph/SPEC.md` |
+| Dream State details | `src/dream/SPEC.md` |
+| MCP Server tools | `src/interfaces/mcp/SPEC.md` |
 | Search/Retrieval details | `retrieval/SPEC.md` |
 | Score normalization | `retrieval/reranking/SPEC.md` |
 

@@ -1,11 +1,11 @@
 ---
 module: search
 level: L2
-derives-from: ../SPEC.md
+derives-from: ../../../SPEC.md
 status: draft
-verified-by: ../../tests/search/
+verified-by: ../../../tests/search/
 decision-log:
-  - ../../decisions/006-shared-search-contract.md
+  - ../../../decisions/006-shared-search-contract.md
 ---
 
 # Search

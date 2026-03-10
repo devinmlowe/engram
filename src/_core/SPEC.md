@@ -1,11 +1,11 @@
 ---
 module: _core
 level: L1
-derives-from: ../SPEC.md
+derives-from: ../../SPEC.md
 status: draft
-verified-by: ../tests/core/
+verified-by: ../../tests/core/
 decision-log:
-  - ../decisions/003-core-shared-infrastructure.md
+  - ../../decisions/003-core-shared-infrastructure.md
 ---
 
 # _core

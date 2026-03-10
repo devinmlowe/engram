@@ -1,12 +1,12 @@
 ---
 module: dream
 level: L1
-derives-from: ../SPEC.md
+derives-from: ../../SPEC.md
 status: draft
-verified-by: ../tests/dream/
+verified-by: ../../tests/dream/
 decision-log:
-  - ../decisions/001-target-architecture.md
-  - ../decisions/005-unified-llm-factory.md
+  - ../../decisions/001-target-architecture.md
+  - ../../decisions/005-unified-llm-factory.md
 ---
 
 # Dream

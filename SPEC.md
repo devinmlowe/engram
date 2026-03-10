@@ -54,21 +54,21 @@ Engram is a local-first cognitive memory system that ingests LLM agent conversat
 
 ## Decomposes Into
 
-- [Episodic](./episodic/SPEC.md) — Conversation archive ingestion, indexing, and episodic search
-- [Semantic](./semantic/SPEC.md) — Knowledge extraction, consolidation, and semantic search
-- [Graph](./graph/SPEC.md) — Entity/relationship graph, topic clusters, and graph search
-- [Dream](./dream/SPEC.md) — Autonomous consolidation pipeline: scheduling, orchestration, decay
-- [Interfaces](./interfaces/SPEC.md) — CLI, MCP server, and web interface
+- [Episodic](./src/episodic/SPEC.md) — Conversation archive ingestion, indexing, and episodic search
+- [Semantic](./src/semantic/SPEC.md) — Knowledge extraction, consolidation, and semantic search
+- [Graph](./src/graph/SPEC.md) — Entity/relationship graph, topic clusters, and graph search
+- [Dream](./src/dream/SPEC.md) — Autonomous consolidation pipeline: scheduling, orchestration, decay
+- [Interfaces](./src/interfaces/SPEC.md) — CLI, MCP server, and web interface
 
 ## Dependencies
 
-- [_core/config](`./_core/config/SPEC.md`) — System-wide configuration with env var overrides
-- [_core/db](`./_core/db/SPEC.md`) — Database connection, schema, thin data access layer
-- [_core/types](`./_core/types/SPEC.md`) — Cross-domain interface types (SearchResult, SearchOptions, EngramConfig)
-- [_core/embeddings](`./_core/embeddings/SPEC.md`) — Vector embedding pipeline (model init, encode, cache)
-- [_core/search](`./_core/search/SPEC.md`) — Multi-source search orchestration, RRF fusion, score normalization
-- [_core/llm](`./_core/llm/SPEC.md`) — Unified LLM client factory with tiered provider cascade
-- [_core/cache](`./_core/cache/SPEC.md`) — Generic LRU cache utility
+- [_core/config](`./src/_core/config/SPEC.md`) — System-wide configuration with env var overrides
+- [_core/db](`./src/_core/db/SPEC.md`) — Database connection, schema, thin data access layer
+- [_core/types](`./src/_core/types/SPEC.md`) — Cross-domain interface types (SearchResult, SearchOptions, EngramConfig)
+- [_core/embeddings](`./src/_core/embeddings/SPEC.md`) — Vector embedding pipeline (model init, encode, cache)
+- [_core/search](`./src/_core/search/SPEC.md`) — Multi-source search orchestration, RRF fusion, score normalization
+- [_core/llm](`./src/_core/llm/SPEC.md`) — Unified LLM client factory with tiered provider cascade
+- [_core/cache](`./src/_core/cache/SPEC.md`) — Generic LRU cache utility
 
 ## Verification
 

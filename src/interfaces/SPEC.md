@@ -1,12 +1,12 @@
 ---
 module: interfaces
 level: L1
-derives-from: ../SPEC.md
+derives-from: ../../SPEC.md
 status: draft
-verified-by: ../tests/interfaces/
+verified-by: ../../tests/interfaces/
 decision-log:
-  - ../decisions/001-target-architecture.md
-  - ../decisions/006-shared-search-contract.md
+  - ../../decisions/001-target-architecture.md
+  - ../../decisions/006-shared-search-contract.md
 ---
 
 # Interfaces

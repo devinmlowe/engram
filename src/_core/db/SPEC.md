@@ -3,9 +3,9 @@ module: db
 level: L2
 derives-from: ../SPEC.md
 status: draft
-verified-by: ../../tests/core/db.test.ts
+verified-by: ../../../tests/core/db.test.ts
 decision-log:
-  - ../../decisions/004-thin-data-access-layer.md
+  - ../../../decisions/004-thin-data-access-layer.md
 ---
 
 # DB
