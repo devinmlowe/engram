@@ -14,7 +14,7 @@ export function depthPage(): string {
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
-    background: #1e1e2e;
+    background: #0a0a14;
     color: #cdd6f4;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
     overflow: hidden;
