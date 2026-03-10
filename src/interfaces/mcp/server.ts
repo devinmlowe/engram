@@ -20,6 +20,7 @@ import {
   drillRecallResult,
 } from "../shared/search.js";
 import { explore, exploreSelectiveEntity } from "../shared/explore.js";
+import { indexFileStructure } from "../../graph/file-indexer.js";
 import type Database from "better-sqlite3";
 import type {
   EngramConfig,
@@ -135,6 +136,7 @@ const ExploreInputSchema = z.object({
         "part_of",
         "configured_by",
         "solved_by",
+        "contains",
       ]),
     )
     .optional(),
@@ -168,6 +170,7 @@ const ExploreSelectiveInputSchema = z.object({
         "part_of",
         "configured_by",
         "solved_by",
+        "contains",
       ]),
     )
     .optional(),
@@ -176,6 +179,10 @@ const ExploreSelectiveInputSchema = z.object({
 const ReflectInputSchema = z.object({
   mode: z.enum(["communities", "bridges", "temporal", "health", "all"]).optional().default("all"),
   refresh: z.boolean().optional().default(false),
+});
+
+const IndexFileStructureInputSchema = z.object({
+  path: z.string().min(1, "Path is required"),
 });
 
 // ─── Server Setup ──────────────────────────────────────────────
@@ -428,6 +435,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
                 "part_of",
                 "configured_by",
                 "solved_by",
+                "contains",
               ],
             },
             description: "Filter by relationship types",
@@ -602,6 +610,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
                 "part_of",
                 "configured_by",
                 "solved_by",
+                "contains",
               ],
             },
             description: "Filter by relationship types",
@@ -613,6 +622,32 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       annotations: {
         title: "Selective Graph Exploration",
         readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    {
+      name: "index_file_structure",
+      description:
+        "Parse a source file to extract function, class, and module definitions, " +
+        "then index them as entities in the knowledge graph with 'contains' relationships. " +
+        "Enables RLM to discover file contents without reading the full file.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          path: {
+            type: "string",
+            minLength: 1,
+            description: "Absolute path to the source file to index",
+          },
+        },
+        required: ["path"],
+        additionalProperties: false,
+      },
+      annotations: {
+        title: "Index File Structure",
+        readOnlyHint: false,
         destructiveHint: false,
         idempotentHint: true,
         openWorldHint: false,
@@ -938,6 +973,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       const xml = formatReflectXml(result, params.mode);
       return { content: [{ type: "text", text: xml }] };
+    }
+
+    if (name === "index_file_structure") {
+      const params = IndexFileStructureInputSchema.parse(args);
+      const result = indexFileStructure(getDb(), params.path);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
     }
 
     throw new Error(`Unknown tool: ${name}`);
