@@ -9,6 +9,35 @@
 
 import type { SearchResult } from "../types/index.js";
 
+// ─── Quality Metrics ─────────────────────────────────────────────
+
+export interface QualityMetrics {
+  averageScore: number;
+  scoreSpread: number;
+  topResultStrength: number;
+  recommendAction: "drill" | "refine" | "done";
+}
+
+export function computeQualityMetrics(results: SearchResult[]): QualityMetrics {
+  if (results.length === 0) {
+    return { averageScore: 0, scoreSpread: 0, topResultStrength: 0, recommendAction: "done" };
+  }
+
+  const scores = results.map(r => r.score);
+  const averageScore = scores.reduce((a, b) => a + b, 0) / scores.length;
+  const topResultStrength = Math.max(...scores);
+  const scoreSpread = Math.max(...scores) - Math.min(...scores);
+
+  let recommendAction: "drill" | "refine" | "done";
+  if (topResultStrength >= 0.7 && scoreSpread < 0.3) {
+    recommendAction = "drill";
+  } else {
+    recommendAction = "refine";
+  }
+
+  return { averageScore, scoreSpread, topResultStrength, recommendAction };
+}
+
 // ─── Types ──────────────────────────────────────────────────────
 
 export interface RecallSession {
