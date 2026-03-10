@@ -439,11 +439,22 @@ function zeroEmbedding(dims = 256): number[] {
 }
 
 /**
+ * Simple string hash for deterministic IDs.
+ * Uses djb2 algorithm — fast and sufficient for entity key generation.
+ */
+function hashString(str: string): string {
+  let hash = 5381;
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) + hash + str.charCodeAt(i)) >>> 0;
+  }
+  return hash.toString(36);
+}
+
+/**
  * Create a deterministic ID for a file entity.
  */
 function fileEntityId(filePath: string): string {
-  // Simple hash: use the path itself as a stable key
-  return `file-${Buffer.from(filePath).toString("base64url").slice(0, 32)}`;
+  return `file-${hashString(filePath)}`;
 }
 
 /**
@@ -451,7 +462,7 @@ function fileEntityId(filePath: string): string {
  */
 function symbolEntityId(filePath: string, symbolName: string, kind: string): string {
   const key = `${filePath}:${kind}:${symbolName}`;
-  return `sym-${Buffer.from(key).toString("base64url").slice(0, 32)}`;
+  return `sym-${hashString(key)}`;
 }
 
 /**
