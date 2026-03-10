@@ -21,6 +21,7 @@ import {
 } from "../shared/search.js";
 import { explore, exploreSelectiveEntity } from "../shared/explore.js";
 import { fetchSnippets } from "../../_core/search/snippets.js";
+import { scanFile } from "../../_core/search/scan.js";
 import { getSessionStore } from "../../_core/search/index.js";
 import { indexFileStructure } from "../../graph/file-indexer.js";
 import type Database from "better-sqlite3";
@@ -191,6 +192,16 @@ const FetchSnippetsInputSchema = z.object({
     end: z.number().int().min(1),
   })).min(1).max(20),
   context: z.number().int().min(0).max(50).optional().default(0),
+  session_id: z.string().uuid().optional(),
+});
+
+const ScanFileInputSchema = z.object({
+  path: z.string().min(1, "Path is required"),
+  patterns: z.array(z.string()).min(1, "At least one pattern is required").max(10, "Maximum 10 patterns allowed"),
+  context_lines: z.number().int().min(0).max(10).optional().default(2),
+  group_by: z.enum(["pattern", "location"]).optional().default("location"),
+  max_matches: z.number().int().min(1).max(500).optional().default(100),
+  deduplicate_overlaps: z.boolean().optional().default(true),
   session_id: z.string().uuid().optional(),
 });
 
@@ -699,6 +710,70 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: "scan_file",
+      description:
+        "Scan a file server-side with regex patterns and return structured matches " +
+        "with surrounding context. The file is read on the server and never loaded " +
+        "into conversation context. Supports multiple patterns, context windows, " +
+        "overlap deduplication, and function context detection.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          path: {
+            type: "string",
+            minLength: 1,
+            description: "Absolute path to the file to scan",
+          },
+          patterns: {
+            type: "array",
+            items: { type: "string" },
+            minItems: 1,
+            maxItems: 10,
+            description: "Regex patterns to search for (max 10)",
+          },
+          context_lines: {
+            type: "number",
+            minimum: 0,
+            maximum: 10,
+            default: 2,
+            description: "Lines of context before and after each match (0-10)",
+          },
+          group_by: {
+            type: "string",
+            enum: ["pattern", "location"],
+            default: "location",
+            description: "Order results by file location or grouped by pattern",
+          },
+          max_matches: {
+            type: "number",
+            minimum: 1,
+            maximum: 500,
+            default: 100,
+            description: "Maximum matches to return (1-500)",
+          },
+          deduplicate_overlaps: {
+            type: "boolean",
+            default: true,
+            description: "Merge overlapping context windows to avoid duplicate lines",
+          },
+          session_id: {
+            type: "string",
+            format: "uuid",
+            description: "Optional session ID for token budget tracking",
+          },
+        },
+        required: ["path", "patterns"],
+        additionalProperties: false,
+      },
+      annotations: {
+        title: "Scan File",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    {
       name: "index_file_structure",
       description:
         "Parse a source file to extract function, class, and module definitions, " +
@@ -1076,6 +1151,47 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       const xml = formatReflectXml(result, params.mode);
       return { content: [{ type: "text", text: xml }] };
+    }
+
+    if (name === "scan_file") {
+      const params = ScanFileInputSchema.parse(args);
+
+      const result = scanFile({
+        path: params.path,
+        patterns: params.patterns,
+        context_lines: params.context_lines,
+        group_by: params.group_by,
+        max_matches: params.max_matches,
+        deduplicate_overlaps: params.deduplicate_overlaps,
+        session_id: params.session_id,
+      });
+
+      // Deduct from session budget if session_id provided
+      if (params.session_id) {
+        const store = getSessionStore();
+        const session = store.get(params.session_id);
+        if (session) {
+          session.totalBudgetUsed += result.tokenEstimate;
+        }
+      }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              path: result.path,
+              totalLines: result.totalLines,
+              totalMatches: result.totalMatches,
+              matchesByPattern: result.matchesByPattern,
+              truncated: result.truncated,
+              tokenEstimate: result.tokenEstimate,
+              patternErrors: result.patternErrors,
+              matches: result.matches,
+            }, null, 2),
+          },
+        ],
+      };
     }
 
     if (name === "index_file_structure") {
