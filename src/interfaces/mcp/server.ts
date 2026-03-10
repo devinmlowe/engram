@@ -11,7 +11,8 @@ import { getDatabase } from "../../_core/db/index.js";
 import { loadConfig } from "../../_core/config/index.js";
 import { escapeXml } from "../../_core/search/index.js";
 import { initEmbeddings } from "../../_core/embeddings/index.js";
-import { rememberFact } from "../shared/remember.js";
+import { rememberFact, storeMemoryBatch } from "../shared/remember.js";
+import type { MemorySource } from "../../_core/types/index.js";
 import { unifiedSearch, formatRecallXml } from "../shared/search.js";
 import { explore } from "../shared/explore.js";
 import type Database from "better-sqlite3";
@@ -57,6 +58,8 @@ const VALID_MEMORY_TYPES: readonly MemoryType[] = [
 
 const VALID_SOURCES: readonly SearchSource[] = ["episodic", "semantic", "graph"];
 
+const VALID_MEMORY_SOURCES: readonly MemorySource[] = ["user", "dream", "rlm", "import"];
+
 
 // ─── Input Schemas ─────────────────────────────────────────────
 
@@ -88,6 +91,23 @@ const RememberInputSchema = z.object({
     "convention",
   ]).optional().default("fact"),
   importance: z.number().min(0).max(1).optional().default(0.7),
+  source: z.enum(["user", "dream", "rlm", "import"]).optional().default("user"),
+});
+
+const RememberBatchInputSchema = z.object({
+  memories: z.array(z.object({
+    content: z.string().min(1, "Content is required"),
+    type: z.enum([
+      "preference",
+      "decision",
+      "pattern",
+      "fact",
+      "solution",
+      "convention",
+    ]).optional().default("fact"),
+    importance: z.number().min(0).max(1).optional(),
+    source: z.enum(["user", "dream", "rlm", "import"]).optional(),
+  })).min(1, "At least one memory is required").max(50, "Maximum batch size is 50"),
 });
 
 const ShowInputSchema = z.object({
@@ -218,12 +238,81 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             default: 0.7,
             description: "Importance score (0-1)",
           },
+          source: {
+            type: "string",
+            enum: ["user", "dream", "rlm", "import"],
+            default: "user",
+            description: "Source of this memory (user, dream, rlm, import)",
+          },
         },
         required: ["content"],
         additionalProperties: false,
       },
       annotations: {
         title: "Remember",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    {
+      name: "remember_batch",
+      description:
+        "Store multiple facts, preferences, decisions, or other knowledge items " +
+        "as semantic memories in a single call. Supports up to 50 items per batch. " +
+        "Automatically deduplicates against existing memories and within the batch. " +
+        "Use for bulk ingestion from RLM agents or dream pipeline.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          memories: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                content: {
+                  type: "string",
+                  minLength: 1,
+                  description: "The fact, preference, or knowledge to remember",
+                },
+                type: {
+                  type: "string",
+                  enum: [
+                    "preference",
+                    "decision",
+                    "pattern",
+                    "fact",
+                    "solution",
+                    "convention",
+                  ],
+                  default: "fact",
+                  description: "Type of memory",
+                },
+                importance: {
+                  type: "number",
+                  minimum: 0,
+                  maximum: 1,
+                  description: "Importance score (0-1)",
+                },
+                source: {
+                  type: "string",
+                  enum: ["user", "dream", "rlm", "import"],
+                  description: "Source of this memory",
+                },
+              },
+              required: ["content"],
+            },
+            minItems: 1,
+            maxItems: 50,
+            description: "Array of memories to store (max 50)",
+          },
+        },
+        required: ["memories"],
+        additionalProperties: false,
+      },
+      annotations: {
+        title: "Batch Remember",
         readOnlyHint: false,
         destructiveHint: false,
         idempotentHint: false,
@@ -388,6 +477,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         content: params.content,
         type: params.type as MemoryType,
         importance: params.importance,
+        source: params.source as MemorySource,
       });
 
       if (result.action === "updated") {
@@ -404,6 +494,35 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       return {
         content: [
           { type: "text", text: `Remembered: ${params.content}` },
+        ],
+      };
+    }
+
+    if (name === "remember_batch") {
+      const params = RememberBatchInputSchema.parse(args);
+      await ensureEmbeddings();
+
+      const batchInput = params.memories.map((m) => ({
+        content: m.content,
+        type: m.type as MemoryType,
+        importance: m.importance,
+        source: m.source as MemorySource | undefined,
+      }));
+
+      const result = await storeMemoryBatch(getDb(), batchInput);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              total: result.total,
+              created: result.created,
+              deduplicated: result.deduplicated,
+              errors: result.errors,
+              details: result.details,
+            }, null, 2),
+          },
         ],
       };
     }

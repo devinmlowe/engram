@@ -248,6 +248,7 @@ function insertNovelMemory(
     createdAt: now,
     sourceExchanges: fact.sourceExchangeIds,
     isActive: true,
+    source: "dream",
   };
 
   insertMemory(db, memory, embedding);
@@ -292,6 +293,7 @@ async function resolveMemoryConflict(
         createdAt: now,
         sourceExchanges: newFact.sourceExchangeIds,
         isActive: true,
+        source: "dream",
       };
 
       deactivateMemory(db, existingMemory.id, newId);
@@ -328,6 +330,7 @@ async function resolveMemoryConflict(
         createdAt: now,
         sourceExchanges: newFact.sourceExchangeIds,
         isActive: true,
+        source: "dream",
       };
 
       insertMemory(db, newMemory, newEmbedding);

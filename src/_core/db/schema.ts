@@ -293,6 +293,9 @@ function createSchema(db: Database.Database, config: EngramConfig): void {
   // Add extraction_basis metadata to memories
   idempotentAlter(db, "memories", "extraction_basis", "ALTER TABLE memories ADD COLUMN extraction_basis TEXT DEFAULT 'observed'");
 
+  // Phase 6D: Add source tracking to memories (user, dream, rlm, import)
+  idempotentAlter(db, "memories", "source", "ALTER TABLE memories ADD COLUMN source TEXT NOT NULL DEFAULT 'user'");
+
   // FTS5 virtual tables (created separately — can't use IF NOT EXISTS)
   createFtsIfNeeded(db, "exchanges_fts", `
     CREATE VIRTUAL TABLE exchanges_fts USING fts5(

@@ -9,7 +9,7 @@
  */
 
 import type Database from "better-sqlite3";
-import type { Memory, MemoryType, Conflict } from "./types.js";
+import type { Memory, MemoryType, MemorySource, Conflict } from "./types.js";
 import {
   insertVector,
   searchVector,
@@ -34,6 +34,7 @@ interface MemoryRow {
   source_exchanges: string | null;
   superseded_by: string | null;
   is_active: number;
+  source: string | null;
 }
 
 interface ConflictRow {
@@ -63,6 +64,7 @@ function rowToMemory(row: MemoryRow): Memory {
       : [],
     supersededBy: row.superseded_by ?? undefined,
     isActive: Boolean(row.is_active),
+    source: (row.source as MemorySource) ?? "user",
   };
 }
 
@@ -94,8 +96,8 @@ export function insertMemory(
     db.prepare(`
       INSERT INTO memories
         (id, type, content, context, confidence, importance, access_count,
-         last_accessed, created_at, updated_at, source_exchanges, superseded_by, is_active)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         last_accessed, created_at, updated_at, source_exchanges, superseded_by, is_active, source)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       memory.id,
       memory.type,
@@ -110,6 +112,7 @@ export function insertMemory(
       JSON.stringify(memory.sourceExchanges),
       memory.supersededBy ?? null,
       memory.isActive ? 1 : 0,
+      memory.source ?? "user",
     );
 
     // 2. Get rowid and insert into FTS5
