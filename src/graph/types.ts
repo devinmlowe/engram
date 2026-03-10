@@ -7,7 +7,10 @@ export type EntityType =
   | "person"
   | "concept"
   | "file"
-  | "repo";
+  | "repo"
+  | "function"
+  | "class"
+  | "module";
 
 export type RelationshipType =
   | "uses"
@@ -15,7 +18,8 @@ export type RelationshipType =
   | "related_to"
   | "part_of"
   | "configured_by"
-  | "solved_by";
+  | "solved_by"
+  | "contains";
 
 export interface Entity {
   id: string;

@@ -282,6 +282,9 @@ function createSchema(db: Database.Database, config: EngramConfig): void {
       ON reflection_observations(generation);
   `);
 
+  // ─── Phase 7B.1: Expand entity/relationship type constraints ───
+  migrateExpandedTypes(db);
+
   // ─── Schema Migrations (idempotent ALTER TABLE) ────────────────
   // Add checkpoint status tracking for retry logic
   idempotentAlter(db, "dream_checkpoints", "status", "ALTER TABLE dream_checkpoints ADD COLUMN status TEXT DEFAULT 'success'");
@@ -332,6 +335,83 @@ function createSchema(db: Database.Database, config: EngramConfig): void {
   createVecIfNeeded(db, "vec_exchanges", dims);
   createVecIfNeeded(db, "vec_memories", dims);
   createVecIfNeeded(db, "vec_entities", dims);
+}
+
+/**
+ * Phase 7B.1: Expand CHECK constraints on entities and relationships tables
+ * to support new types (function, class, module, contains).
+ *
+ * SQLite CHECK constraints can't be altered in-place, so we recreate the
+ * tables if the new types aren't already supported.
+ */
+function migrateExpandedTypes(db: Database.Database): void {
+  // Test if new types are already supported
+  const testId = '__type_migration_test__';
+  try {
+    db.exec('SAVEPOINT type_test');
+    db.prepare("INSERT INTO entities (id, name, type) VALUES (?, ?, ?)").run(testId, '__test__', 'function');
+    // Worked — new types already supported, clean up
+    db.prepare("DELETE FROM entities WHERE id = ?").run(testId);
+    db.exec('RELEASE type_test');
+    return;
+  } catch {
+    db.exec('ROLLBACK TO type_test');
+    db.exec('RELEASE type_test');
+  }
+
+  // Need to recreate tables with expanded CHECK constraints
+  // Entities table
+  db.exec(`
+    CREATE TABLE entities_new (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      type TEXT NOT NULL CHECK(type IN (
+        'project', 'tool', 'technology', 'person', 'concept', 'file', 'repo',
+        'function', 'class', 'module'
+      )),
+      description TEXT,
+      aliases TEXT,
+      first_seen INTEGER,
+      last_seen INTEGER,
+      mention_count INTEGER DEFAULT 1,
+      created_at INTEGER DEFAULT (unixepoch())
+    );
+    INSERT INTO entities_new SELECT * FROM entities;
+    DROP TABLE entities;
+    ALTER TABLE entities_new RENAME TO entities;
+
+    CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(name);
+    CREATE INDEX IF NOT EXISTS idx_entities_type ON entities(type);
+    CREATE INDEX IF NOT EXISTS idx_entities_name_lower ON entities(name COLLATE NOCASE);
+  `);
+
+  // Relationships table
+  db.exec(`
+    CREATE TABLE relationships_new (
+      id TEXT PRIMARY KEY,
+      source_entity_id TEXT NOT NULL REFERENCES entities(id),
+      target_entity_id TEXT NOT NULL REFERENCES entities(id),
+      type TEXT NOT NULL CHECK(type IN (
+        'uses', 'depends_on', 'related_to', 'part_of', 'configured_by', 'solved_by',
+        'contains'
+      )),
+      weight REAL DEFAULT 1.0,
+      context TEXT,
+      source_memories TEXT,
+      created_at INTEGER DEFAULT (unixepoch()),
+      updated_at INTEGER
+    );
+    INSERT INTO relationships_new SELECT * FROM relationships;
+    DROP TABLE relationships;
+    ALTER TABLE relationships_new RENAME TO relationships;
+
+    CREATE INDEX IF NOT EXISTS idx_relationships_source ON relationships(source_entity_id);
+    CREATE INDEX IF NOT EXISTS idx_relationships_target ON relationships(target_entity_id);
+    CREATE INDEX IF NOT EXISTS idx_relationships_type ON relationships(type);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_rel_unique_edge ON relationships(source_entity_id, target_entity_id, type);
+    CREATE INDEX IF NOT EXISTS idx_rel_source_target ON relationships(source_entity_id, target_entity_id);
+    CREATE INDEX IF NOT EXISTS idx_rel_target_source ON relationships(target_entity_id, source_entity_id);
+  `);
 }
 
 function createFtsIfNeeded(

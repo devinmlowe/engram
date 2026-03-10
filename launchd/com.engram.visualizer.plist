@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.engram.visualizer</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/node</string>
+        <string>--import</string>
+        <string>tsx</string>
+        <string>src/web/graph-server.ts</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/usr/local/lib/engram</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>NODE_ENV</key>
+        <string>production</string>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/USER/.local/share/engram/logs/visualizer.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/USER/.local/share/engram/logs/visualizer-error.log</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>Nice</key>
+    <integer>10</integer>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <key>AbandonProcessGroup</key>
+    <false/>
+</dict>
+</plist>

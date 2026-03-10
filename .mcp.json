@@ -2,7 +2,7 @@
   "mcpServers": {
     "engram": {
       "command": "node",
-      "args": ["./dist/mcp/server.js"],
+      "args": ["./dist/interfaces/mcp/server.js"],
       "cwd": "/Users/USER/Documents/git/engram",
       "env": {}
     }
