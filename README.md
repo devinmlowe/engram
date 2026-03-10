@@ -85,10 +85,10 @@ Interactive knowledge graph visualization at `localhost:3000`:
 | | |
 |---|---|
 | **Force Graph** (`/graph`) | **Depth View** (`/graph/depth`) |
-| D3 force-directed layout with Canvas rendering, mention threshold slider, type filters, search, click-to-focus | Three.js 3D graph visualization with depth-based node sizing |
+| Obsidian-inspired 2D force-directed graph on Canvas. Nodes sized by mention count (sqrt scale), colored by entity type with degree-based brightness. Edges render with configurable center-dim gradients. Mention threshold slider, type filter pills, text search with neighbor highlighting, click-to-focus, and node dragging. | Three.js 3D graph where the vertical axis encodes relevance — a weighted blend of recency (30%), mention frequency (25%), bridge score (20%), creation age (10%), and degree (15%). Older and less-connected nodes sink to the bottom; active hubs rise to the top. Includes gravity passes that pull satellites toward their hubs and a growth animation that replays the graph's history from first node to present. |
 | ![Force Graph](assets/view-graph.webp) | ![Depth View](assets/view-depth.webp) |
 | **Galaxy View** (`/graph/galaxy`) | **Word Cloud** (`/words`) |
-| Orbital mechanics visualization with hub-satellite clustering | D3 word cloud from episodic conversation data with frequency hover |
+| Hub nodes (high degree + bridge score + mentions) become gravitational centers, each defining a unique orbital plane in 3D space. Satellites orbit their hub based on accretion strength (edge weight), placed at angles determined by Jaccard similarity to neighbors. Six custom forces — hub repulsion, satellite attraction, disk flattening, orbital alignment, bridge pulling, and standard charge — create a living solar-system metaphor. Configurable hub threshold, disk flatness, and system spacing. | D3 word cloud built from user messages in episodic memory. Words sized by sqrt-scaled frequency, filtered through an extensive stop-word list and hex-hash detector. Catppuccin Mocha 12-color palette, Archimedean spiral packing with mixed rotation (65% horizontal, 20% vertical, 15% angled). Hover shows mention count; live polling refreshes every 10 seconds with pulse animations on changes. |
 | ![Galaxy View](assets/view-galaxy.webp) | ![Word Cloud](assets/view-words.webp) |
 
 - **Dream Control** — Live pipeline phase tracking with progress bars via SSE
@@ -110,11 +110,58 @@ All search responses respect caller-specified token budgets. Stateful sessions a
 
 Autonomous consolidation mimicking human memory synthesis:
 
-1. **Ingest** — Sync new conversation archives
-2. **Extract** — LLM-based fact/entity/relationship extraction
-3. **Consolidate** — Deduplicate, merge, resolve conflicts
-4. **Reflect** — Detect communities, bridge entities, temporal patterns
-5. **Prune** — Decay and remove low-value memories (configurable type-specific rates)
+```mermaid
+flowchart LR
+    subgraph dream["Dream Daemon"]
+        direction LR
+        I[Ingest] --> E[Extract] --> C[Consolidate] --> R[Reflect] --> P[Prune]
+    end
+
+    subgraph episodic["Episodic"]
+        sync[sync]
+        store[store]
+    end
+
+    subgraph semantic["Semantic"]
+        extractor[extractor]
+        consolidator[consolidator]
+        decay[decay]
+    end
+
+    subgraph graph["Graph"]
+        gextractor[extractor]
+        reflection[reflection]
+    end
+
+    subgraph core["_core"]
+        llm[llm]
+        db[db]
+        embeddings[embeddings]
+    end
+
+    I -- "discover & index\nconversations" --> sync
+    sync -- "persist\nexchanges" --> store
+    E -- "extract facts" --> extractor
+    E -- "extract entities\n& relationships" --> gextractor
+    C -- "dedup, merge,\nconflict detect" --> consolidator
+    R -- "communities, bridges,\ntemporal patterns" --> reflection
+    P -- "FSRS decay,\nlow-value removal" --> decay
+
+    extractor --> llm
+    gextractor --> llm
+    reflection --> llm
+    store --> db
+    consolidator --> embeddings
+    extractor --> embeddings
+```
+
+1. **Ingest** — Sync new conversation archives via the **episodic** layer
+2. **Extract** — LLM-based fact extraction (**semantic**) and entity/relationship extraction (**graph**)
+3. **Consolidate** — Deduplicate, merge, and resolve conflicts via **semantic** consolidator with embedding similarity
+4. **Reflect** — Detect communities, bridge entities, and temporal patterns via **graph** reflection
+5. **Prune** — Decay and remove low-value memories using FSRS-inspired retrievability scoring (**semantic** decay)
+
+All phases use **_core** infrastructure: `llm` for LLM calls, `db` for persistence, `embeddings` for similarity.
 
 Run via `engram dream`, web UI dream button, or scheduled via launchd.
 
