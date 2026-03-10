@@ -25,6 +25,7 @@ import {
 } from "./entity.js";
 import { getRelationshipsForEntity } from "./relationship.js";
 import { rrfFuse, normalizeMinMaxFloored } from "../_core/search/rrf.js";
+import { searchVector } from "../_core/db/index.js";
 
 // ─── Entity Lookup ───────────────────────────────────────────────
 
@@ -336,4 +337,212 @@ export function traverseNeighborhood(
   }
 
   return results;
+}
+
+// ─── Selective Exploration ────────────────────────────────────────
+
+/**
+ * Options for criteria-driven selective graph exploration.
+ */
+export interface SelectiveExploreOptions {
+  entityName: string;
+  criteria: string;
+  maxDepth?: number;
+  maxNodes?: number;
+  relevanceThreshold?: number;
+  relationshipTypes?: RelationshipType[];
+}
+
+/**
+ * Detail about an entity in the selective explore result.
+ */
+export interface EntityDetail {
+  id: string;
+  name: string;
+  type: string;
+  description?: string;
+}
+
+/**
+ * Result of a selective graph exploration.
+ */
+export interface SelectiveExploreResult {
+  center: EntityDetail;
+  nodes: Array<{
+    entity: EntityDetail;
+    depth: number;
+    relevanceScore: number;
+    path: string[];
+  }>;
+  edges: Array<{
+    source: string;
+    target: string;
+    relationship: string;
+    weight: number;
+  }>;
+  pruned: number;
+}
+
+/**
+ * Criteria-driven selective graph exploration.
+ *
+ * Unlike exploreEntity (fixed-depth BFS), this function scores each
+ * neighbor against the given criteria using embedding similarity and
+ * only expands relevant branches. This converts fixed-depth BFS into
+ * model-directed recursive traversal.
+ *
+ * Algorithm:
+ * 1. Find center entity
+ * 2. Embed criteria (unless empty/bypass)
+ * 3. BFS level by level, scoring neighbors against criteria
+ * 4. Only expand neighbors above relevance threshold
+ * 5. Stop at maxDepth or maxNodes
+ */
+export async function exploreSelective(
+  db: Database.Database,
+  options: SelectiveExploreOptions,
+): Promise<SelectiveExploreResult> {
+  const {
+    entityName,
+    criteria,
+    maxDepth = 3,
+    maxNodes = 50,
+    relevanceThreshold = 0.3,
+    relationshipTypes,
+  } = options;
+
+  // 1. Find center entity
+  const centerEntity = findEntityByNameOrAlias(db, entityName);
+  if (!centerEntity) {
+    throw new Error(`Entity not found: ${entityName}`);
+  }
+
+  const center: EntityDetail = {
+    id: centerEntity.id,
+    name: centerEntity.name,
+    type: centerEntity.type,
+    description: centerEntity.description,
+  };
+
+  const bypassCriteria = !criteria || criteria.trim().length === 0;
+
+  // 2. Build relevance score map from vector search
+  let scoreMap: Map<string, number> | null = null;
+  if (!bypassCriteria) {
+    const criteriaEmbedding = await embedQuery(criteria);
+    // Search broadly — get distances for many entities
+    const vectorResults = searchVector(db, "vec_entities", criteriaEmbedding, maxNodes * 5);
+    scoreMap = new Map();
+    for (const r of vectorResults) {
+      // vec0 cosine distance: 0 = identical, 2 = opposite
+      // Convert to similarity: 1 - distance (clamped to [0, 1])
+      const similarity = Math.max(0, Math.min(1, 1 - r.distance));
+      scoreMap.set(r.id, similarity);
+    }
+  }
+
+  // 3. BFS with criteria filtering
+  const resultNodes: SelectiveExploreResult["nodes"] = [];
+  const resultEdges: SelectiveExploreResult["edges"] = [];
+  const visited = new Set<string>([centerEntity.id]);
+  let pruned = 0;
+
+  // Queue: [entityId, depth, pathSoFar]
+  let frontier: Array<{ entityId: string; depth: number; path: string[] }> = [
+    { entityId: centerEntity.id, depth: 0, path: [centerEntity.name] },
+  ];
+
+  const clampedMaxDepth = Math.min(Math.max(maxDepth, 1), 5);
+
+  while (frontier.length > 0 && resultNodes.length < maxNodes) {
+    const nextFrontier: typeof frontier = [];
+
+    for (const current of frontier) {
+      if (current.depth >= clampedMaxDepth) continue;
+      if (resultNodes.length >= maxNodes) break;
+
+      // Get depth-1 neighbors of current entity
+      const neighbors = traverseNeighborhood(
+        db,
+        current.entityId,
+        1,
+        relationshipTypes,
+      );
+
+      for (const neighbor of neighbors) {
+        if (visited.has(neighbor.entityId)) continue;
+        visited.add(neighbor.entityId);
+
+        const neighborEntity = getEntity(db, neighbor.entityId);
+        if (!neighborEntity) continue;
+
+        // Score against criteria
+        let relevanceScore: number;
+        if (bypassCriteria) {
+          relevanceScore = 1.0;
+        } else {
+          relevanceScore = scoreMap?.get(neighbor.entityId) ?? 0;
+        }
+
+        // Add edge regardless of pruning (edges between visited nodes)
+        const sourceEntity = getEntity(db, current.entityId);
+        const sourceName = sourceEntity?.name ?? current.entityId;
+        const isOutgoing = neighbor.relationship.direction === "outgoing";
+
+        resultEdges.push({
+          source: isOutgoing ? sourceName : neighborEntity.name,
+          target: isOutgoing ? neighborEntity.name : sourceName,
+          relationship: neighbor.relationship.type,
+          weight: neighbor.relationship.weight,
+        });
+
+        // Filter by relevance
+        if (!bypassCriteria && relevanceScore < relevanceThreshold) {
+          pruned++;
+          continue;
+        }
+
+        if (resultNodes.length >= maxNodes) {
+          pruned++;
+          continue;
+        }
+
+        const nodePath = [...current.path, neighborEntity.name];
+
+        resultNodes.push({
+          entity: {
+            id: neighborEntity.id,
+            name: neighborEntity.name,
+            type: neighborEntity.type,
+            description: neighborEntity.description,
+          },
+          depth: current.depth + 1,
+          relevanceScore,
+          path: nodePath,
+        });
+
+        // Queue for further expansion
+        nextFrontier.push({
+          entityId: neighbor.entityId,
+          depth: current.depth + 1,
+          path: nodePath,
+        });
+      }
+    }
+
+    frontier = nextFrontier;
+  }
+
+  // Only keep edges where both endpoints are in the result set (center + nodes)
+  const keptIds = new Set([centerEntity.name, ...resultNodes.map((n) => n.entity.name)]);
+  const filteredEdges = resultEdges.filter(
+    (e) => keptIds.has(e.source) && keptIds.has(e.target),
+  );
+
+  return {
+    center,
+    nodes: resultNodes,
+    edges: filteredEdges,
+    pruned,
+  };
 }

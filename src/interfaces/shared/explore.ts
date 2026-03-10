@@ -8,7 +8,8 @@
 
 import type Database from "better-sqlite3";
 import type { RelationshipType, ExploreResult } from "../../graph/types.js";
-import { exploreEntity } from "../../graph/search.js";
+import { exploreEntity, exploreSelective } from "../../graph/search.js";
+import type { SelectiveExploreOptions, SelectiveExploreResult } from "../../graph/search.js";
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -39,4 +40,33 @@ export function explore(
   });
 }
 
-export type { ExploreResult };
+// ─── Selective Explore ───────────────────────────────────────────
+
+export interface ExploreSelectiveParams {
+  entity: string;
+  criteria: string;
+  maxDepth?: number;
+  maxNodes?: number;
+  relationshipTypes?: RelationshipType[];
+}
+
+/**
+ * Criteria-driven selective graph exploration.
+ *
+ * Wraps exploreSelective() with interface-layer defaults.
+ * Default maxDepth: 3. Default maxNodes: 50.
+ */
+export async function exploreSelectiveEntity(
+  db: Database.Database,
+  params: ExploreSelectiveParams,
+): Promise<SelectiveExploreResult> {
+  return exploreSelective(db, {
+    entityName: params.entity,
+    criteria: params.criteria,
+    maxDepth: params.maxDepth ?? 3,
+    maxNodes: params.maxNodes ?? 50,
+    relationshipTypes: params.relationshipTypes,
+  });
+}
+
+export type { ExploreResult, SelectiveExploreResult };

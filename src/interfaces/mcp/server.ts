@@ -554,6 +554,70 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         openWorldHint: false,
       },
     },
+    {
+      name: "explore_selective",
+      description:
+        "Explore the knowledge graph selectively by expanding only branches " +
+        "relevant to specified criteria. Unlike explore (fixed-depth BFS), this " +
+        "uses embedding similarity to prune irrelevant neighbors and recursively " +
+        "follows only relevant paths. Use when you want to find connections related " +
+        "to a specific topic or question.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          entity: {
+            type: "string",
+            minLength: 1,
+            description:
+              "Starting entity name (e.g., 'TypeScript', 'engram', 'SQLite')",
+          },
+          criteria: {
+            type: "string",
+            minLength: 1,
+            description:
+              "What makes a neighbor relevant (e.g., 'build tooling', 'performance optimization')",
+          },
+          max_depth: {
+            type: "number",
+            minimum: 1,
+            maximum: 5,
+            default: 3,
+            description: "Maximum traversal depth (1-5)",
+          },
+          max_nodes: {
+            type: "number",
+            minimum: 1,
+            maximum: 50,
+            default: 50,
+            description: "Safety cap on total nodes returned (1-50)",
+          },
+          relationship_types: {
+            type: "array",
+            items: {
+              type: "string",
+              enum: [
+                "uses",
+                "depends_on",
+                "related_to",
+                "part_of",
+                "configured_by",
+                "solved_by",
+              ],
+            },
+            description: "Filter by relationship types",
+          },
+        },
+        required: ["entity", "criteria"],
+        additionalProperties: false,
+      },
+      annotations: {
+        title: "Selective Graph Exploration",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
   ],
 }));
 
@@ -805,6 +869,46 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       return {
         content: [{ type: "text", text: lines.join("\n") }],
+      };
+    }
+
+    if (name === "explore_selective") {
+      const params = ExploreSelectiveInputSchema.parse(args);
+      await ensureEmbeddings();
+
+      const result = await exploreSelectiveEntity(getDb(), {
+        entity: params.entity,
+        criteria: params.criteria,
+        maxDepth: params.max_depth,
+        maxNodes: params.max_nodes,
+        relationshipTypes: params.relationship_types as
+          | RelationshipType[]
+          | undefined,
+      });
+
+      // Format as JSON (selective explore results are richer than XML can cleanly express)
+      const output = {
+        center: result.center,
+        nodes: result.nodes.map((n) => ({
+          name: n.entity.name,
+          type: n.entity.type,
+          description: n.entity.description,
+          depth: n.depth,
+          relevance: Number(n.relevanceScore.toFixed(3)),
+          path: n.path,
+        })),
+        edges: result.edges.map((e) => ({
+          source: e.source,
+          target: e.target,
+          type: e.relationship,
+          weight: Number(e.weight.toFixed(2)),
+        })),
+        pruned_count: result.pruned,
+        summary: `Found ${result.nodes.length} relevant nodes (pruned ${result.pruned}) from "${result.center.name}" matching criteria "${params.criteria}"`,
+      };
+
+      return {
+        content: [{ type: "text", text: JSON.stringify(output, null, 2) }],
       };
     }
 
