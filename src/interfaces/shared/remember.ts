@@ -116,6 +116,7 @@ export interface BatchMemoryInput {
   type: MemoryType;
   importance?: number;
   source?: MemorySource;
+  relates_to_entities?: string[];  // max 10 entity names to link
 }
 
 export interface BatchRememberResult {
@@ -123,6 +124,7 @@ export interface BatchRememberResult {
   created: number;
   deduplicated: number;
   errors: number;
+  entitiesLinked: number;
   details: Array<{
     index: number;
     status: "created" | "deduplicated" | "error";
@@ -157,7 +159,7 @@ export async function storeMemoryBatch(
 ): Promise<BatchRememberResult> {
   // Handle empty batch
   if (memories.length === 0) {
-    return { total: 0, created: 0, deduplicated: 0, errors: 0, details: [] };
+    return { total: 0, created: 0, deduplicated: 0, errors: 0, entitiesLinked: 0, details: [] };
   }
 
   // Validate batch size
@@ -178,6 +180,7 @@ export async function storeMemoryBatch(
     created: 0,
     deduplicated: 0,
     errors: 0,
+    entitiesLinked: 0,
     details: [],
   };
 
@@ -247,5 +250,91 @@ export async function storeMemoryBatch(
 
   runBatch();
 
+  // Entity linking pass: for each successfully created memory with relates_to_entities,
+  // link to existing graph entities (bump mentions, create pairwise relationships)
+  for (let i = 0; i < memories.length; i++) {
+    const input = memories[i];
+    const detail = result.details.find((d) => d.index === i);
+    if (
+      detail?.status === "created" &&
+      detail.id &&
+      input.relates_to_entities &&
+      input.relates_to_entities.length > 0
+    ) {
+      const linked = linkMemoryToEntities(db, detail.id, input.relates_to_entities);
+      result.entitiesLinked += linked;
+    }
+  }
+
   return result;
+}
+
+// ─── Entity Linking ─────────────────────────────────────────────
+
+/**
+ * Link a memory to existing graph entities by name.
+ *
+ * For each entity name in `entityNames` (up to 10):
+ * 1. Find the entity by name (case-insensitive)
+ * 2. Bump its mention_count and update last_seen
+ * 3. For each pair of found entities, create or update a `related_to`
+ *    relationship with the memory ID tracked in source_memories
+ *
+ * Returns the number of entities found and linked.
+ */
+export function linkMemoryToEntities(
+  db: Database.Database,
+  memoryId: string,
+  entityNames: string[],
+): number {
+  // Find all matching entities (limit to 10)
+  const entities: Array<{ id: string; name: string }> = [];
+  for (const name of entityNames.slice(0, 10)) {
+    const entity = db.prepare(
+      "SELECT id, name FROM entities WHERE name = ? COLLATE NOCASE",
+    ).get(name) as { id: string; name: string } | undefined;
+    if (entity) entities.push(entity);
+  }
+
+  if (entities.length === 0) return 0;
+
+  // Bump mention_count on each entity
+  const bumpStmt = db.prepare(
+    "UPDATE entities SET mention_count = mention_count + 1, last_seen = unixepoch() WHERE id = ?",
+  );
+  for (const entity of entities) {
+    bumpStmt.run(entity.id);
+  }
+
+  // Create pairwise related_to relationships
+  for (let i = 0; i < entities.length; i++) {
+    for (let j = i + 1; j < entities.length; j++) {
+      const sourceId = entities[i].id;
+      const targetId = entities[j].id;
+
+      const existing = db.prepare(
+        "SELECT id, source_memories FROM relationships WHERE source_entity_id = ? AND target_entity_id = ? AND type = 'related_to'",
+      ).get(sourceId, targetId) as { id: string; source_memories: string | null } | undefined;
+
+      if (existing) {
+        // Update: append memory ID to source_memories, bump weight
+        const memories: string[] = existing.source_memories
+          ? JSON.parse(existing.source_memories)
+          : [];
+        memories.push(memoryId);
+        db.prepare(
+          "UPDATE relationships SET source_memories = ?, weight = weight + 0.5, updated_at = unixepoch() WHERE id = ?",
+        ).run(JSON.stringify(memories), existing.id);
+      } else {
+        // Create new relationship
+        const relId = crypto.randomUUID();
+        db.prepare(
+          `INSERT INTO relationships (id, source_entity_id, target_entity_id, type, weight, source_memories, created_at)
+           VALUES (?, ?, ?, 'related_to', 1.0, ?, unixepoch())`,
+        ).run(relId, sourceId, targetId, JSON.stringify([memoryId]));
+      }
+    }
+  }
+
+  return entities.length;
 }
