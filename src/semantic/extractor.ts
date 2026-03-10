@@ -44,6 +44,7 @@ const DEFAULT_CONFIG: ExtractionConfig = {
   chunkSize: 25,
   chunkOverlap: 5,
   maxTurns: 100,
+  chunkingStrategy: "fixed",
 };
 
 // ─── Tool Schema ────────────────────────────────────────────────
@@ -192,6 +193,9 @@ export function buildExtractionPrompt(
 // Import from shared location; re-export for backward compatibility
 import { chunkConversation } from "../_core/search/text.js";
 export { chunkConversation };
+
+// Adaptive chunking (Phase 6A)
+import { adaptiveChunk } from "./adaptive-chunker.js";
 
 // ─── Response Parsing ───────────────────────────────────────────
 
@@ -478,8 +482,10 @@ export async function extractFromConversation(
   const cfg: ExtractionConfig = { ...DEFAULT_CONFIG, ...config };
   const startTime = Date.now();
 
-  // Chunk if needed
-  const chunks = chunkConversation(exchanges, cfg.chunkSize, cfg.chunkOverlap);
+  // Chunk if needed — use adaptive or fixed strategy
+  const chunks = cfg.chunkingStrategy === "adaptive"
+    ? adaptiveChunk(exchanges, { overlap: cfg.chunkOverlap })
+    : chunkConversation(exchanges, cfg.chunkSize, cfg.chunkOverlap);
 
   let allFacts: ExtractedFact[] = [];
   let usedModel = DEFAULT_MODEL;

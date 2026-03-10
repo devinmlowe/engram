@@ -6,10 +6,10 @@
  * FSRS-inspired decay model constants.
  */
 
-import type { MemoryType } from "../_core/types/index.js";
+import type { MemoryType, MemorySource } from "../_core/types/index.js";
 
-// Re-export MemoryType so semantic consumers can import from here
-export type { MemoryType } from "../_core/types/index.js";
+// Re-export MemoryType and MemorySource so semantic consumers can import from here
+export type { MemoryType, MemorySource } from "../_core/types/index.js";
 
 // ─── Core Semantic Types ────────────────────────────────────────
 
@@ -27,6 +27,7 @@ export interface Memory {
   sourceExchanges: string[];
   supersededBy?: string;
   isActive: boolean;
+  source?: MemorySource;
 }
 
 export interface Conflict {
@@ -65,6 +66,7 @@ export interface ExtractionConfig {
   chunkSize: number;
   chunkOverlap: number;
   maxTurns: number;
+  chunkingStrategy: "fixed" | "adaptive";
 }
 
 // ─── Deduplication & Conflict Resolution ────────────────────────

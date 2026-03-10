@@ -16,6 +16,8 @@ export type MemoryType =
   | "solution"
   | "convention";
 
+export type MemorySource = "user" | "dream" | "rlm" | "import";
+
 // ─── Search & Retrieval ─────────────────────────────────────────
 
 export type SearchMode = "vector" | "text" | "hybrid";
@@ -88,6 +90,7 @@ export interface EngramConfig {
     apiFallbackModel: string; // claude sonnet
     concurrency: number; // parallel work items
     scheduleHour: number; // 2 (2 AM)
+    chunkingStrategy: "fixed" | "adaptive"; // default: 'fixed'
   };
 
   decay: {
