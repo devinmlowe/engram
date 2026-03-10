@@ -58,3 +58,11 @@ export {
   type FetchSnippetsParams,
   type FetchSnippetsResult,
 } from "./snippets.js";
+
+// File scanning
+export {
+  scanFile,
+  type ScanFileParams,
+  type ScanMatch,
+  type ScanFileResult,
+} from "./scan.js";
