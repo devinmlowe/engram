@@ -13,8 +13,13 @@ import { escapeXml } from "../../_core/search/index.js";
 import { initEmbeddings } from "../../_core/embeddings/index.js";
 import { rememberFact, storeMemoryBatch } from "../shared/remember.js";
 import type { MemorySource } from "../../_core/types/index.js";
-import { unifiedSearch, formatRecallXml } from "../shared/search.js";
-import { explore } from "../shared/explore.js";
+import {
+  unifiedSearch,
+  formatRecallXml,
+  createOrRefineRecallSession,
+  drillRecallResult,
+} from "../shared/search.js";
+import { explore, exploreSelectiveEntity } from "../shared/explore.js";
 import type Database from "better-sqlite3";
 import type {
   EngramConfig,
@@ -121,6 +126,39 @@ const ExploreInputSchema = z.object({
   depth: z.number().int().min(1).max(3).optional().default(1),
   limit: z.number().int().min(1).max(50).optional().default(25),
   budget: z.number().int().min(100).max(5000).optional().default(1500),
+  relationship_types: z
+    .array(
+      z.enum([
+        "uses",
+        "depends_on",
+        "related_to",
+        "part_of",
+        "configured_by",
+        "solved_by",
+      ]),
+    )
+    .optional(),
+});
+
+const RecallSessionInputSchema = z.object({
+  query: z.string().min(2, "Query must be at least 2 characters"),
+  session_id: z.string().uuid().optional(),
+  budget: z.number().int().min(100).max(10000).optional(),
+  sources: z
+    .array(z.enum(["episodic", "semantic", "graph"]))
+    .optional(),
+});
+
+const RecallDrillInputSchema = z.object({
+  session_id: z.string().uuid("Invalid session ID"),
+  result_index: z.number().int().min(0, "Result index must be >= 0"),
+});
+
+const ExploreSelectiveInputSchema = z.object({
+  entity: z.string().min(1, "Entity name is required"),
+  criteria: z.string().min(1, "Criteria is required"),
+  max_depth: z.number().int().min(1).max(5).optional().default(3),
+  max_nodes: z.number().int().min(1).max(50).optional().default(50),
   relationship_types: z
     .array(
       z.enum([
@@ -439,6 +477,83 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         openWorldHint: false,
       },
     },
+    {
+      name: "recall_session",
+      description:
+        "Create or continue an iterative search session for multi-step memory " +
+        "exploration. Omit session_id to start a new session; provide session_id " +
+        "to refine with a new query. Sessions track accumulated results and " +
+        "remaining token budget. Use recall_drill to expand individual results.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            minLength: 2,
+            description: "Search query",
+          },
+          session_id: {
+            type: "string",
+            format: "uuid",
+            description: "Existing session ID to refine (omit to create new)",
+          },
+          budget: {
+            type: "number",
+            minimum: 100,
+            maximum: 10000,
+            default: 3000,
+            description: "Max total token budget for this session",
+          },
+          sources: {
+            type: "array",
+            items: { type: "string", enum: ["episodic", "semantic", "graph"] },
+            default: ["episodic", "semantic"],
+            description: "Which memory stores to search",
+          },
+        },
+        required: ["query"],
+        additionalProperties: false,
+      },
+      annotations: {
+        title: "Recall Session",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    {
+      name: "recall_drill",
+      description:
+        "Drill into a specific result from a recall session to get expanded " +
+        "context. For episodic results: shows surrounding conversation exchanges. " +
+        "For semantic results: shows source conversation segments. " +
+        "For graph results: shows entity with full relationship neighborhood.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          session_id: {
+            type: "string",
+            format: "uuid",
+            description: "Session ID from recall_session",
+          },
+          result_index: {
+            type: "number",
+            minimum: 0,
+            description: "0-based index into session results",
+          },
+        },
+        required: ["session_id", "result_index"],
+        additionalProperties: false,
+      },
+      annotations: {
+        title: "Drill Into Result",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
   ],
 }));
 
@@ -604,6 +719,89 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         );
       }
       lines.push("</engram_graph>");
+
+      return {
+        content: [{ type: "text", text: lines.join("\n") }],
+      };
+    }
+
+    if (name === "recall_session") {
+      const params = RecallSessionInputSchema.parse(args);
+      await ensureEmbeddings();
+
+      if (!config) config = loadConfig();
+      const result = await createOrRefineRecallSession(
+        getDb(),
+        {
+          query: params.query,
+          sessionId: params.session_id,
+          budget: params.budget,
+          sources: params.sources as SearchSource[] | undefined,
+        },
+        config,
+      );
+
+      const xml = formatRecallXml({
+        results: result.results,
+        tokensUsed: result.results.reduce((sum, r) => sum + r.tokenEstimate, 0),
+        totalResults: result.resultCount,
+        query: params.query,
+      });
+
+      const sessionMeta = `<session id="${result.sessionId}" budget_remaining="${result.budgetRemaining}" result_count="${result.resultCount}" />`;
+
+      return {
+        content: [{ type: "text", text: `${sessionMeta}\n${xml}` }],
+      };
+    }
+
+    if (name === "recall_drill") {
+      const params = RecallDrillInputSchema.parse(args);
+
+      const result = await drillRecallResult(
+        getDb(),
+        params.session_id,
+        params.result_index,
+      );
+
+      const lines: string[] = [];
+      lines.push(`<engram_drill result_id="${escapeXml(result.resultId)}">`);
+      lines.push(`  <content>${escapeXml(result.drill.content)}</content>`);
+
+      if (result.drill.before.length > 0) {
+        lines.push("  <context_before>");
+        for (const item of result.drill.before) {
+          lines.push(`    <exchange>${escapeXml(item)}</exchange>`);
+        }
+        lines.push("  </context_before>");
+      }
+
+      if (result.drill.after.length > 0) {
+        lines.push("  <context_after>");
+        for (const item of result.drill.after) {
+          lines.push(`    <exchange>${escapeXml(item)}</exchange>`);
+        }
+        lines.push("  </context_after>");
+      }
+
+      if (result.drill.relatedEntities.length > 0) {
+        lines.push("  <related_entities>");
+        for (const entity of result.drill.relatedEntities) {
+          const desc = entity.description ? ` description="${escapeXml(entity.description)}"` : "";
+          lines.push(`    <entity name="${escapeXml(entity.name)}" type="${escapeXml(entity.type)}"${desc} />`);
+        }
+        lines.push("  </related_entities>");
+      }
+
+      if (result.drill.suggestions.length > 0) {
+        lines.push("  <suggestions>");
+        for (const suggestion of result.drill.suggestions) {
+          lines.push(`    <suggestion>${escapeXml(suggestion)}</suggestion>`);
+        }
+        lines.push("  </suggestions>");
+      }
+
+      lines.push("</engram_drill>");
 
       return {
         content: [{ type: "text", text: lines.join("\n") }],

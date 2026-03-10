@@ -4,6 +4,7 @@
  * Both CLI and MCP use this function, fixing the CLI episodic-only search bug.
  *
  * Phase 3, Task 3.3 implementation.
+ * Phase 6B: Added session-based iterative recall functions.
  */
 
 import type Database from "better-sqlite3";
@@ -11,11 +12,15 @@ import type {
   SearchSource,
   RecallResponse,
   EngramConfig,
+  SearchResult,
 } from "../../_core/types/index.js";
 import {
   searchMultiSource,
   formatRecallXml,
+  getSessionStore,
+  drillIntoResult,
 } from "../../_core/search/index.js";
+import type { RecallSession, DrillResult } from "../../_core/search/session.js";
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -28,6 +33,18 @@ export interface UnifiedSearchParams {
   before?: string;
   mode?: "hybrid" | "vector" | "text";
   depth?: "shallow" | "deep";
+}
+
+export interface RecallSessionResult {
+  sessionId: string;
+  results: SearchResult[];
+  budgetRemaining: number;
+  resultCount: number;
+}
+
+export interface RecallDrillResult {
+  drill: DrillResult;
+  resultId: string;
 }
 
 // ─── Core Operation ─────────────────────────────────────────────
@@ -58,6 +75,122 @@ export async function unifiedSearch(
     },
     config,
   );
+}
+
+// ─── Session-Based Recall ───────────────────────────────────────
+
+/**
+ * Create a new recall session or refine an existing one.
+ *
+ * When sessionId is omitted, creates a new session and runs the initial search.
+ * When sessionId is provided, refines the existing session with a new query.
+ */
+export async function createOrRefineRecallSession(
+  db: Database.Database,
+  params: {
+    query: string;
+    sessionId?: string;
+    budget?: number;
+    sources?: SearchSource[];
+  },
+  config?: EngramConfig,
+): Promise<RecallSessionResult> {
+  const store = getSessionStore();
+  const sources = params.sources ?? ["episodic", "semantic"];
+
+  if (params.sessionId) {
+    // Refine existing session
+    const session = store.get(params.sessionId);
+    if (!session) {
+      throw new Error(`Session not found: ${params.sessionId}`);
+    }
+
+    const remainingBudget = store.getRemainingBudget(params.sessionId);
+    if (remainingBudget <= 0) {
+      return {
+        sessionId: params.sessionId,
+        results: [],
+        budgetRemaining: 0,
+        resultCount: session.results.length,
+      };
+    }
+
+    const response = await searchMultiSource(
+      db,
+      {
+        query: params.query,
+        sources,
+        mode: "hybrid",
+        budget: remainingBudget,
+      },
+      config,
+    );
+
+    store.addResults(params.sessionId, response.results, params.query);
+
+    return {
+      sessionId: params.sessionId,
+      results: response.results,
+      budgetRemaining: store.getRemainingBudget(params.sessionId),
+      resultCount: session.results.length,
+    };
+  }
+
+  // Create new session
+  const maxBudget = params.budget ?? 3000;
+  const session = store.create(params.query, { maxBudget });
+
+  const response = await searchMultiSource(
+    db,
+    {
+      query: params.query,
+      sources,
+      mode: "hybrid",
+      budget: Math.min(maxBudget, 1500), // First search gets half the budget
+    },
+    config,
+  );
+
+  store.addResults(session.id, response.results);
+
+  return {
+    sessionId: session.id,
+    results: response.results,
+    budgetRemaining: store.getRemainingBudget(session.id),
+    resultCount: response.results.length,
+  };
+}
+
+/**
+ * Drill into a specific result within a recall session.
+ */
+export async function drillRecallResult(
+  db: Database.Database,
+  sessionId: string,
+  resultIndex: number,
+): Promise<RecallDrillResult> {
+  const store = getSessionStore();
+  const session = store.get(sessionId);
+
+  if (!session) {
+    throw new Error(`Session not found: ${sessionId}`);
+  }
+
+  if (resultIndex < 0 || resultIndex >= session.results.length) {
+    throw new Error(
+      `Result index ${resultIndex} out of range (0-${session.results.length - 1})`,
+    );
+  }
+
+  const result = session.results[resultIndex];
+  store.markExpanded(sessionId, result.id);
+
+  const drill = await drillIntoResult(result, db);
+
+  return {
+    drill,
+    resultId: result.id,
+  };
 }
 
 // Re-export formatRecallXml for convenience

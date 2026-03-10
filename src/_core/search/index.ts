@@ -35,3 +35,16 @@ export { searchMultiSource, budgetResults } from "./orchestrator.js";
 
 // Text chunking
 export { chunkConversation } from "./text.js";
+
+// Session store for iterative recall
+export {
+  SessionStore,
+  getSessionStore,
+  resetSessionStore,
+  type RecallSession,
+  type DrillResult,
+  type EntitySummary,
+} from "./session.js";
+
+// Drill into results
+export { drillIntoResult } from "./drill.js";
