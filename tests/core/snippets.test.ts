@@ -79,9 +79,9 @@ describe("fetchSnippets", () => {
       ranges: [{ start: 1, end: 2 }],
     });
 
-    // Format: "  N | content"
-    expect(result.content).toMatch(/\s+1 \| line 1:/);
-    expect(result.content).toMatch(/\s+2 \| line 2:/);
+    // Format: " N | content" (width depends on max line number)
+    expect(result.content).toMatch(/\d+ \| line 1:/);
+    expect(result.content).toMatch(/\d+ \| line 2:/);
   });
 
   it("should estimate tokens at ~4 chars per token", () => {
