@@ -220,6 +220,21 @@ function createSchema(db: Database.Database, config: EngramConfig): void {
 
     CREATE INDEX IF NOT EXISTS idx_dream_checkpoints_run ON dream_checkpoints(run_id, phase);
 
+    -- Chunk metadata for adaptive chunking diagnostics
+    CREATE TABLE IF NOT EXISTS chunk_metadata (
+      id TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL,
+      chunk_index INTEGER NOT NULL,
+      start_exchange INTEGER NOT NULL,
+      end_exchange INTEGER NOT NULL,
+      exchange_count INTEGER NOT NULL,
+      avg_density REAL,
+      created_at INTEGER DEFAULT (unixepoch())
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_chunk_metadata_conversation
+      ON chunk_metadata(conversation_id);
+
     -- ═══════════════════════════════════════════════════════════════
     -- PHASE 6: REFLECTION & EMERGENCE
     -- Bridge scores, temporal patterns, reflection observations

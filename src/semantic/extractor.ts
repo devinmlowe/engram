@@ -18,6 +18,7 @@ import type {
   ExtractedFact,
   ExtractionResult,
   ExtractionConfig,
+  ChunkBoundaryInfo,
 } from "./types.js";
 
 // ─── Module State ───────────────────────────────────────────────
@@ -195,7 +196,10 @@ import { chunkConversation } from "../_core/search/text.js";
 export { chunkConversation };
 
 // Adaptive chunking (Phase 6A)
-import { adaptiveChunk } from "./adaptive-chunker.js";
+import { adaptiveChunk, scoreExchangeDensity } from "./adaptive-chunker.js";
+
+// Database type for chunk metadata persistence (Phase 7C.2)
+import type Database from "better-sqlite3";
 
 // ─── Response Parsing ───────────────────────────────────────────
 
@@ -487,6 +491,26 @@ export async function extractFromConversation(
     ? adaptiveChunk(exchanges, { overlap: cfg.chunkOverlap })
     : chunkConversation(exchanges, cfg.chunkSize, cfg.chunkOverlap);
 
+  // Phase 7C.2: Compute chunk boundary metadata for diagnostics
+  const densityScores = cfg.chunkingStrategy === "adaptive"
+    ? scoreExchangeDensity(exchanges)
+    : [];
+  const chunkBoundaries: ChunkBoundaryInfo[] = chunks.map((chunk) => {
+    const startIdx = chunk[0]?.index ?? 0;
+    const endIdx = (chunk[chunk.length - 1]?.index ?? 0) + 1;
+    // Compute average density for this chunk's range (adaptive only)
+    let avgDensity: number | undefined;
+    if (densityScores.length > 0) {
+      const relevant = densityScores.filter(
+        (s) => s.index >= startIdx && s.index < endIdx,
+      );
+      if (relevant.length > 0) {
+        avgDensity = relevant.reduce((sum, s) => sum + s.score, 0) / relevant.length;
+      }
+    }
+    return { start: startIdx, end: endIdx, avgDensity };
+  });
+
   let allFacts: ExtractedFact[] = [];
   let usedModel = DEFAULT_MODEL;
   let usedTier: "local" | "openrouter" | "haiku" | "sonnet" = "haiku";
@@ -541,7 +565,51 @@ export async function extractFromConversation(
     tier: usedTier,
     confidence: allFacts.length > 0 ? 7 : 1,
     durationMs,
+    chunkBoundaries,
   };
+}
+
+// ─── Chunk Metadata Persistence (Phase 7C.2) ───────────────────
+
+/**
+ * Persist chunk boundary metadata to the chunk_metadata table.
+ *
+ * This is a diagnostic feature — if db is null or the write fails,
+ * extraction continues unaffected.
+ */
+export function persistChunkMetadata(
+  db: Database.Database | null,
+  conversationId: string,
+  chunks: Array<{ start: number; end: number; avgDensity?: number }>,
+): void {
+  if (!db || chunks.length === 0) return;
+
+  try {
+    const stmt = db.prepare(
+      `INSERT OR REPLACE INTO chunk_metadata (id, conversation_id, chunk_index, start_exchange, end_exchange, exchange_count, avg_density)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    );
+
+    const insertAll = db.transaction(() => {
+      for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i];
+        const id = `${conversationId}:${i}`;
+        stmt.run(
+          id,
+          conversationId,
+          i,
+          chunk.start,
+          chunk.end,
+          chunk.end - chunk.start,
+          chunk.avgDensity ?? null,
+        );
+      }
+    });
+
+    insertAll();
+  } catch {
+    // Chunk metadata is diagnostic — never fail the extraction pipeline
+  }
 }
 
 /**

@@ -721,6 +721,12 @@ async function processConversation(
   );
   const facts: ExtractedFact[] = extractionResult.facts;
 
+  // Phase 7C.2: Persist chunk boundary metadata for diagnostics
+  if (extractionResult.chunkBoundaries) {
+    const { persistChunkMetadata } = await import("../semantic/extractor.js");
+    persistChunkMetadata(db, conversationId, extractionResult.chunkBoundaries);
+  }
+
   logEntry(logPath, "extract", `Extracted ${facts.length} facts from ${conversationId}`, {
     model: extractionResult.model,
     tier: extractionResult.tier,
