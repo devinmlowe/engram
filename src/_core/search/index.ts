@@ -44,6 +44,8 @@ export {
   type RecallSession,
   type DrillResult,
   type EntitySummary,
+  type QualityMetrics,
+  computeQualityMetrics,
 } from "./session.js";
 
 // Drill into results
