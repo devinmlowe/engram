@@ -20,6 +20,8 @@ import {
   drillRecallResult,
 } from "../shared/search.js";
 import { explore, exploreSelectiveEntity } from "../shared/explore.js";
+import { fetchSnippets } from "../../_core/search/snippets.js";
+import { getSessionStore } from "../../_core/search/index.js";
 import type Database from "better-sqlite3";
 import type {
   EngramConfig,
@@ -176,6 +178,16 @@ const ExploreSelectiveInputSchema = z.object({
 const ReflectInputSchema = z.object({
   mode: z.enum(["communities", "bridges", "temporal", "health", "all"]).optional().default("all"),
   refresh: z.boolean().optional().default(false),
+});
+
+const FetchSnippetsInputSchema = z.object({
+  path: z.string().min(1, "Path is required"),
+  ranges: z.array(z.object({
+    start: z.number().int().min(1),
+    end: z.number().int().min(1),
+  })).min(1).max(20),
+  context: z.number().int().min(0).max(50).optional().default(0),
+  session_id: z.string().uuid().optional(),
 });
 
 // ─── Server Setup ──────────────────────────────────────────────
@@ -618,6 +630,55 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         openWorldHint: false,
       },
     },
+    {
+      name: "fetch_snippets",
+      description:
+        "Fetch multiple line ranges from a single file in one call. Ranges are " +
+        "merged when overlapping, padded with optional context lines, and joined " +
+        "with gap markers. More efficient than multiple show calls for targeted " +
+        "code reading.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          path: { type: "string", minLength: 1 },
+          ranges: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                start: { type: "number", minimum: 1 },
+                end: { type: "number", minimum: 1 },
+              },
+              required: ["start", "end"],
+            },
+            minItems: 1,
+            maxItems: 20,
+            description: "Line ranges to fetch (max 20)",
+          },
+          context: {
+            type: "number",
+            minimum: 0,
+            maximum: 50,
+            default: 0,
+            description: "Number of padding lines around each range (0-50)",
+          },
+          session_id: {
+            type: "string",
+            format: "uuid",
+            description: "Optional session ID for token budget tracking",
+          },
+        },
+        required: ["path", "ranges"],
+        additionalProperties: false,
+      },
+      annotations: {
+        title: "Fetch Snippets",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
   ],
 }));
 
@@ -909,6 +970,35 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       return {
         content: [{ type: "text", text: JSON.stringify(output, null, 2) }],
+      };
+    }
+
+    if (name === "fetch_snippets") {
+      const params = FetchSnippetsInputSchema.parse(args);
+
+      const result = fetchSnippets({
+        path: params.path,
+        ranges: params.ranges,
+        context: params.context,
+        session_id: params.session_id,
+      });
+
+      // Deduct from session budget if session_id provided
+      if (params.session_id) {
+        const store = getSessionStore();
+        const session = store.get(params.session_id);
+        if (session) {
+          session.totalBudgetUsed += result.tokenEstimate;
+        }
+      }
+
+      return {
+        content: [{ type: "text", text: result.content }],
+        metadata: {
+          totalLines: result.totalLines,
+          rangesCovered: result.rangesCovered,
+          tokenEstimate: result.tokenEstimate,
+        },
       };
     }
 

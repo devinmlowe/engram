@@ -48,3 +48,11 @@ export {
 
 // Drill into results
 export { drillIntoResult } from "./drill.js";
+
+// Multi-snippet fetch
+export {
+  fetchSnippets,
+  type SnippetRange,
+  type FetchSnippetsParams,
+  type FetchSnippetsResult,
+} from "./snippets.js";
