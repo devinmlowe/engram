@@ -82,10 +82,15 @@ engram validate        # Validate migration integrity
 
 Interactive knowledge graph visualization at `localhost:3000`:
 
-- **Force Graph** (`/graph`) — D3 force-directed layout with Canvas rendering, mention threshold slider, type filters, search, click-to-focus
-- **Depth View** (`/graph/depth`) — Three.js 3D graph visualization
-- **Galaxy View** (`/graph/galaxy`) — Orbital mechanics visualization
-- **Word Cloud** (`/words`) — D3 word cloud from episodic conversation data
+| | |
+|---|---|
+| **Force Graph** (`/graph`) | **Depth View** (`/graph/depth`) |
+| D3 force-directed layout with Canvas rendering, mention threshold slider, type filters, search, click-to-focus | Three.js 3D graph visualization with depth-based node sizing |
+| ![Force Graph](assets/view-graph.webp) | ![Depth View](assets/view-depth.webp) |
+| **Galaxy View** (`/graph/galaxy`) | **Word Cloud** (`/words`) |
+| Orbital mechanics visualization with hub-satellite clustering | D3 word cloud from episodic conversation data with frequency hover |
+| ![Galaxy View](assets/view-galaxy.webp) | ![Word Cloud](assets/view-words.webp) |
+
 - **Dream Control** — Live pipeline phase tracking with progress bars via SSE
 - **Real-time Updates** — SSE watching SQLite WAL for instant graph changes
 
