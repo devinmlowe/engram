@@ -2,6 +2,10 @@
 
 > *An engram is the hypothetical physical trace of memory in neural tissue — the biochemical change that encodes what we've learned.*
 
+<p align="center">
+  <img src="assets/galaxy-view.gif" alt="Engram Galaxy View — 3D knowledge graph visualization" width="480">
+</p>
+
 Local-first cognitive memory system that transforms raw LLM conversation history into structured, consolidated knowledge. Unlike traditional conversation search (which treats sessions as documents to retrieve), Engram mimics human memory architecture: **episodic memories are captured, consolidated into semantic knowledge during "dream state" processing, and emergent connections surface through graph analysis** — much like how a Zettelkasten's backlinks reveal Maps of Content that no individual note anticipated.
 
 Designed as an MCP server for Claude Code and other LLM agents, with CLI and web visualization interfaces.
