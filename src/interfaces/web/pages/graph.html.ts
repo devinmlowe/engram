@@ -12,7 +12,7 @@ export function graphPage(): string {
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
-    background: #1e1e2e;
+    background: #0a0a14;
     color: #cdd6f4;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
     overflow: hidden;
@@ -358,6 +358,149 @@ export function graphPage(): string {
   }
   #view-tabs a:hover { border-color: #89b4fa; color: #cdd6f4; }
   #view-tabs a.active { background: #45475a; color: #89b4fa; border-color: #89b4fa; }
+
+  /* ─── Settings persistence buttons ─── */
+  .panel-footer {
+    padding: 12px 20px 16px;
+    display: flex;
+    gap: 8px;
+  }
+  .panel-footer button {
+    flex: 1;
+    padding: 7px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+    border: 1px solid #45475a;
+    background: #313244;
+    color: #cdd6f4;
+  }
+  .panel-footer button:hover { border-color: #89b4fa; background: #45475a; }
+  .panel-footer button.saved { border-color: #a6e3a1; color: #a6e3a1; }
+
+  /* ─── Setting hint tooltips ─── */
+  .hint-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: #45475a;
+    color: #6c7086;
+    font-size: 9px;
+    font-weight: 700;
+    cursor: help;
+    margin-left: 6px;
+    flex-shrink: 0;
+    user-select: none;
+  }
+  .hint-bubble {
+    position: absolute;
+    background: #313244;
+    border: 1px solid #45475a;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 11px;
+    color: #bac2de;
+    line-height: 1.4;
+    max-width: 220px;
+    z-index: 200;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .hint-bubble.visible { opacity: 1; }
+  @media (hover: none) {
+    .hint-icon { display: none; }
+  }
+
+  /* ─── Info dialog (mobile-friendly) ─── */
+  #info-btn {
+    background: none;
+    border: none;
+    color: #6c7086;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 700;
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    border: 1.5px solid #6c7086;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s;
+    padding: 0;
+    line-height: 1;
+  }
+  #info-btn:hover { color: #cdd6f4; border-color: #cdd6f4; }
+  #info-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.6);
+    z-index: 300;
+    display: none;
+    align-items: center;
+    justify-content: center;
+  }
+  #info-overlay.open { display: flex; }
+  #info-dialog {
+    background: #1e1e2e;
+    border: 1px solid #45475a;
+    border-radius: 12px;
+    padding: 0;
+    max-width: 420px;
+    width: 90vw;
+    max-height: 80vh;
+    overflow-y: auto;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  }
+  #info-dialog::-webkit-scrollbar { width: 4px; }
+  #info-dialog::-webkit-scrollbar-thumb { background: #45475a; border-radius: 2px; }
+  .info-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px 12px;
+    border-bottom: 1px solid #313244;
+    position: sticky;
+    top: 0;
+    background: #1e1e2e;
+    z-index: 1;
+  }
+  .info-header h3 { font-size: 15px; font-weight: 600; color: #cdd6f4; }
+  .info-close {
+    background: none; border: none; color: #6c7086; cursor: pointer;
+    font-size: 18px; padding: 2px; line-height: 1;
+  }
+  .info-close:hover { color: #cdd6f4; }
+  .info-section {
+    padding: 12px 20px 4px;
+  }
+  .info-section-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: #89b4fa;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+  }
+  .info-item {
+    margin-bottom: 10px;
+  }
+  .info-item-name {
+    font-size: 12px;
+    font-weight: 600;
+    color: #cdd6f4;
+    margin-bottom: 2px;
+  }
+  .info-item-desc {
+    font-size: 11px;
+    color: #a6adc8;
+    line-height: 1.4;
+  }
 </style>
 </head>
 <body>
@@ -381,7 +524,7 @@ export function graphPage(): string {
   <div class="panel-header">
     <h2>Graph view</h2>
     <div class="panel-header-actions">
-      <button id="reset-btn" title="Reset defaults">&#x21BB;</button>
+      <button id="info-btn" title="Setting descriptions">i</button>
       <button id="close-panel" title="Close">&times;</button>
     </div>
   </div>
@@ -482,6 +625,44 @@ export function graphPage(): string {
     </div>
   </div>
 
+  <div class="panel-footer">
+    <button id="save-defaults-btn">Save as Default</button>
+    <button id="reset-defaults-btn">Reset to Defaults</button>
+  </div>
+</div>
+
+<div id="info-overlay">
+  <div id="info-dialog">
+    <div class="info-header">
+      <h3>Settings Guide</h3>
+      <button class="info-close" id="info-close">&times;</button>
+    </div>
+    <div class="info-section">
+      <div class="info-section-title">Filters</div>
+      <div class="info-item"><div class="info-item-name">Search nodes</div><div class="info-item-desc">Filter visible nodes by name, description, or community</div></div>
+      <div class="info-item"><div class="info-item-name">Min mentions</div><div class="info-item-desc">Only show entities mentioned at least this many times across conversations</div></div>
+    </div>
+    <div class="info-section">
+      <div class="info-section-title">Groups</div>
+      <div class="info-item"><div class="info-item-name">Type filters</div><div class="info-item-desc">Toggle visibility of entity types (e.g., projects, tools, people)</div></div>
+    </div>
+    <div class="info-section">
+      <div class="info-section-title">Display</div>
+      <div class="info-item"><div class="info-item-name">Show labels</div><div class="info-item-desc">Toggle text labels on graph nodes</div></div>
+      <div class="info-item"><div class="info-item-name">Label threshold</div><div class="info-item-desc">At higher densities, hide labels to reduce clutter. Lower = more labels visible</div></div>
+      <div class="info-item"><div class="info-item-name">Node size</div><div class="info-item-desc">Scale the radius of all nodes. Based on mention count</div></div>
+      <div class="info-item"><div class="info-item-name">Link thickness</div><div class="info-item-desc">Scale the width of relationship lines. Based on relationship strength</div></div>
+      <div class="info-item"><div class="info-item-name">Link gradient</div><div class="info-item-desc">Opacity falloff for links \u2014 higher values fade weak links more</div></div>
+      <div class="info-item"><div class="info-item-name">Auto-zoom</div><div class="info-item-desc">Automatically pan/zoom to center newly loaded or changed nodes</div></div>
+    </div>
+    <div class="info-section">
+      <div class="info-section-title">Forces</div>
+      <div class="info-item"><div class="info-item-name">Center force</div><div class="info-item-desc">How strongly nodes are pulled toward the center of the canvas</div></div>
+      <div class="info-item"><div class="info-item-name">Repel force</div><div class="info-item-desc">How strongly nodes push each other apart (higher = more spacing)</div></div>
+      <div class="info-item"><div class="info-item-name">Link force</div><div class="info-item-desc">How strongly connected nodes are pulled together</div></div>
+      <div class="info-item"><div class="info-item-name">Link distance</div><div class="info-item-desc">Target resting distance between connected nodes</div></div>
+    </div>
+  </div>
 </div>
 
 <button id="dream-btn" style="display:none"><span class="icon">&#x2728;</span> Dream</button>
@@ -500,7 +681,7 @@ const TYPE_COLORS = {
 };
 
 // Pre-compute RGB for type colors and their muted versions
-const BG = [30, 30, 46]; // #1e1e2e
+const BG = [10, 10, 20]; // #0a0a14
 const FADE_DURATION = 60000; // 60 seconds to fully mute
 const GLOW_DURATION = 3000;  // 3 seconds of glow effect
 
@@ -574,7 +755,7 @@ let totalInDb = 0;
 let lastDiffTimestamp = 0;
 let diffPollTimer = null;
 let hasFreshNodes = false;
-let autoZoom2D = localStorage.getItem('engram-autozoom-2d') !== 'false';
+let autoZoom2D = true;
 let lastAutoZoomTime2D = 0;
 
 // Display settings
@@ -670,7 +851,8 @@ function rebuildSim() {
 
 function draw() {
   ctx.save();
-  ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+  ctx.fillStyle = '#0a0a14';
+  ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
   ctx.translate(transform.x, transform.y);
   ctx.scale(transform.k, transform.k);
 
@@ -1058,19 +1240,267 @@ document.getElementById('preset-spread').addEventListener('click', () => applyPr
 document.getElementById('toggle-autozoom').addEventListener('click', function() {
   this.classList.toggle('on');
   autoZoom2D = this.classList.contains('on');
-  localStorage.setItem('engram-autozoom-2d', autoZoom2D);
 });
-if (!autoZoom2D) document.getElementById('toggle-autozoom').classList.remove('on');
 
-// Reset defaults (resets to Cluster preset)
-document.getElementById('reset-btn').addEventListener('click', () => {
-  showLabels = true; labelThresholdManual = 20; nodeSizeMult = 1.0; linkThicknessMult = 1.0;
-  document.getElementById('toggle-labels').classList.add('on');
-  document.getElementById('label-threshold').value = 20; document.getElementById('label-threshold-val').textContent = 'auto';
-  document.getElementById('node-size').value = 10; document.getElementById('node-size-val').textContent = '1.0';
-  document.getElementById('link-thickness').value = 10; document.getElementById('link-thickness-val').textContent = '1.0';
-  applyPreset('cluster');
+// ─── Settings Persistence ─────────────────────────────────────────
+const SETTINGS_KEY = 'engram-graph-settings';
+let factoryThreshold = 5; // updated from server on load
+
+const FACTORY_DEFAULTS = {
+  mentionThreshold: 5,
+  showLabels: true,
+  labelThreshold: 20,
+  nodeSizeMultiplier: 1.0,
+  linkThicknessMultiplier: 1.0,
+  linkGradient: 50,
+  autoZoom: true,
+  activePreset: 'cluster',
+  centerForce: 1,
+  repelForce: 50,
+  linkForce: 50,
+  linkDistance: 30,
+  activeTypes: Object.keys(TYPE_COLORS),
+};
+
+function collectCurrentSettings() {
+  return {
+    mentionThreshold: mentionThreshold,
+    showLabels: showLabels,
+    labelThreshold: labelThresholdManual,
+    nodeSizeMultiplier: parseFloat(document.getElementById('node-size').value),
+    linkThicknessMultiplier: parseFloat(document.getElementById('link-thickness').value),
+    linkGradient: parseInt(document.getElementById('link-gradient').value, 10),
+    autoZoom: autoZoom2D,
+    activePreset: document.querySelector('.preset-btn.active') ? document.querySelector('.preset-btn.active').id.replace('preset-', '') : null,
+    centerForce: parseInt(document.getElementById('center-force').value, 10),
+    repelForce: parseInt(document.getElementById('repel-force').value, 10),
+    linkForce: parseInt(document.getElementById('link-force').value, 10),
+    linkDistance: parseInt(document.getElementById('link-distance').value, 10),
+    activeTypes: [...activeTypes],
+  };
+}
+
+function saveDefaultSettings() {
+  const settings = collectCurrentSettings();
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  // Remove legacy key
+  localStorage.removeItem('engram-autozoom-2d');
+
+  const btn = document.getElementById('save-defaults-btn');
+  btn.textContent = 'Saved!';
+  btn.classList.add('saved');
+  setTimeout(() => {
+    btn.textContent = 'Save as Default';
+    btn.classList.remove('saved');
+  }, 1500);
+}
+
+function applySettings(s) {
+  mentionThreshold = s.mentionThreshold;
+  document.getElementById('threshold').value = mentionThreshold;
+  document.getElementById('threshold-val').textContent = mentionThreshold;
+
+  showLabels = s.showLabels;
+  document.getElementById('toggle-labels').classList.toggle('on', showLabels);
+
+  labelThresholdManual = s.labelThreshold;
+  document.getElementById('label-threshold').value = s.labelThreshold;
+  document.getElementById('label-threshold-val').textContent = s.labelThreshold;
+
+  const nodeSlider = s.nodeSizeMultiplier;
+  document.getElementById('node-size').value = nodeSlider;
+  nodeSizeMult = nodeSlider / 10;
+  document.getElementById('node-size-val').textContent = nodeSizeMult.toFixed(1);
+
+  const linkSlider = s.linkThicknessMultiplier;
+  document.getElementById('link-thickness').value = linkSlider;
+  linkThicknessMult = linkSlider / 10;
+  document.getElementById('link-thickness-val').textContent = linkThicknessMult.toFixed(1);
+
+  linkGradient = s.linkGradient / 100;
+  document.getElementById('link-gradient').value = s.linkGradient;
+  document.getElementById('link-gradient-val').textContent = s.linkGradient;
+
+  autoZoom2D = s.autoZoom;
+  document.getElementById('toggle-autozoom').classList.toggle('on', autoZoom2D);
+
+  // Forces
+  document.getElementById('center-force').value = s.centerForce;
+  forceCenter = s.centerForce / 100;
+  document.getElementById('center-force-val').textContent = forceCenter.toFixed(2);
+
+  document.getElementById('repel-force').value = s.repelForce;
+  forceRepel = -(s.repelForce * 4);
+  document.getElementById('repel-force-val').textContent = forceRepel;
+
+  document.getElementById('link-force').value = s.linkForce;
+  forceLinkStrength = s.linkForce / 100;
+  document.getElementById('link-force-val').textContent = forceLinkStrength.toFixed(2);
+
+  document.getElementById('link-distance').value = s.linkDistance;
+  forceLinkDistance = s.linkDistance;
+  document.getElementById('link-distance-val').textContent = s.linkDistance;
+
+  // Preset highlight
+  document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+  if (s.activePreset) {
+    const presetBtn = document.getElementById('preset-' + s.activePreset);
+    if (presetBtn) presetBtn.classList.add('active');
+  }
+
+  // Type filters
+  if (s.activeTypes) {
+    activeTypes = new Set(s.activeTypes);
+    document.querySelectorAll('#filters .pill').forEach(pill => {
+      const t = pill.dataset.type;
+      if (activeTypes.has(t)) pill.classList.add('active');
+      else pill.classList.remove('active');
+    });
+  }
+}
+
+function loadDefaultSettings() {
+  // Migrate legacy autozoom key
+  const legacyAz = localStorage.getItem('engram-autozoom-2d');
+  const saved = localStorage.getItem(SETTINGS_KEY);
+  if (saved) {
+    try {
+      return JSON.parse(saved);
+    } catch(e) { return null; }
+  }
+  if (legacyAz !== null) {
+    // No full saved settings but legacy autozoom exists — carry it forward
+    autoZoom2D = legacyAz !== 'false';
+    document.getElementById('toggle-autozoom').classList.toggle('on', autoZoom2D);
+    localStorage.removeItem('engram-autozoom-2d');
+  }
+  return null;
+}
+
+function resetToFactoryDefaults() {
+  localStorage.removeItem(SETTINGS_KEY);
+  localStorage.removeItem('engram-autozoom-2d');
+  const defaults = { ...FACTORY_DEFAULTS, mentionThreshold: factoryThreshold };
+  applySettings(defaults);
+  rebuildSim();
   draw();
+}
+
+document.getElementById('save-defaults-btn').addEventListener('click', saveDefaultSettings);
+document.getElementById('reset-defaults-btn').addEventListener('click', resetToFactoryDefaults);
+
+// ─── Setting Hint Tooltips ────────────────────────────────────────
+const SETTING_HINTS = {
+  'search': 'Filter visible nodes by name, description, or community',
+  'threshold': 'Only show entities mentioned at least this many times across conversations',
+  'toggle-labels': 'Toggle text labels on graph nodes',
+  'label-threshold': 'At higher densities, hide labels to reduce clutter. Lower = more labels visible',
+  'node-size': 'Scale the radius of all nodes. Based on mention count',
+  'link-thickness': 'Scale the width of relationship lines. Based on relationship strength',
+  'link-gradient': 'Opacity falloff for links \\u2014 higher values fade weak links more',
+  'toggle-autozoom': 'Automatically pan/zoom to center newly loaded or changed nodes',
+  'center-force': 'How strongly nodes are pulled toward the center of the canvas',
+  'repel-force': 'How strongly nodes push each other apart (higher = more spacing)',
+  'link-force': 'How strongly connected nodes are pulled together',
+  'link-distance': 'Target resting distance between connected nodes',
+};
+
+const SECTION_HINTS = {
+  'Filters': 'Control which entities are visible based on search and mention count',
+  'Groups': 'Toggle visibility of entity types (e.g., projects, tools, people)',
+  'Display': 'Adjust visual appearance of nodes, labels, and links',
+  'Forces': 'Tune the physics simulation that positions nodes',
+  'Dream': 'Trigger the dream consolidation pipeline',
+};
+
+let activeBubble = null;
+
+function createHintIcons() {
+  // Add hints to settings controls
+  for (const [id, hint] of Object.entries(SETTING_HINTS)) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    // Find the label element (parent ctrl-label or ctrl-toggle > .label)
+    let labelEl = null;
+    const row = el.closest('.ctrl-row') || el.closest('.ctrl-toggle');
+    if (row) {
+      labelEl = row.querySelector('.ctrl-label') || row.querySelector('.label');
+    }
+    if (!labelEl) continue;
+
+    const icon = document.createElement('span');
+    icon.className = 'hint-icon';
+    icon.textContent = '?';
+    icon.dataset.hint = hint;
+    labelEl.style.position = 'relative';
+    labelEl.appendChild(icon);
+
+    icon.addEventListener('mouseenter', showHintBubble);
+    icon.addEventListener('mouseleave', hideHintBubble);
+  }
+
+  // Add hints to section headers
+  document.querySelectorAll('.section-header').forEach(hdr => {
+    const titleEl = hdr.querySelector('.section-title');
+    if (!titleEl) return;
+    const hint = SECTION_HINTS[titleEl.textContent];
+    if (!hint) return;
+
+    const icon = document.createElement('span');
+    icon.className = 'hint-icon';
+    icon.textContent = '?';
+    icon.dataset.hint = hint;
+    hdr.style.position = 'relative';
+    hdr.appendChild(icon);
+
+    icon.addEventListener('mouseenter', showHintBubble);
+    icon.addEventListener('mouseleave', hideHintBubble);
+    // Prevent section toggle when clicking the hint icon
+    icon.addEventListener('click', (e) => e.stopPropagation());
+  });
+}
+
+function showHintBubble(e) {
+  hideHintBubble();
+  const icon = e.currentTarget;
+  const hint = icon.dataset.hint;
+  if (!hint) return;
+
+  const bubble = document.createElement('div');
+  bubble.className = 'hint-bubble';
+  bubble.textContent = hint;
+
+  // Position near the icon, inside the settings panel
+  const panel = document.getElementById('settings-panel');
+  panel.appendChild(bubble);
+
+  const iconRect = icon.getBoundingClientRect();
+  const panelRect = panel.getBoundingClientRect();
+  bubble.style.right = '20px';
+  bubble.style.top = (iconRect.top - panelRect.top + panel.scrollTop + 20) + 'px';
+
+  requestAnimationFrame(() => bubble.classList.add('visible'));
+  activeBubble = bubble;
+}
+
+function hideHintBubble() {
+  if (activeBubble) {
+    activeBubble.remove();
+    activeBubble = null;
+  }
+}
+
+// ─── Info Dialog ─────────────────────────────────────────────────
+document.getElementById('info-btn').addEventListener('click', () => {
+  document.getElementById('info-overlay').classList.add('open');
+});
+document.getElementById('info-close').addEventListener('click', () => {
+  document.getElementById('info-overlay').classList.remove('open');
+});
+document.getElementById('info-overlay').addEventListener('click', (e) => {
+  if (e.target === document.getElementById('info-overlay')) {
+    document.getElementById('info-overlay').classList.remove('open');
+  }
 });
 
 function updateStats() {
@@ -1085,7 +1515,11 @@ Promise.all([
   fetch('/graph/api/graph').then(r => r.json()),
   fetch('/graph/api/threshold').then(r => r.json()),
 ]).then(([data, thresholdData]) => {
-    // Apply computed optimal threshold
+    // Store server threshold as factory default
+    factoryThreshold = thresholdData.value;
+    FACTORY_DEFAULTS.mentionThreshold = factoryThreshold;
+
+    // Apply computed optimal threshold as initial default
     mentionThreshold = thresholdData.value;
     document.getElementById('threshold').value = mentionThreshold;
     document.getElementById('threshold-val').textContent = mentionThreshold;
@@ -1105,6 +1539,16 @@ Promise.all([
     lastDiffTimestamp = Math.floor(Date.now() / 1000);
 
     buildFilters();
+
+    // Load saved settings (after buildFilters so type filter pills exist)
+    const savedSettings = loadDefaultSettings();
+    if (savedSettings) {
+      applySettings(savedSettings);
+    }
+
+    // Create hint icons (after DOM is ready)
+    createHintIcons();
+
     rebuildSim();
 
     // Start diff polling
