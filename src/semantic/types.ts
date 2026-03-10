@@ -51,6 +51,13 @@ export interface ExtractedFact {
   extractionBasis?: "explicit" | "inferred" | "observed";
 }
 
+/** Chunk boundary metadata for diagnostics (Phase 7C.2). */
+export interface ChunkBoundaryInfo {
+  start: number;
+  end: number;
+  avgDensity?: number;
+}
+
 export interface ExtractionResult {
   conversationId: string;
   facts: ExtractedFact[];
@@ -58,6 +65,8 @@ export interface ExtractionResult {
   tier: "local" | "openrouter" | "haiku" | "sonnet";
   confidence: number; // model self-reported confidence 1-10
   durationMs: number;
+  /** Chunk boundaries produced during extraction (Phase 7C.2). */
+  chunkBoundaries?: ChunkBoundaryInfo[];
 }
 
 export interface ExtractionConfig {
