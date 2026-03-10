@@ -21,6 +21,15 @@ HTML template generators for the four visualization modes. Each file exports a f
 - `words.html.ts` — D3 word cloud with frequency hover
 - `shared-css.ts` — Catppuccin Mocha theme and shared style constants
 
+### Terminal-Optimized (`terminal/`)
+
+Versions of the visualizations optimized for terminal browsers (carbonyl). These use SVG instead of Canvas/WebGL, pre-stabilized layouts, click-based interaction, and high-contrast monospace styling. Served at `/terminal/graph`, `/terminal/depth`, `/terminal/words`.
+
+- `terminal/graph.html.ts` — SVG force-directed graph with click-to-inspect info panel
+- `terminal/depth.html.ts` — 2D relevance depth view (Y-axis = relevance, color = connectivity energy)
+- `terminal/words.html.ts` — HTML word cloud with toggleable frequency table
+- `terminal/shared-css.ts` — High-contrast terminal CSS (monospace, solid colors, no blur)
+
 ## See Also
 
 - [web/](../) — Parent web server module

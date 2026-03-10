@@ -40,6 +40,11 @@ import { depthPage } from "./pages/depth.html.js";
 import { galaxyPage } from "./pages/galaxy.html.js";
 import { wordsPage } from "./pages/words.html.js";
 
+// Terminal-optimized page templates (for carbonyl / terminal browsers)
+import { terminalGraphPage } from "./pages/terminal/graph.html.js";
+import { terminalDepthPage } from "./pages/terminal/depth.html.js";
+import { terminalWordsPage } from "./pages/terminal/words.html.js";
+
 // ─── Configuration ──────────────────────────────────────────────
 
 const DB_PATH =
@@ -54,6 +59,11 @@ const HTML_PAGE = graphPage();
 const DEPTH_PAGE = depthPage();
 const GALAXY_PAGE = galaxyPage();
 const WORDS_PAGE = wordsPage();
+
+// Terminal-optimized pages (pre-rendered)
+const TERMINAL_GRAPH_PAGE = terminalGraphPage();
+const TERMINAL_DEPTH_PAGE = terminalDepthPage();
+const TERMINAL_WORDS_PAGE = terminalWordsPage();
 
 // ─── HTTP Server ─────────────────────────────────────────────────
 
@@ -168,6 +178,25 @@ function serve() {
       return;
     }
 
+    // ─── Terminal-optimized routes (for carbonyl) ──────
+    if (pathname === "/terminal/graph" || pathname === "/terminal/graph/" || pathname === "/terminal" || pathname === "/terminal/") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(TERMINAL_GRAPH_PAGE);
+      return;
+    }
+
+    if (pathname === "/terminal/depth" || pathname === "/terminal/depth/") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(TERMINAL_DEPTH_PAGE);
+      return;
+    }
+
+    if (pathname === "/terminal/words" || pathname === "/terminal/words/") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(TERMINAL_WORDS_PAGE);
+      return;
+    }
+
     // ─── Default: graph page ───────────────────────────
     if (pathname === "/graph" || pathname === "/graph/" || pathname === "/") {
       res.writeHead(200, { "Content-Type": "text/html" });
@@ -187,6 +216,7 @@ function serve() {
     console.log(`  Depth: https://127.0.0.1/graph/depth`);
     console.log(`  Galaxy: https://127.0.0.1/graph/galaxy`);
     console.log(`  Words: https://127.0.0.1/graph/words`);
+    console.log(`  Terminal: https://127.0.0.1/terminal/graph`);
     console.log(`  ${stats.nodes} nodes, ${stats.edges} edges, ${stats.communities} communities`);
     console.log(`  Auto-threshold: ${threshold.value} (${threshold.nodes} nodes, ${threshold.edges} edges, ${threshold.edgePct}% edge retention)`);
     console.log(`  Watching for real-time updates...`);
