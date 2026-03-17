@@ -15,6 +15,7 @@ export interface GraphNode {
   type: string;
   description: string | null;
   mentionCount: number;
+  informativeness: number;
   firstSeen: number;
   community: string | null;
 }
@@ -69,6 +70,7 @@ export function getGraphData(db: Database.Database): { nodes: GraphNode[]; links
   const entities = db
     .prepare(
       `SELECT id, name, type, description, mention_count as mentionCount,
+              COALESCE(informativeness, 0) as informativeness,
               COALESCE(first_seen, created_at) as firstSeen,
               created_at as createdAt
        FROM entities ORDER BY mention_count DESC`
@@ -79,6 +81,7 @@ export function getGraphData(db: Database.Database): { nodes: GraphNode[]; links
     type: string;
     description: string | null;
     mentionCount: number;
+    informativeness: number;
     firstSeen: number | null;
     createdAt: number | null;
   }>;
@@ -106,6 +109,7 @@ export function getGraphData(db: Database.Database): { nodes: GraphNode[]; links
       type: e.type,
       description: e.description,
       mentionCount: e.mentionCount,
+      informativeness: e.informativeness,
       firstSeen: e.firstSeen ?? e.createdAt ?? 0,
       community: entityCommunity[e.id] ?? null,
     })),
@@ -210,6 +214,7 @@ export function computeOptimalThreshold(db: Database.Database): { value: number;
 export function getGraphDiff(db: Database.Database, since: number): DiffResult {
   const newNodes = db.prepare(
     `SELECT e.id, e.name, e.type, e.description, e.mention_count as mentionCount,
+            COALESCE(e.informativeness, 0) as informativeness,
             COALESCE(e.last_seen, e.created_at) as lastActive, e.created_at as createdAt,
             e.first_seen as firstSeen,
             COALESCE(bs.bridge_score, 0) as bridgeScore
@@ -217,10 +222,11 @@ export function getGraphDiff(db: Database.Database, since: number): DiffResult {
      LEFT JOIN bridge_scores bs ON bs.entity_id = e.id
        AND bs.generation = (SELECT MAX(generation) FROM bridge_scores)
      WHERE e.created_at > ?`
-  ).all(since) as Array<{ id: string; name: string; type: string; description: string | null; mentionCount: number; lastActive: number | null; createdAt: number | null; firstSeen: number | null; bridgeScore: number }>;
+  ).all(since) as Array<{ id: string; name: string; type: string; description: string | null; mentionCount: number; informativeness: number; lastActive: number | null; createdAt: number | null; firstSeen: number | null; bridgeScore: number }>;
 
   const updatedNodes = db.prepare(
     `SELECT e.id, e.name, e.type, e.description, e.mention_count as mentionCount,
+            COALESCE(e.informativeness, 0) as informativeness,
             COALESCE(e.last_seen, e.created_at) as lastActive, e.created_at as createdAt,
             e.first_seen as firstSeen,
             COALESCE(bs.bridge_score, 0) as bridgeScore
@@ -228,7 +234,7 @@ export function getGraphDiff(db: Database.Database, since: number): DiffResult {
      LEFT JOIN bridge_scores bs ON bs.entity_id = e.id
        AND bs.generation = (SELECT MAX(generation) FROM bridge_scores)
      WHERE e.last_seen > ? AND e.created_at <= ?`
-  ).all(since, since) as Array<{ id: string; name: string; type: string; description: string | null; mentionCount: number; lastActive: number | null; createdAt: number | null; firstSeen: number | null; bridgeScore: number }>;
+  ).all(since, since) as Array<{ id: string; name: string; type: string; description: string | null; mentionCount: number; informativeness: number; lastActive: number | null; createdAt: number | null; firstSeen: number | null; bridgeScore: number }>;
 
   const newLinks = db.prepare(
     `SELECT source_entity_id as source, target_entity_id as target, type, weight, context
@@ -246,7 +252,8 @@ export function getGraphDiff(db: Database.Database, since: number): DiffResult {
 
   const mapNode = (e: typeof newNodes[0]) => ({
     id: e.id, name: e.name, type: e.type, description: e.description,
-    mentionCount: e.mentionCount, community: entityCommunity[e.id] ?? null,
+    mentionCount: e.mentionCount, informativeness: e.informativeness,
+    community: entityCommunity[e.id] ?? null,
     lastActive: e.lastActive ?? e.createdAt ?? 0,
     firstSeen: e.firstSeen ?? e.createdAt ?? 0,
     bridgeScore: e.bridgeScore,
@@ -290,6 +297,7 @@ export function getDepthGraphData(db: Database.Database): { nodes: DepthNode[]; 
   const entities = db
     .prepare(
       `SELECT e.id, e.name, e.type, e.description, e.mention_count as mentionCount,
+              COALESCE(e.informativeness, 0) as informativeness,
               COALESCE(e.last_seen, e.created_at) as lastActive, e.created_at as createdAt,
               e.first_seen as firstSeen,
               COALESCE(bs.bridge_score, 0) as bridgeScore
@@ -304,6 +312,7 @@ export function getDepthGraphData(db: Database.Database): { nodes: DepthNode[]; 
     type: string;
     description: string | null;
     mentionCount: number;
+    informativeness: number;
     lastActive: number | null;
     createdAt: number | null;
     firstSeen: number | null;
@@ -333,6 +342,7 @@ export function getDepthGraphData(db: Database.Database): { nodes: DepthNode[]; 
       type: e.type,
       description: e.description,
       mentionCount: e.mentionCount,
+      informativeness: e.informativeness,
       community: entityCommunity[e.id] ?? null,
       lastActive: e.lastActive ?? e.createdAt ?? 0,
       firstSeen: e.firstSeen ?? e.createdAt ?? 0,
