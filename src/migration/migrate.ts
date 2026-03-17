@@ -14,6 +14,7 @@ import { loadConfig } from "../_core/config/index.js";
 import { extractProjectName } from "../episodic/sync.js";
 import { initEmbeddings, embedDocumentBatch } from "../_core/embeddings/index.js";
 import { upsertConversation } from "../episodic/store.js";
+import { migrateInformativenessColumns } from "./add-informativeness-columns.js";
 import type {
   MigrationBatchConfig,
   MigrationProgress,
@@ -517,6 +518,9 @@ export async function runMigration(options: {
   const targetDb = initDatabase(config);
 
   try {
+    // Idempotent schema migrations
+    migrateInformativenessColumns(targetDb);
+
     // Set up checkpoint table
     ensureCheckpointTable(targetDb);
 
