@@ -328,6 +328,11 @@ export function parseEntityExtractionResponse(
       continue;
     }
 
+    // Filter blocked entity names (markdown artifacts, noise patterns)
+    if (isBlockedEntityName(raw.name)) {
+      continue;
+    }
+
     // Validate type
     if (!raw.type || !VALID_ENTITY_TYPES.has(raw.type as EntityType)) {
       continue;
