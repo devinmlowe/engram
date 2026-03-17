@@ -3,14 +3,14 @@
  * Matches the centralized CSS at https://devinmlowe.github.io/theme-everforest/everforest-dark.css
  */
 
-// Backgrounds
-export const BG_DEEP    = '#1e2326';  // bg_dim — deepest (headers, footers, canvas bg)
-export const BG         = '#272e33';  // bg0 — main background
-export const BG_SURFACE = '#2e383c';  // bg1 — raised surfaces, panels, inputs
-export const BG_OVERLAY = '#374145';  // bg2 — overlays, hover states
-export const BG_BORDER  = '#414b50';  // bg3 — borders, dividers
-export const BG_MUTED   = '#495156';  // bg4 — muted UI chrome
-export const BG_SUBTLE  = '#4f5b58';  // bg5 — subtle highlights
+// Backgrounds (shifted to match iTerm2 bg_dim base)
+export const BG_DEEP    = '#191d20';  // darker than bg_dim — headers, footers, canvas bg
+export const BG         = '#1e2326';  // bg_dim — main background (matches iTerm2)
+export const BG_SURFACE = '#272e33';  // bg0 — raised surfaces, panels, inputs
+export const BG_OVERLAY = '#2e383c';  // bg1 — overlays, hover states
+export const BG_BORDER  = '#374145';  // bg2 — borders, dividers
+export const BG_MUTED   = '#414b50';  // bg3 — muted UI chrome
+export const BG_SUBTLE  = '#495156';  // bg4 — subtle highlights
 
 // Foreground / Text
 export const FG       = '#d3c6aa';  // primary text
