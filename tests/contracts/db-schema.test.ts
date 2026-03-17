@@ -46,6 +46,15 @@ describe("Database Schema Contract", () => {
     expect(tableNames).toContain("topic_clusters");
   });
 
+  // ── Entity-Conversation Junction Table ─────────────────────────
+
+  it("creates entity_conversations junction table", () => {
+    const tables = t.db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='entity_conversations'"
+    ).all();
+    expect(tables).toHaveLength(1);
+  });
+
   // ── Exchange Table Schema ──────────────────────────────────────
 
   it("exchanges table has all required columns", () => {

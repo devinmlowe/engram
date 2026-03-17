@@ -147,6 +147,17 @@ function createSchema(db: Database.Database, config: EngramConfig): void {
     CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(name);
     CREATE INDEX IF NOT EXISTS idx_entities_type ON entities(type);
 
+    -- Entity-to-conversation junction: tracks which conversations each entity appeared in.
+    -- Used for Entity-IDF computation (informativeness scoring).
+    CREATE TABLE IF NOT EXISTS entity_conversations (
+      entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+      conversation_id TEXT NOT NULL,
+      first_mentioned INTEGER DEFAULT (unixepoch()),
+      PRIMARY KEY (entity_id, conversation_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_ec_entity ON entity_conversations(entity_id);
+    CREATE INDEX IF NOT EXISTS idx_ec_conversation ON entity_conversations(conversation_id);
+
     CREATE TABLE IF NOT EXISTS relationships (
       id TEXT PRIMARY KEY,
       source_entity_id TEXT NOT NULL REFERENCES entities(id),
