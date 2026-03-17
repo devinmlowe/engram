@@ -14,6 +14,8 @@ import { loadConfig } from "../_core/config/index.js";
 import { extractProjectName } from "../episodic/sync.js";
 import { initEmbeddings, embedDocumentBatch } from "../_core/embeddings/index.js";
 import { upsertConversation } from "../episodic/store.js";
+import { migrateInformativenessColumns } from "./add-informativeness-columns.js";
+import { backfillEntityConversations } from "./backfill-entity-conversations.js";
 import type {
   MigrationBatchConfig,
   MigrationProgress,
@@ -517,6 +519,14 @@ export async function runMigration(options: {
   const targetDb = initDatabase(config);
 
   try {
+    // Idempotent schema migrations
+    migrateInformativenessColumns(targetDb);
+
+    // Backfill entity-conversation links from historical exchange data
+    console.log("Backfilling entity-conversation links...");
+    const backfillResult = backfillEntityConversations(targetDb);
+    console.log(`  Linked ${backfillResult.linked} entity-conversation pairs (${backfillResult.entities} entities, ${backfillResult.skipped} skipped)`);
+
     // Set up checkpoint table
     ensureCheckpointTable(targetDb);
 

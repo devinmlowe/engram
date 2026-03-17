@@ -17,6 +17,7 @@ import {
   findNearestEntities,
   insertEntity,
   recordEntityMention,
+  recordEntityConversation,
   updateEntity,
 } from "./entity.js";
 import { embedDocument } from "../_core/embeddings/index.js";
@@ -33,11 +34,13 @@ import { embedDocument } from "../_core/embeddings/index.js";
 export async function resolveEntity(
   db: Database.Database,
   extracted: ExtractedEntity,
+  conversationId?: string,
 ): Promise<EntityResolution> {
   // Stage 1: Exact Name Match (free)
   const byName = getEntityByName(db, extracted.name);
   if (byName) {
     recordEntityMention(db, byName.id);
+    if (conversationId) recordEntityConversation(db, byName.id, conversationId);
     return { action: "merge", entityId: byName.id, stage: "exact_name" };
   }
 
@@ -45,6 +48,7 @@ export async function resolveEntity(
   const byAlias = getEntityByAlias(db, extracted.name);
   if (byAlias) {
     recordEntityMention(db, byAlias.id);
+    if (conversationId) recordEntityConversation(db, byAlias.id, conversationId);
     return { action: "merge", entityId: byAlias.id, stage: "alias" };
   }
 
@@ -59,6 +63,7 @@ export async function resolveEntity(
     if (similarity >= 0.95) {
       // High confidence: auto-merge regardless of type
       recordEntityMention(db, neighbor.id);
+      if (conversationId) recordEntityConversation(db, neighbor.id, conversationId);
       addAliasIfNew(db, neighbor.id, extracted.name);
       return {
         action: "merge",
@@ -73,6 +78,7 @@ export async function resolveEntity(
       const existing = getEntity(db, neighbor.id);
       if (existing && existing.type === extracted.type) {
         recordEntityMention(db, neighbor.id);
+        if (conversationId) recordEntityConversation(db, neighbor.id, conversationId);
         addAliasIfNew(db, neighbor.id, extracted.name);
         return {
           action: "merge",
@@ -104,6 +110,8 @@ export async function resolveEntity(
     embedding,
   );
 
+  if (conversationId) recordEntityConversation(db, newId, conversationId);
+
   return { action: "create", entityId: newId, stage: "created" };
 }
 
@@ -116,6 +124,7 @@ export async function resolveEntity(
 export async function resolveEntities(
   db: Database.Database,
   extractedEntities: ExtractedEntity[],
+  conversationId?: string,
 ): Promise<
   Array<{ extracted: ExtractedEntity; resolution: EntityResolution }>
 > {
@@ -125,7 +134,7 @@ export async function resolveEntities(
   }> = [];
 
   for (const extracted of extractedEntities) {
-    const resolution = await resolveEntity(db, extracted);
+    const resolution = await resolveEntity(db, extracted, conversationId);
     results.push({ extracted, resolution });
   }
 

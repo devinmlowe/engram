@@ -141,11 +141,24 @@ function createSchema(db: Database.Database, config: EngramConfig): void {
       first_seen INTEGER,
       last_seen INTEGER,
       mention_count INTEGER DEFAULT 1,
+      conversation_count INTEGER DEFAULT 0,
+      informativeness REAL DEFAULT 0,
       created_at INTEGER DEFAULT (unixepoch())
     );
 
     CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(name);
     CREATE INDEX IF NOT EXISTS idx_entities_type ON entities(type);
+
+    -- Entity-to-conversation junction: tracks which conversations each entity appeared in.
+    -- Used for Entity-IDF computation (informativeness scoring).
+    CREATE TABLE IF NOT EXISTS entity_conversations (
+      entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+      conversation_id TEXT NOT NULL,
+      first_mentioned INTEGER DEFAULT (unixepoch()),
+      PRIMARY KEY (entity_id, conversation_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_ec_entity ON entity_conversations(entity_id);
+    CREATE INDEX IF NOT EXISTS idx_ec_conversation ON entity_conversations(conversation_id);
 
     CREATE TABLE IF NOT EXISTS relationships (
       id TEXT PRIMARY KEY,
@@ -389,9 +402,12 @@ function migrateExpandedTypes(db: Database.Database): void {
       first_seen INTEGER,
       last_seen INTEGER,
       mention_count INTEGER DEFAULT 1,
+      conversation_count INTEGER DEFAULT 0,
+      informativeness REAL DEFAULT 0,
       created_at INTEGER DEFAULT (unixepoch())
     );
-    INSERT INTO entities_new SELECT * FROM entities;
+    INSERT INTO entities_new (id, name, type, description, aliases, first_seen, last_seen, mention_count, created_at)
+      SELECT id, name, type, description, aliases, first_seen, last_seen, mention_count, created_at FROM entities;
     DROP TABLE entities;
     ALTER TABLE entities_new RENAME TO entities;
 
