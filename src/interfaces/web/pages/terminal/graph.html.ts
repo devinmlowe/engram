@@ -32,7 +32,9 @@ export function terminalGraphPage(): string {
     font-weight: 700;
     text-anchor: middle;
     dominant-baseline: central;
+    display: none;
   }
+  .node.selected text, .node.neighbor text { display: block; }
   .link { stroke-opacity: 0.4; }
   .node.selected circle { stroke: #f9e2af !important; stroke-width: 3; }
   .node.dimmed circle { opacity: 0.2; }
@@ -46,6 +48,7 @@ export function terminalGraphPage(): string {
   <a class="active" href="/terminal/graph">Graph</a>
   <a href="/terminal/depth">Depth</a>
   <a href="/terminal/words">Words</a>
+  <a href="/terminal/communities">Communities</a>
 </div>
 
 <div id="graph-container">
@@ -93,7 +96,7 @@ let selectedNode = null;
 
 function closeInfo() {
   document.getElementById('info-panel').classList.remove('open');
-  d3.selectAll('.node').classed('selected', false).classed('dimmed', false);
+  d3.selectAll('.node').classed('selected', false).classed('neighbor', false).classed('dimmed', false);
   d3.selectAll('.link').classed('dimmed', false).classed('highlighted', false);
   selectedNode = null;
 }
@@ -126,6 +129,7 @@ function showNodeInfo(d) {
 
   d3.selectAll('.node')
     .classed('selected', n => n.id === d.id)
+    .classed('neighbor', n => n.id !== d.id && neighborIds.has(n.id))
     .classed('dimmed', n => !neighborIds.has(n.id));
 
   d3.selectAll('.link')
@@ -149,19 +153,32 @@ Promise.all([
   fetch('/api/graph').then(r => r.json()),
   fetch('/api/threshold').then(r => r.json()),
 ]).then(([data, thresholdData]) => {
-  const threshold = thresholdData.value;
+  // Terminal budget: show only the most significant nodes.
+  // Sort by mention count descending, take top NODE_BUDGET.
+  const TERMINAL_NODE_BUDGET = 120;
+
+  const sorted = [...data.nodes].sort((a, b) => b.mentionCount - a.mentionCount);
+  const budgetThreshold = sorted.length > TERMINAL_NODE_BUDGET
+    ? sorted[TERMINAL_NODE_BUDGET - 1].mentionCount
+    : 1;
+  const threshold = Math.max(thresholdData.value, budgetThreshold);
 
   // Filter nodes
   const nodeSet = new Set();
-  const nodes = data.nodes.filter(n => {
+  const nodes = sorted.filter(n => {
     if (n.mentionCount < threshold) return false;
     nodeSet.add(n.id);
     return true;
   });
+  // Cap at budget in case of ties at the boundary
+  while (nodes.length > TERMINAL_NODE_BUDGET) {
+    const removed = nodes.pop();
+    nodeSet.delete(removed.id);
+  }
   const links = data.links.filter(l => nodeSet.has(l.source) && nodeSet.has(l.target));
 
   document.getElementById('stats-bar').textContent =
-    nodes.length + ' nodes | ' + links.length + ' edges | threshold: ' + threshold;
+    nodes.length + ' nodes | ' + links.length + ' edges | threshold: \u2265' + threshold;
 
   const width = Math.max(window.innerWidth, 800);
   const height = Math.max(window.innerHeight - 54, 600);
@@ -232,10 +249,8 @@ Promise.all([
       return d3.color(c).brighter(0.5).toString();
     });
 
-  // Labels — only for nodes with enough mentions
-  const labelThreshold = Math.max(threshold, Math.floor(nodes.length / 30));
-  node.filter(d => d.mentionCount >= labelThreshold)
-    .append('text')
+  // Labels — hidden by default, shown on click via CSS
+  node.append('text')
     .attr('dy', d => rScale(d.mentionCount || 1) + 14)
     .text(d => d.name.length > 16 ? d.name.slice(0, 15) + '~' : d.name);
 

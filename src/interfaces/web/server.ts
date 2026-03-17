@@ -30,6 +30,7 @@ import {
   handleDreamStatus,
   handleDreamStart,
   handleDepthGraphData,
+  handleCommunityData,
 } from "./routes/graph.js";
 import { handleWordFrequencies } from "./routes/words.js";
 import { broadcastUpdate } from "./routes/sse.js";
@@ -44,6 +45,7 @@ import { wordsPage } from "./pages/words.html.js";
 import { terminalGraphPage } from "./pages/terminal/graph.html.js";
 import { terminalDepthPage } from "./pages/terminal/depth.html.js";
 import { terminalWordsPage } from "./pages/terminal/words.html.js";
+import { terminalCommunitiesPage } from "./pages/terminal/communities.html.js";
 
 // ─── Configuration ──────────────────────────────────────────────
 
@@ -64,6 +66,7 @@ const WORDS_PAGE = wordsPage();
 const TERMINAL_GRAPH_PAGE = terminalGraphPage();
 const TERMINAL_DEPTH_PAGE = terminalDepthPage();
 const TERMINAL_WORDS_PAGE = terminalWordsPage();
+const TERMINAL_COMMUNITIES_PAGE = terminalCommunitiesPage();
 
 // ─── HTTP Server ─────────────────────────────────────────────────
 
@@ -166,6 +169,12 @@ function serve() {
       return;
     }
 
+    // ─── Communities routes ───────────────────────────
+    if (pathname === "/api/communities") {
+      handleCommunityData(req, res, db);
+      return;
+    }
+
     // ─── Words routes ──────────────────────────────────
     if (pathname === "/words/api/words" || pathname === "/api/words" || pathname === "/graph/words/api/words") {
       handleWordFrequencies(req, res, db, url);
@@ -194,6 +203,12 @@ function serve() {
     if (pathname === "/terminal/words" || pathname === "/terminal/words/") {
       res.writeHead(200, { "Content-Type": "text/html" });
       res.end(TERMINAL_WORDS_PAGE);
+      return;
+    }
+
+    if (pathname === "/terminal/communities" || pathname === "/terminal/communities/") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(TERMINAL_COMMUNITIES_PAGE);
       return;
     }
 

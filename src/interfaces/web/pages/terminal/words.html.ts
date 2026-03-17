@@ -1,13 +1,14 @@
 /**
- * Terminal-optimized Words page — HTML/CSS grid word cloud.
+ * Terminal-optimized Words page — D3 treemap word frequency visualization.
  * Designed for viewing in carbonyl (terminal Chromium).
  *
- * Key differences from the standard words.html.ts:
- * - Uses HTML text elements instead of SVG d3-cloud (terminal text is crisp)
- * - Inline-block layout with CSS font-size scaling
- * - No animation — static render
- * - Click a word to see its frequency in the info panel
- * - Monospace font renders cleanly at character-cell resolution
+ * Key design choices:
+ * - Treemap layout: rectangle area is proportional to word frequency
+ * - SVG rendering for crisp text in terminal character cells
+ * - High-contrast Catppuccin Mocha palette, type-coded by frequency tier
+ * - Click a cell to see frequency details in the info panel
+ * - Toggle to a ranked table view for precise numbers
+ * - No animation — static pre-rendered layout
  */
 
 import { terminalSharedCss } from "./shared-css.js";
@@ -22,31 +23,32 @@ export function terminalWordsPage(): string {
 <style>
   ${terminalSharedCss()}
 
-  #cloud {
-    margin-top: 34px;
-    margin-bottom: 28px;
-    padding: 16px 24px;
-    text-align: center;
-    line-height: 1.8;
-    overflow: auto;
+  #treemap {
+    margin-top: 42px;
+    margin-bottom: 36px;
+    margin-left: 16px;
+    margin-right: 16px;
+    overflow: hidden;
   }
 
-  .word {
-    display: inline-block;
-    padding: 2px 6px;
-    margin: 2px 4px;
+  .cell rect {
+    stroke: #1e1e2e;
+    stroke-width: 1.5;
     cursor: pointer;
-    font-family: monospace;
+  }
+  .cell text {
+    fill: #1e1e2e;
     font-weight: 700;
-    border-bottom: 2px solid transparent;
-    transition: none;
+    pointer-events: none;
+    text-anchor: middle;
   }
-  .word:hover {
-    border-bottom-color: #89b4fa;
+  .cell.selected rect {
+    stroke: #f9e2af;
+    stroke-width: 3;
   }
-  .word.selected {
-    border-bottom-color: #f9e2af;
-    background: #313244;
+  .cell:hover rect {
+    stroke: #89b4fa;
+    stroke-width: 2;
   }
 
   /* Frequency table (alternative view) */
@@ -79,7 +81,6 @@ export function terminalWordsPage(): string {
   }
   .freq-bar-fill {
     height: 8px;
-    background: #89b4fa;
     border-radius: 2px;
   }
 
@@ -97,20 +98,22 @@ export function terminalWordsPage(): string {
   <a href="/terminal/graph">Graph</a>
   <a href="/terminal/depth">Depth</a>
   <a class="active" href="/terminal/words">Words</a>
+  <a href="/terminal/communities">Communities</a>
 </div>
 
 <button id="mode-toggle" onclick="toggleMode()">table view</button>
 
-<div id="cloud"></div>
+<div id="treemap"></div>
 <div id="freq-table"></div>
 
 <div id="info-panel">
   <button class="close-btn" onclick="closeInfo()">[x]</button>
-  <div id="info-content">Click a word to see details</div>
+  <div id="info-content">Click a cell to see details</div>
 </div>
 
 <div id="stats-bar">Loading...</div>
 
+<script src="https://d3js.org/d3.v7.min.js"></script>
 <script>
 const PALETTE = [
   '#f38ba8', '#89b4fa', '#a6e3a1', '#fab387', '#cba6f7',
@@ -119,7 +122,7 @@ const PALETTE = [
 ];
 
 let wordData = [];
-let mode = 'cloud';
+let mode = 'treemap';
 let selectedWord = null;
 
 function esc(s) {
@@ -130,19 +133,22 @@ function esc(s) {
 
 function closeInfo() {
   document.getElementById('info-panel').classList.remove('open');
-  document.querySelectorAll('.word.selected').forEach(el => el.classList.remove('selected'));
+  d3.selectAll('.cell').classed('selected', false);
   selectedWord = null;
 }
 
-function showWordInfo(word, count, rank, el) {
-  document.querySelectorAll('.word.selected').forEach(w => w.classList.remove('selected'));
-  if (el) el.classList.add('selected');
+function showWordInfo(word, count, rank, cellEl) {
+  d3.selectAll('.cell').classed('selected', false);
+  if (cellEl) d3.select(cellEl).classed('selected', true);
 
   const panel = document.getElementById('info-panel');
   const content = document.getElementById('info-content');
+  const pct = wordData.length > 0
+    ? (count / wordData.reduce((s, w) => s + w.count, 0) * 100).toFixed(1)
+    : '0';
   content.innerHTML =
     '<div class="name">' + esc(word) + '</div>' +
-    '<div class="meta">' + count + ' mentions</div>' +
+    '<div class="meta">' + count + ' mentions (' + pct + '% of total)</div>' +
     '<div class="meta">Rank #' + rank + ' of ' + wordData.length + '</div>';
   panel.classList.add('open');
   selectedWord = word;
@@ -150,46 +156,118 @@ function showWordInfo(word, count, rank, el) {
 
 function toggleMode() {
   const btn = document.getElementById('mode-toggle');
-  if (mode === 'cloud') {
+  if (mode === 'treemap') {
     mode = 'table';
-    btn.textContent = 'cloud view';
-    document.getElementById('cloud').style.display = 'none';
+    btn.textContent = 'treemap view';
+    document.getElementById('treemap').style.display = 'none';
     document.getElementById('freq-table').classList.add('active');
   } else {
-    mode = 'cloud';
+    mode = 'treemap';
     btn.textContent = 'table view';
-    document.getElementById('cloud').style.display = 'block';
+    document.getElementById('treemap').style.display = 'block';
     document.getElementById('freq-table').classList.remove('active');
   }
 }
 
-function renderCloud(words) {
-  const container = document.getElementById('cloud');
+function renderTreemap(words) {
+  const container = document.getElementById('treemap');
   container.innerHTML = '';
 
   if (words.length === 0) return;
-  const maxCount = words[0].count;
-  const minCount = words[words.length - 1].count;
 
-  // Font size range in px: 12 to 48 for terminal readability
-  const sizeScale = (count) => {
-    if (maxCount === minCount) return 24;
-    const t = (count - minCount) / (maxCount - minCount);
-    return Math.round(12 + t * 36);
-  };
+  const width = Math.max(window.innerWidth - 32, 768);
+  const height = Math.max(window.innerHeight - 78, 500);
 
-  words.forEach((w, i) => {
-    const span = document.createElement('span');
-    span.className = 'word';
-    span.textContent = w.text;
-    span.style.fontSize = sizeScale(w.count) + 'px';
-    span.style.color = PALETTE[i % PALETTE.length];
-    span.addEventListener('click', (e) => {
-      e.stopPropagation();
-      showWordInfo(w.text, w.count, i + 1, span);
+  // Build hierarchy for d3.treemap
+  const root = d3.hierarchy({ children: words.map((w, i) => ({ ...w, rank: i })) })
+    .sum(d => d.count)
+    .sort((a, b) => b.value - a.value);
+
+  d3.treemap()
+    .size([width, height])
+    .padding(2)
+    .round(true)(root);
+
+  const svg = d3.select(container).append('svg')
+    .attr('width', width)
+    .attr('height', height);
+
+  const cells = svg.selectAll('g')
+    .data(root.leaves())
+    .join('g')
+    .attr('class', 'cell')
+    .attr('transform', d => 'translate(' + d.x0 + ',' + d.y0 + ')')
+    .on('click', function(event, d) {
+      event.stopPropagation();
+      showWordInfo(d.data.text, d.data.count, d.data.rank + 1, this);
     });
-    container.appendChild(span);
+
+  cells.append('rect')
+    .attr('width', d => d.x1 - d.x0)
+    .attr('height', d => d.y1 - d.y0)
+    .attr('fill', d => PALETTE[d.data.rank % PALETTE.length])
+    .attr('rx', 2);
+
+  // Fit text into cells with word-wrapping
+  cells.each(function(d) {
+    const cellW = d.x1 - d.x0;
+    const cellH = d.y1 - d.y0;
+    const name = d.data.text;
+
+    if (cellW < 28 || cellH < 16) return;
+
+    const g = d3.select(this);
+
+    const maxFontByW = (cellW - 10) / (name.length * 0.55);
+    const maxFontByH = (cellH - 6) * 0.5;
+    const fontSize = Math.min(Math.max(maxFontByW, 7), maxFontByH, 36);
+
+    if (fontSize < 7) return;
+
+    const charWidth = fontSize * 0.55;
+    const maxChars = Math.floor((cellW - 10) / charWidth);
+
+    // Word-wrap into multiple lines
+    const words = name.split(/\\s+/);
+    const lines = [];
+    let currentLine = '';
+
+    for (const word of words) {
+      const test = currentLine ? currentLine + ' ' + word : word;
+      if (test.length > maxChars && currentLine) {
+        lines.push(currentLine);
+        currentLine = word;
+      } else {
+        currentLine = test;
+      }
+    }
+    if (currentLine) lines.push(currentLine);
+
+    const lineHeight = fontSize * 1.2;
+    const maxLines = Math.floor((cellH - 6) / lineHeight);
+    const shownLines = lines.slice(0, Math.max(maxLines, 1));
+
+    if (shownLines.length > 0) {
+      const last = shownLines[shownLines.length - 1];
+      if (last.length > maxChars) {
+        shownLines[shownLines.length - 1] = last.slice(0, maxChars - 1) + '\\u2026';
+      }
+    }
+
+    const totalTextH = shownLines.length * lineHeight;
+    const startY = (cellH - totalTextH) / 2 + fontSize * 0.35 + lineHeight / 2;
+
+    shownLines.forEach((line, i) => {
+      g.append('text')
+        .attr('x', cellW / 2)
+        .attr('y', startY + i * lineHeight)
+        .attr('font-size', fontSize + 'px')
+        .text(line);
+    });
   });
+
+  // Click background to deselect
+  svg.on('click', closeInfo);
 }
 
 function renderTable(words) {
@@ -241,12 +319,12 @@ fetch('/graph/words/api/words?limit=200')
     wordData = data;
     document.getElementById('stats-bar').textContent =
       data.length + ' words from episodic memory';
-    renderCloud(data);
+    renderTreemap(data);
     renderTable(data);
   });
 
 document.addEventListener('click', (e) => {
-  if (!e.target.closest('#info-panel') && !e.target.closest('.word')) {
+  if (!e.target.closest('#info-panel') && !e.target.closest('.cell')) {
     closeInfo();
   }
 });

@@ -261,6 +261,29 @@ export function getGraphDiff(db: Database.Database, since: number): DiffResult {
   };
 }
 
+// ─── Community Data ─────────────────────────────────────────────
+
+export interface CommunityNode {
+  id: string;
+  name: string;
+  description: string | null;
+  entityCount: number;
+  coherenceScore: number;
+  generation: number;
+}
+
+export function getCommunityData(db: Database.Database): CommunityNode[] {
+  return db.prepare(
+    `SELECT id, name, description,
+            json_array_length(entity_ids) as entityCount,
+            COALESCE(coherence_score, 0) as coherenceScore,
+            generation
+     FROM topic_clusters
+     WHERE generation = (SELECT MAX(generation) FROM topic_clusters)
+     ORDER BY json_array_length(entity_ids) DESC`
+  ).all() as CommunityNode[];
+}
+
 // ─── Depth (3D) Graph Data ──────────────────────────────────────
 
 export function getDepthGraphData(db: Database.Database): { nodes: DepthNode[]; links: GraphLink[] } {

@@ -55,6 +55,7 @@ export function terminalDepthPage(): string {
   <a href="/terminal/graph">Graph</a>
   <a class="active" href="/terminal/depth">Depth</a>
   <a href="/terminal/words">Words</a>
+  <a href="/terminal/communities">Communities</a>
 </div>
 
 <div id="graph-container">

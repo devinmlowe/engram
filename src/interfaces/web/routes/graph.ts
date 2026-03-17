@@ -6,7 +6,7 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type Database from "better-sqlite3";
-import { getGraphData, getGraphDiff, getDepthGraphData, computeOptimalThreshold } from "../data/graph-queries.js";
+import { getGraphData, getGraphDiff, getDepthGraphData, computeOptimalThreshold, getCommunityData } from "../data/graph-queries.js";
 import { handleSseConnection } from "./sse.js";
 import { getDreamStatus, startDream } from "./dream.js";
 
@@ -45,6 +45,13 @@ export function handleDreamStart(_req: IncomingMessage, res: ServerResponse, _db
   const result = startDream();
   res.writeHead(result.ok ? 200 : 409, JSON_HEADERS);
   res.end(JSON.stringify(result));
+}
+
+// ─── Communities API ─────────────────────────────────────────────
+
+export function handleCommunityData(_req: IncomingMessage, res: ServerResponse, db: Database.Database): void {
+  res.writeHead(200, JSON_HEADERS);
+  res.end(JSON.stringify(getCommunityData(db)));
 }
 
 // ─── Depth (3D) API ─────────────────────────────────────────────
