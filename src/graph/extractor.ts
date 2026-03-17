@@ -259,6 +259,32 @@ interface RawRelationship {
 }
 
 /**
+ * Regex matching strings that are pure punctuation/markdown structure.
+ * These should never become entities.
+ */
+const BLOCKED_NAME_PATTERN = /^[\s\-#*`|=>~_!@$%^&()[\]{}<>\\/.,:;'"+=]+$/;
+
+/**
+ * Explicit blocklist for names that pass the regex but are still noise.
+ */
+const BLOCKED_NAMES: ReadonlySet<string> = new Set([
+  "- [ ]", "- [x]", "todo", "n/a", "none", "null", "undefined",
+  "true", "false", "yes", "no", "ok", "error", "warning",
+]);
+
+/**
+ * Returns true if the entity name is a known artifact or noise pattern.
+ */
+export function isBlockedEntityName(name: string): boolean {
+  const trimmed = name.trim();
+  if (trimmed.length === 0) return true;
+  if (trimmed.length <= 1) return true;
+  if (BLOCKED_NAME_PATTERN.test(trimmed)) return true;
+  if (BLOCKED_NAMES.has(trimmed.toLowerCase())) return true;
+  return false;
+}
+
+/**
  * Parse and validate entity extraction response from tool_use.
  *
  * Validates entity types against EntityType, filters empty names,
