@@ -68,10 +68,22 @@ export function computeInformativeness(db: Database.Database): void {
 
   const update = db.prepare("UPDATE entities SET informativeness = ? WHERE id = ?");
 
+  // Compute median conversation_count for entities that have links.
+  // Entities with conversation_count=0 (unlinked) get median IDF instead of max IDF.
+  const linkedCounts = entities
+    .filter(e => e.conversation_count > 0)
+    .map(e => e.conversation_count)
+    .sort((a, b) => a - b);
+  const medianConvCount = linkedCounts.length > 0
+    ? linkedCounts[Math.floor(linkedCounts.length / 2)]
+    : 1;
+
   db.transaction(() => {
     for (const e of entities) {
       const logMentions = Math.log(1 + e.mention_count);
-      const idf = computeEntityIdf(totalConversations, e.conversation_count);
+      // Unlinked entities (conversation_count=0) get median IDF, not max IDF
+      const effectiveConvCount = e.conversation_count > 0 ? e.conversation_count : medianConvCount;
+      const idf = computeEntityIdf(totalConversations, effectiveConvCount);
       const normalizedBridge = maxBridge > 0 ? e.bridge_score / maxBridge : 0;
       const score = logMentions * idf * (1 + normalizedBridge);
       update.run(score, e.id);
