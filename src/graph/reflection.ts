@@ -24,6 +24,7 @@ import { nameCommunities } from "./naming.js";
 import { analyzeTemporalPatterns, getTemporalPatterns } from "./temporal.js";
 import { computeEdgeWeight, updateRelationshipWeight } from "./relationship.js";
 import { buildIntelligenceConfig, generate } from "../_core/llm/index.js";
+import { computeConversationCounts, computeInformativeness } from "./informativeness.js";
 
 // ─── Memory Linking ─────────────────────────────────────────────
 
@@ -410,6 +411,10 @@ export async function runReflection(
 
   // Step 5: Persist bridge scores
   persistBridgeScores(db, analysis.bridgeEntities, generation);
+
+  // Step 5b: Compute informativeness scores (depends on bridge scores being persisted)
+  computeConversationCounts(db);
+  computeInformativeness(db);
 
   // Step 6: Temporal patterns
   let temporalPatterns: TemporalPattern[] = [];

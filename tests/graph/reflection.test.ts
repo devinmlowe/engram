@@ -42,7 +42,9 @@ import {
   mergeRedundantEntities,
   pruneOrphanEntities,
   pruneStaleGenerations,
+  runReflection,
 } from "../../src/graph/reflection.js";
+import { migrateInformativenessColumns } from "../../src/migration/add-informativeness-columns.js";
 
 const mockedGenerate = vi.mocked(generate);
 
@@ -810,6 +812,45 @@ describe("Reflection Orchestration", () => {
         .prepare("SELECT COUNT(*) as cnt FROM topic_clusters")
         .get() as { cnt: number };
       expect(count.cnt).toBe(2);
+    });
+  });
+
+  // ─── runReflection informativeness integration ─────────────
+
+  describe("runReflection computes informativeness", () => {
+    it("populates informativeness column after reflect", async () => {
+      migrateInformativenessColumns(t.db);
+
+      // Setup 5 conversations for meaningful IDF spread
+      for (let i = 1; i <= 5; i++) {
+        t.db.prepare("INSERT INTO conversations (id, project) VALUES (?, ?)").run(`conv-${i}`, "test");
+      }
+
+      // Entities with different conversation coverage
+      insertEntity(t.db, "e1", "Alpha", { mentionCount: 10 });
+      insertEntity(t.db, "e2", "Beta", { mentionCount: 20 });
+
+      // entity_conversations: Alpha in 1 conv (discriminative), Beta in 3 (moderate)
+      t.db.prepare("INSERT INTO entity_conversations (entity_id, conversation_id) VALUES (?, ?)").run("e1", "conv-1");
+      t.db.prepare("INSERT INTO entity_conversations (entity_id, conversation_id) VALUES (?, ?)").run("e2", "conv-1");
+      t.db.prepare("INSERT INTO entity_conversations (entity_id, conversation_id) VALUES (?, ?)").run("e2", "conv-2");
+      t.db.prepare("INSERT INTO entity_conversations (entity_id, conversation_id) VALUES (?, ?)").run("e2", "conv-3");
+
+      // Relationship so graph analysis has something to work with
+      insertRelationship(t.db, "rel-1", "e1", "e2");
+
+      await runReflection(t.db, t.config);
+
+      const e1 = t.db.prepare("SELECT informativeness, conversation_count FROM entities WHERE id = 'e1'").get() as any;
+      const e2 = t.db.prepare("SELECT informativeness, conversation_count FROM entities WHERE id = 'e2'").get() as any;
+
+      // conversation_count should be populated
+      expect(e1.conversation_count).toBe(1);
+      expect(e2.conversation_count).toBe(3);
+
+      // informativeness should be computed (non-zero since entities have mentions and IDF > 0)
+      expect(e1.informativeness).toBeGreaterThan(0);
+      expect(e2.informativeness).toBeGreaterThan(0);
     });
   });
 });
