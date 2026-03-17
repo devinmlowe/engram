@@ -3,6 +3,7 @@
  */
 
 import { sharedPanelCss } from "./shared-css.js";
+import { PALETTE } from './theme.js';
 
 export function wordsPage(): string {
   return `<!DOCTYPE html>
@@ -14,8 +15,8 @@ export function wordsPage(): string {
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
-    background: #1e1e2e;
-    color: #cdd6f4;
+    background: #272e33;
+    color: #d3c6aa;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
     overflow: hidden;
     height: 100vh;
@@ -28,8 +29,8 @@ export function wordsPage(): string {
   #tooltip {
     position: fixed;
     display: none;
-    background: #313244;
-    border: 1px solid #45475a;
+    background: #2e383c;
+    border: 1px solid #414b50;
     border-radius: 8px;
     padding: 8px 12px;
     font-size: 13px;
@@ -40,7 +41,7 @@ export function wordsPage(): string {
 
   #stats-bar {
     position: fixed; bottom: 12px; left: 16px; z-index: 50;
-    font-size: 11px; color: #585b70; pointer-events: none;
+    font-size: 11px; color: #4f5b58; pointer-events: none;
   }
 
   ${sharedPanelCss()}
@@ -98,11 +99,7 @@ document.querySelectorAll('.section-header').forEach(hdr => {
   hdr.addEventListener('click', () => hdr.parentElement.classList.toggle('open'));
 });
 
-const PALETTE = [
-  '#f38ba8', '#89b4fa', '#a6e3a1', '#fab387', '#cba6f7',
-  '#74c7ec', '#f9e2af', '#94e2d5', '#f2cdcd', '#b4befe',
-  '#eba0ac', '#89dceb',
-];
+const PALETTE = ${JSON.stringify(PALETTE)};
 
 let wordData = [];
 let wordCount = 200;

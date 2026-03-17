@@ -5,13 +5,14 @@
  * Key design choices:
  * - Treemap layout: rectangle area is proportional to word frequency
  * - SVG rendering for crisp text in terminal character cells
- * - High-contrast Catppuccin Mocha palette, type-coded by frequency tier
+ * - High-contrast Everforest palette, type-coded by frequency tier
  * - Click a cell to see frequency details in the info panel
  * - Toggle to a ranked table view for precise numbers
  * - No animation — static pre-rendered layout
  */
 
 import { terminalSharedCss } from "./shared-css.js";
+import { PALETTE } from '../theme.js';
 
 export function terminalWordsPage(): string {
   return `<!DOCTYPE html>
@@ -32,22 +33,22 @@ export function terminalWordsPage(): string {
   }
 
   .cell rect {
-    stroke: #1e1e2e;
+    stroke: #272e33;
     stroke-width: 1.5;
     cursor: pointer;
   }
   .cell text {
-    fill: #1e1e2e;
+    fill: #272e33;
     font-weight: 700;
     pointer-events: none;
     text-anchor: middle;
   }
   .cell.selected rect {
-    stroke: #f9e2af;
+    stroke: #dbbc7f;
     stroke-width: 3;
   }
   .cell:hover rect {
-    stroke: #89b4fa;
+    stroke: #7fbbb3;
     stroke-width: 2;
   }
 
@@ -66,13 +67,13 @@ export function terminalWordsPage(): string {
     display: flex;
     justify-content: space-between;
     padding: 3px 8px;
-    border-bottom: 1px solid #313244;
+    border-bottom: 1px solid #2e383c;
     font-family: monospace;
     font-size: 13px;
   }
-  .freq-row:nth-child(even) { background: #181825; }
-  .freq-word { color: #cdd6f4; }
-  .freq-count { color: #6c7086; min-width: 5ch; text-align: right; }
+  .freq-row:nth-child(even) { background: #1e2326; }
+  .freq-word { color: #d3c6aa; }
+  .freq-count { color: #7a8478; min-width: 5ch; text-align: right; }
   .freq-bar {
     flex: 1;
     margin: 0 8px;
@@ -86,11 +87,11 @@ export function terminalWordsPage(): string {
 
   #mode-toggle {
     position: fixed; top: 0; right: 8px; z-index: 65;
-    background: #313244; border: 1px solid #45475a;
-    color: #a6adc8; padding: 5px 12px; font-family: monospace;
+    background: #2e383c; border: 1px solid #414b50;
+    color: #9da9a0; padding: 5px 12px; font-family: monospace;
     font-size: 13px; cursor: pointer;
   }
-  #mode-toggle:hover { color: #cdd6f4; border-color: #89b4fa; }
+  #mode-toggle:hover { color: #d3c6aa; border-color: #7fbbb3; }
 </style>
 </head>
 <body>
@@ -115,11 +116,7 @@ export function terminalWordsPage(): string {
 
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script>
-const PALETTE = [
-  '#f38ba8', '#89b4fa', '#a6e3a1', '#fab387', '#cba6f7',
-  '#74c7ec', '#f9e2af', '#94e2d5', '#f2cdcd', '#b4befe',
-  '#eba0ac', '#89dceb',
-];
+const PALETTE = ${JSON.stringify(PALETTE)};
 
 let wordData = [];
 let mode = 'treemap';
@@ -282,7 +279,7 @@ function renderTable(words) {
     row.className = 'freq-row';
 
     const rank = document.createElement('span');
-    rank.style.color = '#585b70';
+    rank.style.color = '#4f5b58';
     rank.style.minWidth = '4ch';
     rank.textContent = (i + 1) + '.';
 

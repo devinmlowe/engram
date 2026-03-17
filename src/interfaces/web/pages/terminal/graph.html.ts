@@ -13,6 +13,7 @@
  */
 
 import { terminalSharedCss } from "./shared-css.js";
+import { TYPE_COLORS, DEFAULT_COLOR } from '../theme.js';
 
 export function terminalGraphPage(): string {
   return `<!DOCTYPE html>
@@ -27,7 +28,7 @@ export function terminalGraphPage(): string {
   .node { cursor: pointer; }
   .node circle { stroke-width: 2; }
   .node text {
-    fill: #cdd6f4;
+    fill: #d3c6aa;
     font-size: 11px;
     font-weight: 700;
     text-anchor: middle;
@@ -36,7 +37,7 @@ export function terminalGraphPage(): string {
   }
   .node.selected text, .node.neighbor text { display: block; }
   .link { stroke-opacity: 0.4; }
-  .node.selected circle { stroke: #f9e2af !important; stroke-width: 3; }
+  .node.selected circle { stroke: #dbbc7f !important; stroke-width: 3; }
   .node.dimmed circle { opacity: 0.2; }
   .node.dimmed text { opacity: 0.15; }
   .link.dimmed { stroke-opacity: 0.05 !important; }
@@ -64,17 +65,9 @@ export function terminalGraphPage(): string {
 
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script>
-const TYPE_COLORS = {
-  project:    '#f38ba8',
-  tool:       '#89b4fa',
-  technology: '#a6e3a1',
-  person:     '#fab387',
-  concept:    '#cba6f7',
-  file:       '#6c7086',
-  repo:       '#74c7ec',
-};
+const TYPE_COLORS = ${JSON.stringify(TYPE_COLORS)};
 
-const DEFAULT_COLOR = '#585b70';
+const DEFAULT_COLOR = '${DEFAULT_COLOR}';
 
 function esc(s) {
   const el = document.createElement('span');
@@ -230,7 +223,7 @@ Promise.all([
     .attr('y1', d => d.source.y)
     .attr('x2', d => d.target.x)
     .attr('y2', d => d.target.y)
-    .attr('stroke', d => TYPE_COLORS[d.type] || '#45475a')
+    .attr('stroke', d => TYPE_COLORS[d.type] || '#414b50')
     .attr('stroke-width', d => Math.max(1, Math.min(3, (d.weight || 1))))
     .attr('stroke-opacity', 0.3);
 
@@ -281,7 +274,7 @@ Promise.all([
   types.forEach((type, i) => {
     const row = legend.append('g').attr('transform', 'translate(0,' + (i * 18) + ')');
     row.append('rect').attr('width', 12).attr('height', 12).attr('fill', TYPE_COLORS[type] || DEFAULT_COLOR);
-    row.append('text').attr('x', 18).attr('y', 10).attr('fill', '#a6adc8')
+    row.append('text').attr('x', 18).attr('y', 10).attr('fill', '#9da9a0')
       .attr('font-size', '12px').attr('font-family', 'monospace').text(type);
   });
 });

@@ -2,6 +2,8 @@
  * Graph page — D3 force-directed knowledge graph with Canvas rendering.
  */
 
+import { TYPE_COLORS, DEFAULT_COLOR, BG_DEEP, FG, FG_FAINT } from './theme.js';
+
 export function graphPage(): string {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -12,8 +14,8 @@ export function graphPage(): string {
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
-    background: #0a0a14;
-    color: #cdd6f4;
+    background: #1e2326;
+    color: #d3c6aa;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
     overflow: hidden;
     height: 100vh;
@@ -23,8 +25,8 @@ export function graphPage(): string {
   #tooltip {
     position: fixed;
     display: none;
-    background: #313244;
-    border: 1px solid #45475a;
+    background: #2e383c;
+    border: 1px solid #414b50;
     border-radius: 8px;
     padding: 10px 14px;
     font-size: 13px;
@@ -34,9 +36,9 @@ export function graphPage(): string {
     box-shadow: 0 4px 16px rgba(0,0,0,0.4);
   }
   #tooltip .name { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
-  #tooltip .type { color: #a6adc8; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
-  #tooltip .desc { margin-top: 6px; color: #bac2de; line-height: 1.4; }
-  #tooltip .community { margin-top: 6px; color: #74c7ec; font-size: 11px; }
+  #tooltip .type { color: #9da9a0; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+  #tooltip .desc { margin-top: 6px; color: #d3c6aa; line-height: 1.4; }
+  #tooltip .community { margin-top: 6px; color: #83c092; font-size: 11px; }
 
   /* ─── Settings toggle button ─── */
   #settings-toggle {
@@ -46,9 +48,9 @@ export function graphPage(): string {
     z-index: 60;
     width: 36px; height: 36px;
     border-radius: 50%;
-    background: #313244;
-    border: 1px solid #45475a;
-    color: #cdd6f4;
+    background: #2e383c;
+    border: 1px solid #414b50;
+    color: #d3c6aa;
     font-size: 18px;
     cursor: pointer;
     display: flex;
@@ -57,7 +59,7 @@ export function graphPage(): string {
     transition: all 0.2s;
     line-height: 1;
   }
-  #settings-toggle:hover { background: #45475a; border-color: #89b4fa; }
+  #settings-toggle:hover { background: #414b50; border-color: #7fbbb3; }
 
   /* ─── Settings panel ─── */
   #settings-panel {
@@ -66,7 +68,7 @@ export function graphPage(): string {
     width: 300px;
     height: 100vh;
     background: rgba(30, 30, 46, 0.95);
-    border-left: 1px solid #45475a;
+    border-left: 1px solid #414b50;
     z-index: 55;
     overflow-y: auto;
     transform: translateX(100%);
@@ -77,19 +79,19 @@ export function graphPage(): string {
   #settings-panel.open { transform: translateX(0); }
   #settings-panel::-webkit-scrollbar { width: 4px; }
   #settings-panel::-webkit-scrollbar-track { background: transparent; }
-  #settings-panel::-webkit-scrollbar-thumb { background: #45475a; border-radius: 2px; }
+  #settings-panel::-webkit-scrollbar-thumb { background: #414b50; border-radius: 2px; }
 
   .panel-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
     padding: 16px 20px 12px;
-    border-bottom: 1px solid #313244;
+    border-bottom: 1px solid #2e383c;
   }
   .panel-header h2 {
     font-size: 15px;
     font-weight: 600;
-    color: #cdd6f4;
+    color: #d3c6aa;
   }
   .panel-header-actions {
     display: flex;
@@ -99,18 +101,18 @@ export function graphPage(): string {
   .panel-header-actions button {
     background: none;
     border: none;
-    color: #6c7086;
+    color: #7a8478;
     cursor: pointer;
     font-size: 16px;
     padding: 2px;
     line-height: 1;
     transition: color 0.15s;
   }
-  .panel-header-actions button:hover { color: #cdd6f4; }
+  .panel-header-actions button:hover { color: #d3c6aa; }
 
   /* Collapsible sections */
   .section {
-    border-bottom: 1px solid #313244;
+    border-bottom: 1px solid #2e383c;
   }
   .section-header {
     display: flex;
@@ -124,7 +126,7 @@ export function graphPage(): string {
   .section-header:hover { background: rgba(69, 71, 90, 0.3); }
   .section-header .arrow {
     font-size: 10px;
-    color: #6c7086;
+    color: #7a8478;
     transition: transform 0.2s;
     width: 12px;
     text-align: center;
@@ -133,7 +135,7 @@ export function graphPage(): string {
   .section-header .section-title {
     font-size: 14px;
     font-weight: 500;
-    color: #cdd6f4;
+    color: #d3c6aa;
   }
   .section-body {
     display: none;
@@ -148,7 +150,7 @@ export function graphPage(): string {
   .ctrl-row:last-child { margin-bottom: 0; }
   .ctrl-label {
     font-size: 12px;
-    color: #a6adc8;
+    color: #9da9a0;
     margin-bottom: 6px;
     display: flex;
     justify-content: space-between;
@@ -156,27 +158,27 @@ export function graphPage(): string {
   }
   .ctrl-label .val {
     font-size: 11px;
-    color: #6c7086;
+    color: #7a8478;
     min-width: 32px;
     text-align: right;
   }
   .ctrl-row input[type=range] {
     width: 100%;
-    accent-color: #89b4fa;
+    accent-color: #7fbbb3;
     height: 4px;
   }
   .ctrl-row input[type=text] {
     width: 100%;
-    background: #313244;
-    border: 1px solid #45475a;
+    background: #2e383c;
+    border: 1px solid #414b50;
     border-radius: 6px;
     padding: 7px 12px;
-    color: #cdd6f4;
+    color: #d3c6aa;
     font-size: 13px;
     outline: none;
   }
-  .ctrl-row input[type=text]:focus { border-color: #89b4fa; }
-  .ctrl-row input[type=text]::placeholder { color: #6c7086; }
+  .ctrl-row input[type=text]:focus { border-color: #7fbbb3; }
+  .ctrl-row input[type=text]::placeholder { color: #7a8478; }
 
   /* Toggle switch */
   .ctrl-toggle {
@@ -185,22 +187,22 @@ export function graphPage(): string {
     justify-content: space-between;
     margin-bottom: 12px;
   }
-  .ctrl-toggle .label { font-size: 12px; color: #a6adc8; }
+  .ctrl-toggle .label { font-size: 12px; color: #9da9a0; }
   .switch {
     width: 36px; height: 20px;
-    background: #45475a;
+    background: #414b50;
     border-radius: 10px;
     position: relative;
     cursor: pointer;
     transition: background 0.2s;
   }
-  .switch.on { background: #89b4fa; }
+  .switch.on { background: #7fbbb3; }
   .switch::after {
     content: '';
     position: absolute;
     top: 2px; left: 2px;
     width: 16px; height: 16px;
-    background: #cdd6f4;
+    background: #d3c6aa;
     border-radius: 50%;
     transition: transform 0.2s;
   }
@@ -213,18 +215,18 @@ export function graphPage(): string {
     gap: 6px;
   }
   .pill {
-    background: #313244;
-    border: 1px solid #45475a;
+    background: #2e383c;
+    border: 1px solid #414b50;
     border-radius: 14px;
     padding: 4px 10px;
     font-size: 11px;
-    color: #a6adc8;
+    color: #9da9a0;
     cursor: pointer;
     transition: all 0.15s;
     user-select: none;
   }
-  .pill:hover { border-color: #89b4fa; color: #cdd6f4; }
-  .pill.active { background: #45475a; color: #cdd6f4; border-color: #89b4fa; }
+  .pill:hover { border-color: #7fbbb3; color: #d3c6aa; }
+  .pill.active { background: #414b50; color: #d3c6aa; border-color: #7fbbb3; }
   .pill .dot {
     display: inline-block;
     width: 8px; height: 8px;
@@ -240,7 +242,7 @@ export function graphPage(): string {
     left: 16px;
     z-index: 50;
     font-size: 11px;
-    color: #585b70;
+    color: #4f5b58;
     pointer-events: none;
   }
 
@@ -250,11 +252,11 @@ export function graphPage(): string {
     bottom: 16px;
     right: 16px;
     z-index: 50;
-    background: #313244;
-    border: 1px solid #45475a;
+    background: #2e383c;
+    border: 1px solid #414b50;
     border-radius: 8px;
     padding: 8px 16px;
-    color: #cba6f7;
+    color: #d699b6;
     font-size: 13px;
     font-weight: 600;
     cursor: pointer;
@@ -263,7 +265,7 @@ export function graphPage(): string {
     align-items: center;
     gap: 8px;
   }
-  #dream-btn:hover { border-color: #cba6f7; background: #45475a; }
+  #dream-btn:hover { border-color: #d699b6; background: #414b50; }
   #dream-btn:disabled { opacity: 0.5; cursor: not-allowed; }
   #dream-btn .icon { font-size: 16px; }
 
@@ -276,7 +278,7 @@ export function graphPage(): string {
   .ds-phase-label {
     font-size: 13px;
     font-weight: 600;
-    color: #cba6f7;
+    color: #d699b6;
     margin-bottom: 6px;
     display: flex;
     align-items: center;
@@ -285,34 +287,34 @@ export function graphPage(): string {
   .ds-phase-label .spinner {
     display: inline-block;
     width: 12px; height: 12px;
-    border: 2px solid #45475a;
-    border-top-color: #cba6f7;
+    border: 2px solid #414b50;
+    border-top-color: #d699b6;
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
   .ds-detail {
     font-size: 11px;
-    color: #a6adc8;
+    color: #9da9a0;
     margin-bottom: 6px;
     line-height: 1.4;
   }
   .ds-progress-bar {
     height: 4px;
-    background: #45475a;
+    background: #414b50;
     border-radius: 2px;
     overflow: hidden;
     margin-bottom: 4px;
   }
   .ds-progress-fill {
     height: 100%;
-    background: #cba6f7;
+    background: #d699b6;
     border-radius: 2px;
     transition: width 0.5s ease;
   }
   .ds-progress-text {
     font-size: 10px;
-    color: #6c7086;
+    color: #7a8478;
   }
   .ds-pipeline {
     display: flex;
@@ -323,11 +325,11 @@ export function graphPage(): string {
     flex: 1;
     height: 3px;
     border-radius: 1.5px;
-    background: #45475a;
+    background: #414b50;
     transition: background 0.3s;
   }
-  .ds-pipeline .step.done { background: #a6e3a1; }
-  .ds-pipeline .step.active { background: #cba6f7; animation: pulse 1.5s ease-in-out infinite; }
+  .ds-pipeline .step.done { background: #a7c080; }
+  .ds-pipeline .step.active { background: #d699b6; animation: pulse 1.5s ease-in-out infinite; }
   @keyframes pulse { 0%,100% { opacity: 0.6; } 50% { opacity: 1; } }
   .ds-phase-names {
     display: flex;
@@ -338,12 +340,12 @@ export function graphPage(): string {
     flex: 1;
     font-size: 8px;
     text-align: center;
-    color: #585b70;
+    color: #4f5b58;
     text-transform: uppercase;
     letter-spacing: 0.3px;
   }
-  .ds-phase-names span.done { color: #a6e3a1; }
-  .ds-phase-names span.active { color: #cba6f7; }
+  .ds-phase-names span.done { color: #a7c080; }
+  .ds-phase-names span.active { color: #d699b6; }
 
   /* ─── View tab bar ─── */
   #view-tabs {
@@ -351,13 +353,13 @@ export function graphPage(): string {
     display: flex; gap: 4px;
   }
   #view-tabs a {
-    background: rgba(49,50,68,0.85); border: 1px solid #45475a; border-radius: 14px;
+    background: rgba(46,56,60,0.85); border: 1px solid #414b50; border-radius: 14px;
     padding: 5px 14px; font-size: 12px; font-weight: 500;
-    color: #a6adc8; text-decoration: none; cursor: pointer;
+    color: #9da9a0; text-decoration: none; cursor: pointer;
     transition: all 0.15s; user-select: none;
   }
-  #view-tabs a:hover { border-color: #89b4fa; color: #cdd6f4; }
-  #view-tabs a.active { background: #45475a; color: #89b4fa; border-color: #89b4fa; }
+  #view-tabs a:hover { border-color: #7fbbb3; color: #d3c6aa; }
+  #view-tabs a.active { background: #414b50; color: #7fbbb3; border-color: #7fbbb3; }
 
   /* ─── Settings persistence buttons ─── */
   .panel-footer {
@@ -373,12 +375,12 @@ export function graphPage(): string {
     font-weight: 500;
     cursor: pointer;
     transition: all 0.15s;
-    border: 1px solid #45475a;
-    background: #313244;
-    color: #cdd6f4;
+    border: 1px solid #414b50;
+    background: #2e383c;
+    color: #d3c6aa;
   }
-  .panel-footer button:hover { border-color: #89b4fa; background: #45475a; }
-  .panel-footer button.saved { border-color: #a6e3a1; color: #a6e3a1; }
+  .panel-footer button:hover { border-color: #7fbbb3; background: #414b50; }
+  .panel-footer button.saved { border-color: #a7c080; color: #a7c080; }
 
   /* ─── Setting hint tooltips ─── */
   .hint-icon {
@@ -387,8 +389,8 @@ export function graphPage(): string {
     justify-content: center;
     width: 14px; height: 14px;
     border-radius: 50%;
-    background: #45475a;
-    color: #6c7086;
+    background: #414b50;
+    color: #7a8478;
     font-size: 9px;
     font-weight: 700;
     cursor: help;
@@ -398,12 +400,12 @@ export function graphPage(): string {
   }
   .hint-bubble {
     position: absolute;
-    background: #313244;
-    border: 1px solid #45475a;
+    background: #2e383c;
+    border: 1px solid #414b50;
     border-radius: 8px;
     padding: 8px 12px;
     font-size: 11px;
-    color: #bac2de;
+    color: #d3c6aa;
     line-height: 1.4;
     max-width: 220px;
     z-index: 200;
@@ -421,13 +423,13 @@ export function graphPage(): string {
   #info-btn {
     background: none;
     border: none;
-    color: #6c7086;
+    color: #7a8478;
     cursor: pointer;
     font-size: 14px;
     font-weight: 700;
     width: 22px; height: 22px;
     border-radius: 50%;
-    border: 1.5px solid #6c7086;
+    border: 1.5px solid #7a8478;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -435,7 +437,7 @@ export function graphPage(): string {
     padding: 0;
     line-height: 1;
   }
-  #info-btn:hover { color: #cdd6f4; border-color: #cdd6f4; }
+  #info-btn:hover { color: #d3c6aa; border-color: #d3c6aa; }
   #info-overlay {
     position: fixed;
     top: 0; left: 0; right: 0; bottom: 0;
@@ -447,8 +449,8 @@ export function graphPage(): string {
   }
   #info-overlay.open { display: flex; }
   #info-dialog {
-    background: #1e1e2e;
-    border: 1px solid #45475a;
+    background: #272e33;
+    border: 1px solid #414b50;
     border-radius: 12px;
     padding: 0;
     max-width: 420px;
@@ -458,31 +460,31 @@ export function graphPage(): string {
     box-shadow: 0 8px 32px rgba(0,0,0,0.5);
   }
   #info-dialog::-webkit-scrollbar { width: 4px; }
-  #info-dialog::-webkit-scrollbar-thumb { background: #45475a; border-radius: 2px; }
+  #info-dialog::-webkit-scrollbar-thumb { background: #414b50; border-radius: 2px; }
   .info-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
     padding: 16px 20px 12px;
-    border-bottom: 1px solid #313244;
+    border-bottom: 1px solid #2e383c;
     position: sticky;
     top: 0;
-    background: #1e1e2e;
+    background: #272e33;
     z-index: 1;
   }
-  .info-header h3 { font-size: 15px; font-weight: 600; color: #cdd6f4; }
+  .info-header h3 { font-size: 15px; font-weight: 600; color: #d3c6aa; }
   .info-close {
-    background: none; border: none; color: #6c7086; cursor: pointer;
+    background: none; border: none; color: #7a8478; cursor: pointer;
     font-size: 18px; padding: 2px; line-height: 1;
   }
-  .info-close:hover { color: #cdd6f4; }
+  .info-close:hover { color: #d3c6aa; }
   .info-section {
     padding: 12px 20px 4px;
   }
   .info-section-title {
     font-size: 12px;
     font-weight: 600;
-    color: #89b4fa;
+    color: #7fbbb3;
     text-transform: uppercase;
     letter-spacing: 0.5px;
     margin-bottom: 8px;
@@ -493,12 +495,12 @@ export function graphPage(): string {
   .info-item-name {
     font-size: 12px;
     font-weight: 600;
-    color: #cdd6f4;
+    color: #d3c6aa;
     margin-bottom: 2px;
   }
   .info-item-desc {
     font-size: 11px;
-    color: #a6adc8;
+    color: #9da9a0;
     line-height: 1.4;
   }
 </style>
@@ -613,7 +615,7 @@ export function graphPage(): string {
   <div class="section">
     <div class="section-header"><span class="arrow">&#x25B6;</span><span class="section-title">Dream</span></div>
     <div class="section-body">
-      <button id="dream-btn-panel" style="width:100%;background:#313244;border:1px solid #45475a;border-radius:8px;padding:8px 16px;color:#cba6f7;font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;transition:all 0.2s"><span class="icon">&#x2728;</span> Dream</button>
+      <button id="dream-btn-panel" style="width:100%;background:#2e383c;border:1px solid #414b50;border-radius:8px;padding:8px 16px;color:#d699b6;font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;transition:all 0.2s"><span class="icon">&#x2728;</span> Dream</button>
       <div id="dream-status">
         <div class="ds-phase-label"><span class="spinner"></span> <span id="ds-phase">-</span></div>
         <div class="ds-detail" id="ds-detail">-</div>
@@ -670,18 +672,10 @@ export function graphPage(): string {
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script>
 // ─── Color System ─────────────────────────────────────────────────
-const TYPE_COLORS = {
-  project:    '#f38ba8',
-  tool:       '#89b4fa',
-  technology: '#a6e3a1',
-  person:     '#fab387',
-  concept:    '#cba6f7',
-  file:       '#6c7086',
-  repo:       '#74c7ec',
-};
+const TYPE_COLORS = ${JSON.stringify(TYPE_COLORS)};
 
 // Pre-compute RGB for type colors and their muted versions
-const BG = [10, 10, 20]; // #0a0a14
+const BG = [30, 35, 38]; // #1e2326
 const FADE_DURATION = 60000; // 60 seconds to fully mute
 const GLOW_DURATION = 3000;  // 3 seconds of glow effect
 
@@ -730,12 +724,12 @@ function glowAlpha(lastSpark) {
 }
 
 const REL_RGB = {
-  uses:          [137,180,250],
-  depends_on:    [243,139,168],
-  related_to:    [203,166,247],
-  part_of:       [166,227,161],
-  configured_by: [250,179,135],
-  solved_by:     [249,226,175],
+  uses:          [127,187,179],
+  depends_on:    [230,126,128],
+  related_to:    [214,153,182],
+  part_of:       [167,192,128],
+  configured_by: [230,152,117],
+  solved_by:     [219,188,127],
 };
 
 let allNodes = [], allLinks = [];
@@ -823,7 +817,7 @@ function buildFilters() {
     const pill = document.createElement('div');
     pill.className = 'pill active';
     pill.dataset.type = t;
-    pill.innerHTML = '<span class="dot" style="background:' + (TYPE_COLORS[t] || '#888') + '"></span>' + t;
+    pill.innerHTML = '<span class="dot" style="background:' + (TYPE_COLORS[t] || '#4f5b58') + '"></span>' + t;
     pill.addEventListener('click', () => {
       if (activeTypes.has(t)) { activeTypes.delete(t); pill.classList.remove('active'); }
       else { activeTypes.add(t); pill.classList.add('active'); }
@@ -851,7 +845,7 @@ function rebuildSim() {
 
 function draw() {
   ctx.save();
-  ctx.fillStyle = '#0a0a14';
+  ctx.fillStyle = '#1e2326';
   ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
   ctx.translate(transform.x, transform.y);
   ctx.scale(transform.k, transform.k);
@@ -985,7 +979,7 @@ function draw() {
         alpha = highlightSet.has(n.id) ? 0.95 : 0.04;
       }
       ctx.globalAlpha = alpha;
-      ctx.fillStyle = '#cdd6f4';
+      ctx.fillStyle = '#d3c6aa';
       ctx.fillText(n.name, n.x, n.y - r - 3);
     }
     ctx.globalAlpha = 1;

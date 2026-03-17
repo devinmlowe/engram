@@ -8,6 +8,7 @@
  */
 
 import { terminalSharedCss } from "./shared-css.js";
+import { RED, BLUE, GREEN, ORANGE, PURPLE, AQUA, YELLOW } from '../theme.js';
 
 export function terminalCommunitiesPage(): string {
   return `<!DOCTYPE html>
@@ -28,22 +29,22 @@ export function terminalCommunitiesPage(): string {
   }
 
   .cell rect {
-    stroke: #1e1e2e;
+    stroke: #272e33;
     stroke-width: 1.5;
     cursor: pointer;
   }
   .cell text {
-    fill: #1e1e2e;
+    fill: #272e33;
     font-weight: 700;
     pointer-events: none;
     text-anchor: middle;
   }
   .cell.selected rect {
-    stroke: #f9e2af;
+    stroke: #dbbc7f;
     stroke-width: 3;
   }
   .cell:hover rect {
-    stroke: #cdd6f4;
+    stroke: #d3c6aa;
     stroke-width: 2;
   }
 
@@ -76,20 +77,20 @@ export function terminalCommunitiesPage(): string {
 
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script>
-// Catppuccin Mocha hues — one per community, cycled
+// Everforest Hard Dark hues — one per community, cycled
 const HUES = [
-  [243, 139, 168],  // red
-  [137, 180, 250],  // blue
-  [166, 227, 161],  // green
-  [250, 179, 135],  // peach
-  [203, 166, 247],  // mauve
-  [116, 199, 236],  // sapphire
-  [249, 226, 175],  // yellow
-  [148, 226, 213],  // teal
-  [242, 205, 205],  // flamingo
-  [180, 190, 254],  // lavender
-  [235, 160, 172],  // maroon
-  [137, 220, 235],  // sky
+  [230, 126, 128],  // red
+  [127, 187, 179],  // blue
+  [167, 192, 128],  // green
+  [230, 152, 117],  // peach
+  [214, 153, 182],  // mauve
+  [131, 192, 146],  // sapphire
+  [219, 188, 127],  // yellow
+  [131, 192, 146],  // teal
+  [230, 152, 117],  // flamingo
+  [214, 153, 182],  // lavender
+  [230, 126, 128],  // maroon
+  [131, 192, 146],  // sky
 ];
 
 let communityData = [];
@@ -106,9 +107,9 @@ function closeInfo() {
 }
 
 function coherenceLabel(score) {
-  if (score >= 0.7) return { text: 'high', color: '#a6e3a1' };
-  if (score >= 0.5) return { text: 'moderate', color: '#f9e2af' };
-  return { text: 'low', color: '#f38ba8' };
+  if (score >= 0.7) return { text: 'high', color: '#a7c080' };
+  if (score >= 0.5) return { text: 'moderate', color: '#dbbc7f' };
+  return { text: 'low', color: '#e67e80' };
 }
 
 function showCommunityInfo(d, cellEl) {
@@ -123,7 +124,7 @@ function showCommunityInfo(d, cellEl) {
 
   let html = '<div class="name">' + esc(d.name) + '</div>';
   html += '<div class="meta">' + d.entityCount + ' entities (' + pct + '% of graph)</div>';
-  html += '<div class="coherence-badge" style="background:' + c.color + ';color:#1e1e2e">coherence: ' + d.coherenceScore.toFixed(3) + ' (' + c.text + ')</div>';
+  html += '<div class="coherence-badge" style="background:' + c.color + ';color:#272e33">coherence: ' + d.coherenceScore.toFixed(3) + ' (' + c.text + ')</div>';
   if (d.description) html += '<div class="desc" style="margin-top:8px">' + esc(d.description) + '</div>';
 
   content.innerHTML = html;

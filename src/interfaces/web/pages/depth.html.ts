@@ -3,6 +3,7 @@
  */
 
 import { sharedPanelCss } from "./shared-css.js";
+import { TYPE_COLORS, DEFAULT_COLOR, BG_DEEP } from './theme.js';
 
 export function depthPage(): string {
   return `<!DOCTYPE html>
@@ -14,8 +15,8 @@ export function depthPage(): string {
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
-    background: #0a0a14;
-    color: #cdd6f4;
+    background: #1e2326;
+    color: #d3c6aa;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
     overflow: hidden;
     height: 100vh;
@@ -25,8 +26,8 @@ export function depthPage(): string {
   #tooltip {
     position: fixed;
     display: none;
-    background: rgba(49, 50, 68, 0.95);
-    border: 1px solid #45475a;
+    background: rgba(46,56,60,0.95);
+    border: 1px solid #414b50;
     border-radius: 8px;
     padding: 10px 14px;
     font-size: 13px;
@@ -36,14 +37,14 @@ export function depthPage(): string {
     box-shadow: 0 4px 16px rgba(0,0,0,0.5);
   }
   #tooltip .name { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
-  #tooltip .type { color: #a6adc8; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
-  #tooltip .desc { margin-top: 6px; color: #bac2de; line-height: 1.4; }
-  #tooltip .community { margin-top: 6px; color: #74c7ec; font-size: 11px; }
-  #tooltip .time { margin-top: 6px; color: #a6adc8; font-size: 11px; }
+  #tooltip .type { color: #9da9a0; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+  #tooltip .desc { margin-top: 6px; color: #d3c6aa; line-height: 1.4; }
+  #tooltip .community { margin-top: 6px; color: #83c092; font-size: 11px; }
+  #tooltip .time { margin-top: 6px; color: #9da9a0; font-size: 11px; }
 
   #stats-bar {
     position: fixed; bottom: 12px; left: 16px; z-index: 50;
-    font-size: 11px; color: #585b70; pointer-events: none;
+    font-size: 11px; color: #4f5b58; pointer-events: none;
   }
 
   ${sharedPanelCss()}
@@ -163,15 +164,7 @@ document.querySelectorAll('.section-header').forEach(hdr => {
   hdr.addEventListener('click', () => hdr.parentElement.classList.toggle('open'));
 });
 
-const TYPE_COLORS = {
-  project:    '#f38ba8',
-  tool:       '#89b4fa',
-  technology: '#a6e3a1',
-  person:     '#fab387',
-  concept:    '#cba6f7',
-  file:       '#6c7086',
-  repo:       '#74c7ec',
-};
+const TYPE_COLORS = ${JSON.stringify(TYPE_COLORS)};
 
 let Z_RANGE = 800;
 let mentionThreshold = 5;
@@ -391,7 +384,7 @@ Promise.all([
     graph = ForceGraph3D({ controlType: 'orbit' })
       (document.getElementById('graph-3d'))
       .graphData(graphData)
-      .backgroundColor('#0a0a14')
+      .backgroundColor('#1e2326')
       .nodeColor(n => sparkNodeColor3D(n))
       .nodeVal(n => Math.max(0.3, Math.log2((n.mentionCount || 1) + 1) * 0.4 * nodeSizeMult))
       .nodeOpacity(0.85)
@@ -399,14 +392,14 @@ Promise.all([
       .linkThreeObject(l => {
         const SEGS = 10;
         const colors = {
-          uses:          [137,180,250],
-          depends_on:    [243,139,168],
-          related_to:    [203,166,247],
-          part_of:       [166,227,161],
-          configured_by: [250,179,135],
-          solved_by:     [249,226,175],
+          uses:          [127,187,179],
+          depends_on:    [230,126,128],
+          related_to:    [214,153,182],
+          part_of:       [167,192,128],
+          configured_by: [230,152,117],
+          solved_by:     [219,188,127],
         };
-        const c = colors[l.type] || [69,71,90];
+        const c = colors[l.type] || [65,75,80];
         const pts = SEGS + 1;
         const positions = new Float32Array(pts * 3);
         const tAttr = new Float32Array(pts);
@@ -586,7 +579,7 @@ document.getElementById('preset-spread').addEventListener('click', () => applyPr
 
 // ─── Spark color system (mirroring 2D) ─────────────────────────
 
-const BG3D = [30, 30, 46];
+const BG3D = [39, 46, 51];
 const FADE_DURATION_3D = 60000;
 const MIN_ENERGY_BLEND = 0.15;  // dimmest resting state (isolated nodes)
 const MAX_ENERGY_BLEND = 0.95;  // brightest resting state (hub nodes)
