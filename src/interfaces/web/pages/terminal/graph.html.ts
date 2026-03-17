@@ -108,6 +108,7 @@ function showNodeInfo(d) {
   let html = '<div class="name" style="color:' + (TYPE_COLORS[d.type] || DEFAULT_COLOR) + '">' + esc(d.name) + '</div>';
   html += '<div class="type">' + d.type + '</div>';
   html += '<div class="meta">' + d.mentionCount + ' mentions</div>';
+  if (d.informativeness > 0) html += '<div class="meta">Informativeness: ' + d.informativeness.toFixed(2) + '</div>';
   if (d.description) html += '<div class="desc">' + esc(d.description) + '</div>';
   if (d.community) html += '<div class="meta">Community: ' + esc(d.community) + '</div>';
   html += '<div class="meta">Last active: ' + formatAge(d.lastActive) + '</div>';
@@ -157,7 +158,10 @@ Promise.all([
   // Sort by mention count descending, take top NODE_BUDGET.
   const TERMINAL_NODE_BUDGET = 120;
 
-  const sorted = [...data.nodes].sort((a, b) => b.mentionCount - a.mentionCount);
+  // Sort by informativeness (composite IDF + bridge + log-mentions) with fallback to mentionCount
+  const sorted = [...data.nodes].sort((a, b) =>
+    (b.informativeness || b.mentionCount) - (a.informativeness || a.mentionCount)
+  );
   const budgetThreshold = sorted.length > TERMINAL_NODE_BUDGET
     ? sorted[TERMINAL_NODE_BUDGET - 1].mentionCount
     : 1;
@@ -177,8 +181,10 @@ Promise.all([
   }
   const links = data.links.filter(l => nodeSet.has(l.source) && nodeSet.has(l.target));
 
+  const hasInformativeness = data.nodes.some(n => n.informativeness > 0);
   document.getElementById('stats-bar').textContent =
-    nodes.length + ' nodes | ' + links.length + ' edges | threshold: \u2265' + threshold;
+    nodes.length + ' nodes | ' + links.length + ' edges | threshold: \u2265' + threshold +
+    (hasInformativeness ? ' | sorted by informativeness' : ' | sorted by mentions');
 
   const width = Math.max(window.innerWidth, 800);
   const height = Math.max(window.innerHeight - 54, 600);
