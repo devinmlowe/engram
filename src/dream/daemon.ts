@@ -740,7 +740,7 @@ async function processConversation(
     const entityResult = await extractEntities(exchanges, metadata);
 
     // 3. Entity resolution (creates/merges entities in graph)
-    const resolved = await resolveEntities(db, entityResult.entities);
+    const resolved = await resolveEntities(db, entityResult.entities, conversationId);
 
     entitiesCreated = resolved.filter(
       (r: { resolution: { action: string } }) => r.resolution.action === "create",

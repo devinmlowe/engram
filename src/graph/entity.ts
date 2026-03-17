@@ -305,6 +305,20 @@ export function recordEntityMention(
 }
 
 /**
+ * Record that an entity appeared in a conversation.
+ * Idempotent — INSERT OR IGNORE on the composite primary key.
+ */
+export function recordEntityConversation(
+  db: Database.Database,
+  entityId: string,
+  conversationId: string,
+): void {
+  db.prepare(
+    "INSERT OR IGNORE INTO entity_conversations (entity_id, conversation_id) VALUES (?, ?)"
+  ).run(entityId, conversationId);
+}
+
+/**
  * Merge two entities: keep one (keepId), transfer data from the other (mergeId),
  * and delete the merged entity. This is transactional and handles:
  * 1. Repointing relationships from mergeId to keepId
