@@ -52,6 +52,10 @@ For large file analysis, combine tools in this order:
 
 Port 3000 — Force graph (`/graph`), 3D depth view (`/graph/depth`), galaxy view (`/graph/galaxy`), word cloud (`/words`). Real-time SSE updates via WAL watching, dream pipeline control with live phase tracking.
 
+Terminal-optimized views at `/terminal/graph`, `/terminal/depth`, `/terminal/words`, `/terminal/communities` — SVG-based, pre-stabilized, high-contrast layouts for carbonyl or other terminal browsers.
+
+**Theme:** Everforest Hard Dark, centralized in `src/interfaces/web/pages/theme.ts`. All page files import colors from this module — no hardcoded hex values in pages. See ADR-009 for theming architecture and carbonyl rendering lessons.
+
 Start: `npx tsx src/interfaces/web/server.ts`
 
 ## Key Configuration
@@ -75,4 +79,4 @@ npm run lint         # Type-check without emit
 
 - `SPEC.md` — Full specification with requirements and interface contract
 - `plans/` — Implementation plans (phases 1–4, phase 6 RLM, phase 7 extensions)
-- `decisions/` — Architecture Decision Records (7 ADRs)
+- `decisions/` — Architecture Decision Records (9 ADRs)
