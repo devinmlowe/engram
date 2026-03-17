@@ -205,60 +205,85 @@ function renderTreemap(words) {
     .attr('fill', d => PALETTE[d.data.rank % PALETTE.length])
     .attr('rx', 2);
 
-  // Fit text into cells with word-wrapping
+  // Fit text into cells with word-wrapping and proper centering
   cells.each(function(d) {
     const cellW = d.x1 - d.x0;
     const cellH = d.y1 - d.y0;
     const name = d.data.text;
+    const pad = 6;
 
-    if (cellW < 28 || cellH < 16) return;
+    if (cellW < 30 || cellH < 16) return;
 
     const g = d3.select(this);
+    const usableW = cellW - pad * 2;
+    const usableH = cellH - pad * 2;
 
-    const maxFontByW = (cellW - 10) / (name.length * 0.55);
-    const maxFontByH = (cellH - 6) * 0.5;
-    const fontSize = Math.min(Math.max(maxFontByW, 7), maxFontByH, 36);
+    // Start with a font size based on cell height, then shrink if needed
+    const charRatio = 0.6; // monospace char width / font size
+    let fontSize = Math.min(usableH * 0.35, 36);
 
-    if (fontSize < 7) return;
-
-    const charWidth = fontSize * 0.55;
-    const maxChars = Math.floor((cellW - 10) / charWidth);
-
-    // Word-wrap into multiple lines
-    const words = name.split(/\\s+/);
-    const lines = [];
-    let currentLine = '';
-
-    for (const word of words) {
-      const test = currentLine ? currentLine + ' ' + word : word;
-      if (test.length > maxChars && currentLine) {
-        lines.push(currentLine);
-        currentLine = word;
-      } else {
-        currentLine = test;
+    function wrapText(fs) {
+      const cw = fs * charRatio;
+      const maxChars = Math.max(Math.floor(usableW / cw), 1);
+      const words = name.split(/\\s+/);
+      const lines = [];
+      let cur = '';
+      for (const w of words) {
+        // If a single word is wider than the cell, force-break it
+        if (w.length > maxChars) {
+          if (cur) { lines.push(cur); cur = ''; }
+          for (let j = 0; j < w.length; j += maxChars) {
+            lines.push(w.slice(j, j + maxChars));
+          }
+          continue;
+        }
+        const test = cur ? cur + ' ' + w : w;
+        if (test.length > maxChars && cur) {
+          lines.push(cur);
+          cur = w;
+        } else {
+          cur = test;
+        }
       }
+      if (cur) lines.push(cur);
+      return { lines, maxChars };
     }
-    if (currentLine) lines.push(currentLine);
 
-    const lineHeight = fontSize * 1.2;
-    const maxLines = Math.floor((cellH - 6) / lineHeight);
-    const shownLines = lines.slice(0, Math.max(maxLines, 1));
+    // Try wrapping at current font size, shrink if lines don't fit
+    let result, lineHeight, maxLines;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      if (fontSize < 6) return;
+      result = wrapText(fontSize);
+      lineHeight = fontSize * 1.25;
+      maxLines = Math.floor(usableH / lineHeight);
+      if (maxLines >= 1 && (result.lines.length <= maxLines || maxLines >= 2)) break;
+      fontSize *= 0.8;
+    }
 
-    if (shownLines.length > 0) {
+    if (fontSize < 6) return;
+
+    const shownLines = result.lines.slice(0, Math.max(maxLines, 1));
+
+    // Truncate last visible line if there are hidden lines
+    if (shownLines.length < result.lines.length && shownLines.length > 0) {
       const last = shownLines[shownLines.length - 1];
-      if (last.length > maxChars) {
-        shownLines[shownLines.length - 1] = last.slice(0, maxChars - 1) + '\\u2026';
-      }
+      const mc = result.maxChars;
+      shownLines[shownLines.length - 1] = last.length > mc - 1
+        ? last.slice(0, mc - 1) + '\\u2026'
+        : last + '\\u2026';
     }
 
-    const totalTextH = shownLines.length * lineHeight;
-    const startY = (cellH - totalTextH) / 2 + fontSize * 0.35 + lineHeight / 2;
+    // Center the text block vertically and horizontally
+    const totalH = shownLines.length * lineHeight;
+    const baseY = pad + (usableH - totalH) / 2 + fontSize * 0.8;
 
     shownLines.forEach((line, i) => {
       g.append('text')
         .attr('x', cellW / 2)
-        .attr('y', startY + i * lineHeight)
+        .attr('y', baseY + i * lineHeight)
         .attr('font-size', fontSize + 'px')
+        .attr('text-anchor', 'middle')
+        .attr('dominant-baseline', 'auto')
         .text(line);
     });
   });
