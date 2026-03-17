@@ -208,10 +208,9 @@ function renderTreemap(communities) {
       let cur = '';
       for (const w of words) {
         if (w.length > maxChars) {
+          // Word too wide — put it on its own line, truncated with ellipsis
           if (cur) { lines.push(cur); cur = ''; }
-          for (let j = 0; j < w.length; j += maxChars) {
-            lines.push(w.slice(j, j + maxChars));
-          }
+          lines.push(w.slice(0, maxChars - 1) + '\\u2026');
           continue;
         }
         const test = cur ? cur + ' ' + w : w;
