@@ -14,7 +14,7 @@ export function graphPage(): string {
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
-    background: #1e2326;
+    background: #191d20;
     color: #d3c6aa;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
     overflow: hidden;
@@ -25,8 +25,8 @@ export function graphPage(): string {
   #tooltip {
     position: fixed;
     display: none;
-    background: #2e383c;
-    border: 1px solid #414b50;
+    background: #272e33;
+    border: 1px solid #374145;
     border-radius: 8px;
     padding: 10px 14px;
     font-size: 13px;
@@ -48,8 +48,8 @@ export function graphPage(): string {
     z-index: 60;
     width: 36px; height: 36px;
     border-radius: 50%;
-    background: #2e383c;
-    border: 1px solid #414b50;
+    background: #272e33;
+    border: 1px solid #374145;
     color: #d3c6aa;
     font-size: 18px;
     cursor: pointer;
@@ -59,7 +59,7 @@ export function graphPage(): string {
     transition: all 0.2s;
     line-height: 1;
   }
-  #settings-toggle:hover { background: #414b50; border-color: #7fbbb3; }
+  #settings-toggle:hover { background: #374145; border-color: #7fbbb3; }
 
   /* ─── Settings panel ─── */
   #settings-panel {
@@ -68,7 +68,7 @@ export function graphPage(): string {
     width: 300px;
     height: 100vh;
     background: rgba(30, 30, 46, 0.95);
-    border-left: 1px solid #414b50;
+    border-left: 1px solid #374145;
     z-index: 55;
     overflow-y: auto;
     transform: translateX(100%);
@@ -79,14 +79,14 @@ export function graphPage(): string {
   #settings-panel.open { transform: translateX(0); }
   #settings-panel::-webkit-scrollbar { width: 4px; }
   #settings-panel::-webkit-scrollbar-track { background: transparent; }
-  #settings-panel::-webkit-scrollbar-thumb { background: #414b50; border-radius: 2px; }
+  #settings-panel::-webkit-scrollbar-thumb { background: #374145; border-radius: 2px; }
 
   .panel-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
     padding: 16px 20px 12px;
-    border-bottom: 1px solid #2e383c;
+    border-bottom: 1px solid #272e33;
   }
   .panel-header h2 {
     font-size: 15px;
@@ -112,7 +112,7 @@ export function graphPage(): string {
 
   /* Collapsible sections */
   .section {
-    border-bottom: 1px solid #2e383c;
+    border-bottom: 1px solid #272e33;
   }
   .section-header {
     display: flex;
@@ -169,8 +169,8 @@ export function graphPage(): string {
   }
   .ctrl-row input[type=text] {
     width: 100%;
-    background: #2e383c;
-    border: 1px solid #414b50;
+    background: #272e33;
+    border: 1px solid #374145;
     border-radius: 6px;
     padding: 7px 12px;
     color: #d3c6aa;
@@ -190,7 +190,7 @@ export function graphPage(): string {
   .ctrl-toggle .label { font-size: 12px; color: #9da9a0; }
   .switch {
     width: 36px; height: 20px;
-    background: #414b50;
+    background: #374145;
     border-radius: 10px;
     position: relative;
     cursor: pointer;
@@ -215,8 +215,8 @@ export function graphPage(): string {
     gap: 6px;
   }
   .pill {
-    background: #2e383c;
-    border: 1px solid #414b50;
+    background: #272e33;
+    border: 1px solid #374145;
     border-radius: 14px;
     padding: 4px 10px;
     font-size: 11px;
@@ -226,7 +226,7 @@ export function graphPage(): string {
     user-select: none;
   }
   .pill:hover { border-color: #7fbbb3; color: #d3c6aa; }
-  .pill.active { background: #414b50; color: #d3c6aa; border-color: #7fbbb3; }
+  .pill.active { background: #374145; color: #d3c6aa; border-color: #7fbbb3; }
   .pill .dot {
     display: inline-block;
     width: 8px; height: 8px;
@@ -242,7 +242,7 @@ export function graphPage(): string {
     left: 16px;
     z-index: 50;
     font-size: 11px;
-    color: #4f5b58;
+    color: #495156;
     pointer-events: none;
   }
 
@@ -252,8 +252,8 @@ export function graphPage(): string {
     bottom: 16px;
     right: 16px;
     z-index: 50;
-    background: #2e383c;
-    border: 1px solid #414b50;
+    background: #272e33;
+    border: 1px solid #374145;
     border-radius: 8px;
     padding: 8px 16px;
     color: #d699b6;
@@ -265,7 +265,7 @@ export function graphPage(): string {
     align-items: center;
     gap: 8px;
   }
-  #dream-btn:hover { border-color: #d699b6; background: #414b50; }
+  #dream-btn:hover { border-color: #d699b6; background: #374145; }
   #dream-btn:disabled { opacity: 0.5; cursor: not-allowed; }
   #dream-btn .icon { font-size: 16px; }
 
@@ -287,7 +287,7 @@ export function graphPage(): string {
   .ds-phase-label .spinner {
     display: inline-block;
     width: 12px; height: 12px;
-    border: 2px solid #414b50;
+    border: 2px solid #374145;
     border-top-color: #d699b6;
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
@@ -301,7 +301,7 @@ export function graphPage(): string {
   }
   .ds-progress-bar {
     height: 4px;
-    background: #414b50;
+    background: #374145;
     border-radius: 2px;
     overflow: hidden;
     margin-bottom: 4px;
@@ -325,7 +325,7 @@ export function graphPage(): string {
     flex: 1;
     height: 3px;
     border-radius: 1.5px;
-    background: #414b50;
+    background: #374145;
     transition: background 0.3s;
   }
   .ds-pipeline .step.done { background: #a7c080; }
@@ -340,7 +340,7 @@ export function graphPage(): string {
     flex: 1;
     font-size: 8px;
     text-align: center;
-    color: #4f5b58;
+    color: #495156;
     text-transform: uppercase;
     letter-spacing: 0.3px;
   }
@@ -353,13 +353,13 @@ export function graphPage(): string {
     display: flex; gap: 4px;
   }
   #view-tabs a {
-    background: rgba(46,56,60,0.85); border: 1px solid #414b50; border-radius: 14px;
+    background: rgba(39,46,51,0.85); border: 1px solid #374145; border-radius: 14px;
     padding: 5px 14px; font-size: 12px; font-weight: 500;
     color: #9da9a0; text-decoration: none; cursor: pointer;
     transition: all 0.15s; user-select: none;
   }
   #view-tabs a:hover { border-color: #7fbbb3; color: #d3c6aa; }
-  #view-tabs a.active { background: #414b50; color: #7fbbb3; border-color: #7fbbb3; }
+  #view-tabs a.active { background: #374145; color: #7fbbb3; border-color: #7fbbb3; }
 
   /* ─── Settings persistence buttons ─── */
   .panel-footer {
@@ -375,11 +375,11 @@ export function graphPage(): string {
     font-weight: 500;
     cursor: pointer;
     transition: all 0.15s;
-    border: 1px solid #414b50;
-    background: #2e383c;
+    border: 1px solid #374145;
+    background: #272e33;
     color: #d3c6aa;
   }
-  .panel-footer button:hover { border-color: #7fbbb3; background: #414b50; }
+  .panel-footer button:hover { border-color: #7fbbb3; background: #374145; }
   .panel-footer button.saved { border-color: #a7c080; color: #a7c080; }
 
   /* ─── Setting hint tooltips ─── */
@@ -389,7 +389,7 @@ export function graphPage(): string {
     justify-content: center;
     width: 14px; height: 14px;
     border-radius: 50%;
-    background: #414b50;
+    background: #374145;
     color: #7a8478;
     font-size: 9px;
     font-weight: 700;
@@ -400,8 +400,8 @@ export function graphPage(): string {
   }
   .hint-bubble {
     position: absolute;
-    background: #2e383c;
-    border: 1px solid #414b50;
+    background: #272e33;
+    border: 1px solid #374145;
     border-radius: 8px;
     padding: 8px 12px;
     font-size: 11px;
@@ -449,8 +449,8 @@ export function graphPage(): string {
   }
   #info-overlay.open { display: flex; }
   #info-dialog {
-    background: #272e33;
-    border: 1px solid #414b50;
+    background: #1e2326;
+    border: 1px solid #374145;
     border-radius: 12px;
     padding: 0;
     max-width: 420px;
@@ -460,16 +460,16 @@ export function graphPage(): string {
     box-shadow: 0 8px 32px rgba(0,0,0,0.5);
   }
   #info-dialog::-webkit-scrollbar { width: 4px; }
-  #info-dialog::-webkit-scrollbar-thumb { background: #414b50; border-radius: 2px; }
+  #info-dialog::-webkit-scrollbar-thumb { background: #374145; border-radius: 2px; }
   .info-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
     padding: 16px 20px 12px;
-    border-bottom: 1px solid #2e383c;
+    border-bottom: 1px solid #272e33;
     position: sticky;
     top: 0;
-    background: #272e33;
+    background: #1e2326;
     z-index: 1;
   }
   .info-header h3 { font-size: 15px; font-weight: 600; color: #d3c6aa; }
@@ -615,7 +615,7 @@ export function graphPage(): string {
   <div class="section">
     <div class="section-header"><span class="arrow">&#x25B6;</span><span class="section-title">Dream</span></div>
     <div class="section-body">
-      <button id="dream-btn-panel" style="width:100%;background:#2e383c;border:1px solid #414b50;border-radius:8px;padding:8px 16px;color:#d699b6;font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;transition:all 0.2s"><span class="icon">&#x2728;</span> Dream</button>
+      <button id="dream-btn-panel" style="width:100%;background:#272e33;border:1px solid #374145;border-radius:8px;padding:8px 16px;color:#d699b6;font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;transition:all 0.2s"><span class="icon">&#x2728;</span> Dream</button>
       <div id="dream-status">
         <div class="ds-phase-label"><span class="spinner"></span> <span id="ds-phase">-</span></div>
         <div class="ds-detail" id="ds-detail">-</div>
@@ -675,7 +675,7 @@ export function graphPage(): string {
 const TYPE_COLORS = ${JSON.stringify(TYPE_COLORS)};
 
 // Pre-compute RGB for type colors and their muted versions
-const BG = [30, 35, 38]; // #1e2326
+const BG = [25, 29, 32]; // #191d20
 const FADE_DURATION = 60000; // 60 seconds to fully mute
 const GLOW_DURATION = 3000;  // 3 seconds of glow effect
 
@@ -817,7 +817,7 @@ function buildFilters() {
     const pill = document.createElement('div');
     pill.className = 'pill active';
     pill.dataset.type = t;
-    pill.innerHTML = '<span class="dot" style="background:' + (TYPE_COLORS[t] || '#4f5b58') + '"></span>' + t;
+    pill.innerHTML = '<span class="dot" style="background:' + (TYPE_COLORS[t] || '#495156') + '"></span>' + t;
     pill.addEventListener('click', () => {
       if (activeTypes.has(t)) { activeTypes.delete(t); pill.classList.remove('active'); }
       else { activeTypes.add(t); pill.classList.add('active'); }
@@ -845,7 +845,7 @@ function rebuildSim() {
 
 function draw() {
   ctx.save();
-  ctx.fillStyle = '#1e2326';
+  ctx.fillStyle = '#191d20';
   ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
   ctx.translate(transform.x, transform.y);
   ctx.scale(transform.k, transform.k);

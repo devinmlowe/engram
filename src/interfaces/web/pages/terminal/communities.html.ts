@@ -29,12 +29,12 @@ export function terminalCommunitiesPage(): string {
   }
 
   .cell rect {
-    stroke: #272e33;
+    stroke: #1e2326;
     stroke-width: 1.5;
     cursor: pointer;
   }
   .cell text {
-    fill: #272e33;
+    fill: #1e2326;
     font-weight: 700;
     pointer-events: none;
     text-anchor: middle;
@@ -124,7 +124,7 @@ function showCommunityInfo(d, cellEl) {
 
   let html = '<div class="name">' + esc(d.name) + '</div>';
   html += '<div class="meta">' + d.entityCount + ' entities (' + pct + '% of graph)</div>';
-  html += '<div class="coherence-badge" style="background:' + c.color + ';color:#272e33">coherence: ' + d.coherenceScore.toFixed(3) + ' (' + c.text + ')</div>';
+  html += '<div class="coherence-badge" style="background:' + c.color + ';color:#1e2326">coherence: ' + d.coherenceScore.toFixed(3) + ' (' + c.text + ')</div>';
   if (d.description) html += '<div class="desc" style="margin-top:8px">' + esc(d.description) + '</div>';
 
   content.innerHTML = html;

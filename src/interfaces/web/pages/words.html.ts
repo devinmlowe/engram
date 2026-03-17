@@ -15,7 +15,7 @@ export function wordsPage(): string {
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
-    background: #272e33;
+    background: #1e2326;
     color: #d3c6aa;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
     overflow: hidden;
@@ -29,8 +29,8 @@ export function wordsPage(): string {
   #tooltip {
     position: fixed;
     display: none;
-    background: #2e383c;
-    border: 1px solid #414b50;
+    background: #272e33;
+    border: 1px solid #374145;
     border-radius: 8px;
     padding: 8px 12px;
     font-size: 13px;
@@ -41,7 +41,7 @@ export function wordsPage(): string {
 
   #stats-bar {
     position: fixed; bottom: 12px; left: 16px; z-index: 50;
-    font-size: 11px; color: #4f5b58; pointer-events: none;
+    font-size: 11px; color: #495156; pointer-events: none;
   }
 
   ${sharedPanelCss()}

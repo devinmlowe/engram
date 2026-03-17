@@ -41,12 +41,12 @@ export function terminalDepthPage(): string {
 
   /* Relevance axis labels */
   .axis-label {
-    fill: #4f5b58;
+    fill: #495156;
     font-size: 11px;
     font-family: monospace;
   }
   .axis-line {
-    stroke: #2e383c;
+    stroke: #272e33;
     stroke-dasharray: 4 4;
   }
 </style>
@@ -98,7 +98,7 @@ function hexToRgb(hex) {
 
 // Blend node color with background based on energy (0=dim, 1=bright)
 function energyColor(type, energy) {
-  const hex = TYPE_COLORS[type] || '#4f5b58';
+  const hex = TYPE_COLORS[type] || '#495156';
   const bright = hexToRgb(hex);
   const blend = 0.2 + 0.8 * (energy || 0);
   const r = Math.round(bright[0] * blend + BG[0] * (1 - blend));
@@ -298,7 +298,7 @@ Promise.all([
     .attr('class', 'link')
     .attr('x1', d => d.source.x).attr('y1', d => d.source.y)
     .attr('x2', d => d.target.x).attr('y2', d => d.target.y)
-    .attr('stroke', d => TYPE_COLORS[d.type] || '#414b50')
+    .attr('stroke', d => TYPE_COLORS[d.type] || '#374145')
     .attr('stroke-width', d => Math.max(1, Math.min(2.5, (d.weight || 1))));
 
   // Draw nodes

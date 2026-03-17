@@ -33,12 +33,12 @@ export function terminalWordsPage(): string {
   }
 
   .cell rect {
-    stroke: #272e33;
+    stroke: #1e2326;
     stroke-width: 1.5;
     cursor: pointer;
   }
   .cell text {
-    fill: #272e33;
+    fill: #1e2326;
     font-weight: 700;
     pointer-events: none;
     text-anchor: middle;
@@ -67,11 +67,11 @@ export function terminalWordsPage(): string {
     display: flex;
     justify-content: space-between;
     padding: 3px 8px;
-    border-bottom: 1px solid #2e383c;
+    border-bottom: 1px solid #272e33;
     font-family: monospace;
     font-size: 13px;
   }
-  .freq-row:nth-child(even) { background: #1e2326; }
+  .freq-row:nth-child(even) { background: #191d20; }
   .freq-word { color: #d3c6aa; }
   .freq-count { color: #7a8478; min-width: 5ch; text-align: right; }
   .freq-bar {
@@ -87,7 +87,7 @@ export function terminalWordsPage(): string {
 
   #mode-toggle {
     position: fixed; top: 0; right: 8px; z-index: 65;
-    background: #2e383c; border: 1px solid #414b50;
+    background: #272e33; border: 1px solid #374145;
     color: #9da9a0; padding: 5px 12px; font-family: monospace;
     font-size: 13px; cursor: pointer;
   }
@@ -279,7 +279,7 @@ function renderTable(words) {
     row.className = 'freq-row';
 
     const rank = document.createElement('span');
-    rank.style.color = '#4f5b58';
+    rank.style.color = '#495156';
     rank.style.minWidth = '4ch';
     rank.textContent = (i + 1) + '.';
 

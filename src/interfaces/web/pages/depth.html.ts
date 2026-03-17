@@ -15,7 +15,7 @@ export function depthPage(): string {
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
-    background: #1e2326;
+    background: #191d20;
     color: #d3c6aa;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
     overflow: hidden;
@@ -26,8 +26,8 @@ export function depthPage(): string {
   #tooltip {
     position: fixed;
     display: none;
-    background: rgba(46,56,60,0.95);
-    border: 1px solid #414b50;
+    background: rgba(39,46,51,0.95);
+    border: 1px solid #374145;
     border-radius: 8px;
     padding: 10px 14px;
     font-size: 13px;
@@ -44,7 +44,7 @@ export function depthPage(): string {
 
   #stats-bar {
     position: fixed; bottom: 12px; left: 16px; z-index: 50;
-    font-size: 11px; color: #4f5b58; pointer-events: none;
+    font-size: 11px; color: #495156; pointer-events: none;
   }
 
   ${sharedPanelCss()}
@@ -384,7 +384,7 @@ Promise.all([
     graph = ForceGraph3D({ controlType: 'orbit' })
       (document.getElementById('graph-3d'))
       .graphData(graphData)
-      .backgroundColor('#1e2326')
+      .backgroundColor('#191d20')
       .nodeColor(n => sparkNodeColor3D(n))
       .nodeVal(n => Math.max(0.3, Math.log2((n.mentionCount || 1) + 1) * 0.4 * nodeSizeMult))
       .nodeOpacity(0.85)

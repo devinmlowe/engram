@@ -223,7 +223,7 @@ Promise.all([
     .attr('y1', d => d.source.y)
     .attr('x2', d => d.target.x)
     .attr('y2', d => d.target.y)
-    .attr('stroke', d => TYPE_COLORS[d.type] || '#414b50')
+    .attr('stroke', d => TYPE_COLORS[d.type] || '#374145')
     .attr('stroke-width', d => Math.max(1, Math.min(3, (d.weight || 1))))
     .attr('stroke-opacity', 0.3);
 
