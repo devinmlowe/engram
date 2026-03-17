@@ -219,7 +219,7 @@ function renderTreemap(words) {
     const usableH = cellH - pad * 2;
 
     // Start with a font size based on cell height, then shrink if needed
-    const charRatio = 0.6; // monospace char width / font size
+    const charRatio = 0.65; // monospace char width / font size (tuned for carbonyl)
     let fontSize = Math.min(usableH * 0.35, 36);
 
     function wrapText(fs) {
