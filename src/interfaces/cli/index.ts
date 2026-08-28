@@ -848,19 +848,23 @@ program
       console.log(`[--] Ollama: not running (optional)`);
     }
 
-    // 4. Check MCP server entry point
-    const mcpEntry = join(
-      import.meta.dirname ?? ".",
-      "../mcp/server.js",  // relative from interfaces/cli/ to interfaces/mcp/
-    );
-    if (existsSync(mcpEntry)) {
+    // 4. Check MCP server entry point — sibling when running from dist/,
+    //    otherwise the built dist/ tree relative to the repo root (tsx runs)
+    const here = import.meta.dirname ?? ".";
+    const mcpCandidates = [
+      join(here, "../mcp/server.js"),
+      join(here, "../../../dist/interfaces/mcp/server.js"),
+    ];
+    const mcpEntry = mcpCandidates.find((p) => existsSync(p));
+    if (mcpEntry) {
       console.log(`[ok] MCP server: ${mcpEntry}`);
     } else {
       console.log(`[--] MCP server: not built (run 'npm run build')`);
     }
 
     // 5. Report MCP tool count
-    console.log(`[ok] MCP tools: 5 (recall, remember, show, explore, reflect)`);
+    const { MCP_TOOL_NAMES } = await import("../mcp/tool-names.js");
+    console.log(`[ok] MCP tools: ${MCP_TOOL_NAMES.length} (${MCP_TOOL_NAMES.join(", ")})`);
 
     if (allOk) {
       console.log("\nHealth: all checks passed");
