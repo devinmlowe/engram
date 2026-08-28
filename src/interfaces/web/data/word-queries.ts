@@ -50,7 +50,9 @@ export const STOP_WORDS = new Set([
 // ─── Word Frequency Cache ───────────────────────────────────────
 
 let wordCache: { words: Array<{ text: string; count: number }>; timestamp: number } | null = null;
-const WORD_CACHE_TTL = 60_000; // 1 minute
+// The WAL watcher invalidates on writes (resetWordCache); the TTL is only a
+// fallback when the watcher is unavailable, so it no longer needs to be short
+const WORD_CACHE_TTL = 10 * 60_000;
 
 export function resetWordCache(): void {
   wordCache = null;
