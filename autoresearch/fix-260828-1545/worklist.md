@@ -54,7 +54,7 @@ Metric = count of unchecked boxes (lower is better).
 
 ## Perf — low
 
-- [ ] Q1 per-row `db.prepare` in loops: `semantic/search.ts:192`, `semantic/memory.ts:404`, `graph/search.ts:99,113,487`, `drill.ts:226,249`
+- [x] Q1 per-row `db.prepare` in loops: `semantic/search.ts:192`, `semantic/memory.ts:404`, `graph/search.ts:99,113,487`, `drill.ts:226,249`
 - [ ] Q2 `src/_core/search/drill.ts:110` loads whole conversation to pick ±5 exchanges
 - [ ] Q3 `src/_core/search/scan.ts:260` detectFunctionContext walks backward per match (O(matches×lines))
 - [ ] Q4 `src/_core/db/schema.ts:378` migrateExpandedTypes probe INSERT/DELETE on every initDatabase
