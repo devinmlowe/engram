@@ -103,6 +103,21 @@ def test_timeout_bounds_lock_wait_behind_slow_call():
         c.stop()
 
 
+def test_child_exit_fails_fast_and_marks_client_dead(client):
+    import time
+
+    client.start()
+    t0 = time.monotonic()
+    with pytest.raises(McpError, match="closed the connection"):
+        client.call_tool("die", {}, timeout=10)
+    assert time.monotonic() - t0 < 3.0  # not the 10s timeout
+    assert not client.alive
+    # a restart yields a working client again (fresh queue, no stale EOF)
+    client.start()
+    assert client.alive
+    assert json.loads(client.call_tool("recall", {"query": "x"}))["tool"] == "recall"
+
+
 def test_failed_start_does_not_leak_child():
     c = McpStdioClient([sys.executable, FAKE_SERVER], env={"FAKE_HANG_INIT": "10"})
     with pytest.raises(McpError, match="[Tt]imed? ?out"):

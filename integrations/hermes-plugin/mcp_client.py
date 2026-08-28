@@ -42,13 +42,20 @@ class McpStdioClient:
         self._next_id = 0
         self._responses: "queue.Queue[dict]" = queue.Queue()
         self._reader: Optional[threading.Thread] = None
+        self._reader_dead = False
         self.server_info: Dict[str, Any] = {}
 
     # ── lifecycle ────────────────────────────────────────────────
 
     @property
     def alive(self) -> bool:
-        return self._proc is not None and self._proc.poll() is None
+        # A child whose stdout reader has ended (EOF or reader crash) can
+        # never answer again, so it counts as dead even if the PID lingers
+        return (
+            self._proc is not None
+            and self._proc.poll() is None
+            and not self._reader_dead
+        )
 
     @property
     def pid(self) -> int:
@@ -62,6 +69,10 @@ class McpStdioClient:
         env = dict(os.environ)
         if self._env:
             env.update(self._env)
+        # Fresh queue per child: a stale EOF sentinel or late response from a
+        # previous child must not be matched against the new one
+        self._responses = queue.Queue()
+        self._reader_dead = False
         self._proc = subprocess.Popen(
             self._command,
             stdin=subprocess.PIPE,
@@ -70,6 +81,7 @@ class McpStdioClient:
             cwd=self._cwd,
             env=env,
             text=True,
+            errors="replace",
             bufsize=1,
             start_new_session=True,
         )
@@ -118,6 +130,10 @@ class McpStdioClient:
                             pass
                         proc.wait(timeout=grace_s)
         finally:
+            # Let the reader drain to EOF before its stream is closed under it
+            reader = self._reader
+            if reader is not None and reader.is_alive() and reader is not threading.current_thread():
+                reader.join(timeout=1.0)
             for stream in (proc.stdout, proc.stderr):
                 try:
                     if stream:
@@ -157,16 +173,24 @@ class McpStdioClient:
         proc = self._proc
         if proc is None or proc.stdout is None:
             return
-        for line in proc.stdout:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                msg = json.loads(line)
-            except json.JSONDecodeError:
-                continue  # non-protocol chatter on stdout
-            if "id" in msg and ("result" in msg or "error" in msg):
-                self._responses.put(msg)
+        responses = self._responses
+        try:
+            for line in proc.stdout:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    msg = json.loads(line)
+                except json.JSONDecodeError:
+                    continue  # non-protocol chatter on stdout
+                if "id" in msg and ("result" in msg or "error" in msg):
+                    responses.put(msg)
+        except Exception:
+            pass  # treated exactly like EOF below
+        finally:
+            # Wake any waiter immediately instead of letting it time out
+            self._reader_dead = True
+            responses.put({"_eof": True})
 
     def _notify(self, method: str) -> None:
         self._send({"jsonrpc": "2.0", "method": method})
@@ -194,6 +218,9 @@ class McpStdioClient:
                     msg = self._responses.get(timeout=remaining)
                 except queue.Empty:
                     raise McpError(f"{method} timed out after {timeout}s") from None
+                if msg.get("_eof"):
+                    self._responses.put(msg)  # keep it for any other waiter
+                    raise McpError("MCP child process closed the connection")
                 if msg.get("id") != msg_id:
                     continue  # stale response from a timed-out call
                 if "error" in msg:

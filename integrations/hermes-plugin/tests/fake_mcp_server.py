@@ -66,6 +66,9 @@ def main():
             if log_path:
                 with open(log_path, "a") as fh:
                     fh.write(json.dumps({"tool": name, "args": args}) + "\n")
+            if name == "die":
+                sys.stdout.flush()
+                os._exit(0)  # simulate a crash: no reply, stdout closes
             if name == "toolerr":
                 reply(msg_id, {
                     "content": [{"type": "text", "text": "Error: database is locked"}],
