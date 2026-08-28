@@ -8,6 +8,7 @@ import {
   recordEntityMention,
   mergeEntities,
   findNearestEntities,
+  deleteEntityCascade,
   ftsSearchEntities,
 } from "../../src/graph/entity.js";
 import { insertRelationship } from "../../src/graph/relationship.js";
@@ -186,6 +187,33 @@ describe("Entity CRUD", () => {
       const retrieved = getEntity(t.db, "ent-mention-1");
       expect(retrieved!.mentionCount).toBe(3);
       expect(retrieved!.lastSeen).toBeGreaterThan(0);
+    });
+  });
+
+  describe("deleteEntityCascade", () => {
+    it("removes vec, FTS, relationship, and bridge rows along with the entity", () => {
+      const a = createTestEntity({ id: "ent-cas-a", name: "Cascade A", description: "alpha node" });
+      const b = createTestEntity({ id: "ent-cas-b", name: "Cascade B", description: "beta node" });
+      const embA = randomEmbedding();
+      insertEntity(t.db, a, embA);
+      insertEntity(t.db, b, randomEmbedding());
+      insertRelationship(t.db, createTestRelationship({ id: "rel-cas", sourceEntityId: "ent-cas-a", targetEntityId: "ent-cas-b" }));
+      t.db.prepare(
+        "INSERT INTO bridge_scores (entity_id, betweenness, community_span, bridge_score, generation) VALUES (?, 0.5, 2, 0.7, 1)",
+      ).run("ent-cas-a");
+
+      expect(deleteEntityCascade(t.db, "ent-cas-a")).toBe(true);
+      expect(deleteEntityCascade(t.db, "ent-cas-a")).toBe(false);
+
+      expect(getEntity(t.db, "ent-cas-a")).toBeNull();
+      expect(t.db.prepare("SELECT COUNT(*) AS n FROM relationships WHERE id = 'rel-cas'").get()).toEqual({ n: 0 });
+      expect(t.db.prepare("SELECT COUNT(*) AS n FROM bridge_scores WHERE entity_id = 'ent-cas-a'").get()).toEqual({ n: 0 });
+      // no ghost id in vector search
+      const near = findNearestEntities(t.db, embA, 5).map((r) => r.id);
+      expect(near).not.toContain("ent-cas-a");
+      // FTS no longer finds the deleted name; the survivor still indexes
+      expect(ftsSearchEntities(t.db, "alpha").map((e) => e.id)).toEqual([]);
+      expect(ftsSearchEntities(t.db, "beta").map((e) => e.id)).toEqual(["ent-cas-b"]);
     });
   });
 
