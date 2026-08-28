@@ -1,0 +1,21 @@
+{
+  "version": "2.1.0",
+  "source": "loop",
+  "timestamp": "2026-08-28T18:05:00Z",
+  "status": "COMPLETE",
+  "results_tsv": "autoresearch/loop-260828-1251/results.tsv",
+  "findings": [
+    "Conditional GO: integrate engram as Hermes memory provider, read-first (Phase 1 read-only shared DB via persistent MCP-stdio child process)",
+    "Writes deferred to Phase 2 pending upstream engram scope column + merge-capable dedup (0.95 threshold currently discards content)",
+    "backup_paths() deliberately returns [] with documented rationale; engram DB has its own lifecycle",
+    "Non-primary agent contexts (cron/subagent/flush) must not spawn the Node MCP child (RSS ~200-500MB each)",
+    "Metric saturated at 28/28 after 3 iterations (1 initial draft, 1 doc refinement, 1 verifier regex fix)"
+  ],
+  "config": {
+    "goal": "Decide how/if engram should be integrated as a Hermes memory provider (decision report mode, user-selected)",
+    "scope": "decisions/hermes-memory-provider-integration.md",
+    "metric": "rubric checks passed (max 28)",
+    "direction": "higher_is_better",
+    "verify": "autoresearch/loop-260828-1251/check-rubric.sh"
+  }
+}

@@ -1,0 +1,6 @@
+# metric_direction: higher_is_better
+iteration	timestamp	commit	metric	delta	guard	guard-metric	status	description
+0	2026-08-28T17:52:12Z	c8b1347	0	0.0	-	-	baseline	report does not exist yet
+1	2026-08-28T17:54:18Z	b74bacd	26	+26	-	-	keep	initial full ADR draft
+2	2026-08-28T17:54:48Z	f4f2bdb	27	+2	-	-	keep	exclusivity wording + risks header
+3	2026-08-28T17:55:24Z	4c28d9c	28	+1	-	-	keep	verifier regex fix (check 24)
