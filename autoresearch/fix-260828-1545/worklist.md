@@ -34,7 +34,7 @@ Metric = count of unchecked boxes (lower is better).
 - [x] L9 `src/interfaces/web/routes/sse.ts:42` cooldown drops updates instead of deferring
 - [x] L10 `src/interfaces/mcp/server.ts:923` `show` strips blank lines before slicing → wrong line numbers
 - [x] L11 `src/interfaces/cli/index.ts:852` health hardcodes "MCP tools: 5" and wrong build-check path
-- [ ] L12 `src/interfaces/web/routes/graph.ts:27`, `words.ts:10` NaN query params → silent empty responses
+- [x] L12 `src/interfaces/web/routes/graph.ts:27`, `words.ts:10` NaN query params → silent empty responses
 - [ ] L13 `hermes-plugin/provider.py:242` reap_if_idle never called in production
 - [ ] L14 `hermes-plugin/provider.py:311` lost-wakeup race between _kick_writer and _drain_writes
 - [ ] L15 `hermes-plugin/mcp_client.py:144` reader-thread death/EOF never signalled → full-timeout stalls, wedged provider
