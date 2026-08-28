@@ -23,7 +23,7 @@ Metric = count of unchecked boxes (lower is better).
 
 ## Bug — low
 
-- [ ] L1 `src/semantic/memory.ts:396` + `search.ts:167` scope/type/active filtered after global top-k → scoped results < limit, scoped dedup misses
+- [x] L1 `src/semantic/memory.ts:396` + `search.ts:167` scope/type/active filtered after global top-k → scoped results < limit, scoped dedup misses
 - [ ] L2 `src/semantic/consolidator.ts:169` dream dedup unscoped → global facts merge into hermes:* memories
 - [ ] L3 `applyContradiction` has zero callers (consolidator update/keep_both branches)
 - [ ] L4 `src/_core/search/orchestrator.ts:154` reranker degrade path drops results 6–20

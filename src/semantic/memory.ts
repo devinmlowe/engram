@@ -391,24 +391,38 @@ export function findNearestMemories(
   limit: number = 10,
   scope?: string,
 ): Array<{ id: string; distance: number }> {
-  // Query vec_memories for candidates, then filter by active status
-  // We request more candidates than needed to account for inactive filtering
-  const candidates = searchVector(db, "vec_memories", embedding, limit * 2);
+  // The vector index can't filter by active/scope, so candidates are
+  // post-filtered from a window that escalates (×4) until `limit` survive or
+  // every active memory has been considered. With a scope given, dedup
+  // candidates must come from the same tenant scope (ADR-010 — never collapse
+  // across scopes), and that tenant's true near-duplicate may sit well below
+  // the global top-k.
+  const lookup = db.prepare("SELECT is_active, scope FROM memories WHERE id = ?");
+  const activeCount = (
+    db.prepare("SELECT COUNT(*) AS n FROM memories WHERE is_active = 1").get() as { n: number }
+  ).n;
 
-  // Filter to active memories only; when a scope is given, dedup candidates
-  // must come from the same tenant scope (ADR-010 — never collapse across scopes)
-  const results: Array<{ id: string; distance: number }> = [];
-  for (const candidate of candidates) {
-    if (results.length >= limit) break;
+  let k = limit * 2;
+  let results: Array<{ id: string; distance: number }> = [];
 
-    const memory = db
-      .prepare("SELECT is_active, scope FROM memories WHERE id = ?")
-      .get(candidate.id) as { is_active: number; scope: string | null } | undefined;
+  for (;;) {
+    const candidates = searchVector(db, "vec_memories", embedding, k);
+    results = [];
+    for (const candidate of candidates) {
+      if (results.length >= limit) break;
 
-    if (!memory || !memory.is_active) continue;
-    if (scope !== undefined && (memory.scope ?? "global") !== scope) continue;
+      const memory = lookup.get(candidate.id) as
+        | { is_active: number; scope: string | null }
+        | undefined;
 
-    results.push({ id: candidate.id, distance: candidate.distance });
+      if (!memory || !memory.is_active) continue;
+      if (scope !== undefined && (memory.scope ?? "global") !== scope) continue;
+
+      results.push({ id: candidate.id, distance: candidate.distance });
+    }
+
+    if (results.length >= limit || k >= activeCount) break;
+    k = Math.min(k * 4, activeCount);
   }
 
   return results;
