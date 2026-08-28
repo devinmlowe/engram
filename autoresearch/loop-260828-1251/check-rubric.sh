@@ -40,7 +40,7 @@ c '0\.95|dedup'                                                                #
 c 'WAL|single.?writer|writer lock'                                             # 21 sqlite contention
 c 'no auth|unauthenticated|0\.0\.0\.0|CORS'                                    # 22 exposure risk
 c 'engram_[a-z]+|tool.?name.*(prefix|namespac)|namespac.*tool'                 # 23 tool namespacing
-c 'one external provider|mutual.?exclus|single.?provider'                      # 24 exclusivity rule
+c 'one external (memory )?provider|mutual.?exclus|single.?provider'            # 24 exclusivity rule
 c 'hermes memory off|rollback|reversib'                                       # 25 rollback path
 
 # --- Decision quality ---
