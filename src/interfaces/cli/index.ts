@@ -116,12 +116,10 @@ program
     const db = getDatabase(config);
 
     try {
-      await initEmbeddings(config);
-
       const importance = parseFloat(opts.importance);
       const type = opts.type;
 
-      // Validate type
+      // Validate type before paying for the multi-second model load
       const validTypes = [
         "preference",
         "decision",
@@ -136,6 +134,8 @@ program
         );
         process.exit(1);
       }
+
+      await initEmbeddings(config);
 
       const result = await rememberFact(db, {
         content,
