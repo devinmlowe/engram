@@ -75,17 +75,23 @@ class McpStdioClient:
         self._reader = threading.Thread(target=self._read_loop, daemon=True)
         self._reader.start()
 
-        result = self._request(
-            "initialize",
-            {
-                "protocolVersion": PROTOCOL_VERSION,
-                "capabilities": {},
-                "clientInfo": {"name": "hermes-engram-provider", "version": "0.1.0"},
-            },
-            timeout=timeout,
-        )
-        self.server_info = result.get("serverInfo", {})
-        self._notify("notifications/initialized")
+        try:
+            result = self._request(
+                "initialize",
+                {
+                    "protocolVersion": PROTOCOL_VERSION,
+                    "capabilities": {},
+                    "clientInfo": {"name": "hermes-engram-provider", "version": "0.1.0"},
+                },
+                timeout=timeout,
+            )
+            self.server_info = result.get("serverInfo", {})
+            self._notify("notifications/initialized")
+        except Exception:
+            # A half-started child (slow or broken handshake) must not outlive
+            # the failed start — the caller has no handle to reap it
+            self.stop()
+            raise
 
     def stop(self, grace_s: float = 3.0) -> None:
         proc = self._proc
