@@ -417,6 +417,13 @@ export function pruneZeroEntityVectors(db: Database.Database): number {
  * tables if the new types aren't already supported.
  */
 function migrateExpandedTypes(db: Database.Database): void {
+  // Fast path: the CHECK constraint text is in sqlite_master, so migrated
+  // databases are recognized without a probe write on every startup
+  const ddl = db
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'entities'")
+    .get() as { sql: string } | undefined;
+  if (ddl?.sql.includes("'function'")) return;
+
   // Test if new types are already supported
   const testId = '__type_migration_test__';
   try {
