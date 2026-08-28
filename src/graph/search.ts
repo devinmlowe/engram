@@ -260,15 +260,10 @@ export function traverseNeighborhood(
     direction: "outgoing" | "incoming";
   };
 }> {
-  // `path` carries the visited ids so the recursion only extends simple
-  // paths. Without it every walk (incl. A→B→A→B) is materialized — d³ rows
-  // for a degree-d hub at depth 3 — before DISTINCT and the JS dedup below.
-  // Any node reachable within maxDepth is reachable by a simple path of the
-  // same or shorter length, so the result set is unchanged.
   const rows = db
     .prepare(`
-      WITH RECURSIVE neighbors(entity_id, depth, rel_id, rel_type, rel_weight, rel_context, direction, path) AS (
-        SELECT ?, 0, NULL, NULL, NULL, NULL, NULL, ',' || ? || ','
+      WITH RECURSIVE neighbors(entity_id, depth, rel_id, rel_type, rel_weight, rel_context, direction) AS (
+        SELECT ?, 0, NULL, NULL, NULL, NULL, NULL
         UNION ALL
         SELECT
           CASE WHEN r.source_entity_id = n.entity_id
@@ -279,23 +274,17 @@ export function traverseNeighborhood(
           r.type,
           r.weight,
           r.context,
-          CASE WHEN r.source_entity_id = n.entity_id THEN 'outgoing' ELSE 'incoming' END,
-          n.path || (CASE WHEN r.source_entity_id = n.entity_id
-                          THEN r.target_entity_id
-                          ELSE r.source_entity_id END) || ','
+          CASE WHEN r.source_entity_id = n.entity_id THEN 'outgoing' ELSE 'incoming' END
         FROM neighbors n
         JOIN relationships r
           ON (r.source_entity_id = n.entity_id OR r.target_entity_id = n.entity_id)
         WHERE n.depth < ?
-          AND instr(n.path, ',' || (CASE WHEN r.source_entity_id = n.entity_id
-                                         THEN r.target_entity_id
-                                         ELSE r.source_entity_id END) || ',') = 0
       )
       SELECT DISTINCT entity_id, depth, rel_id, rel_type, rel_weight, rel_context, direction
       FROM neighbors
       WHERE depth > 0
     `)
-    .all(entityId, entityId, maxDepth) as Array<{
+    .all(entityId, maxDepth) as Array<{
     entity_id: string;
     depth: number;
     rel_id: string;
