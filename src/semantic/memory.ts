@@ -299,18 +299,22 @@ export function recordAccess(
 ): void {
   // FSRS reinforcement (ADR-010 upgrade): compute stability growth from the
   // memory's state BEFORE this access, then persist alongside the bump.
-  const row = db.prepare("SELECT * FROM memories WHERE id = ?").get(id) as
-    | MemoryRow
-    | undefined;
-  if (!row) return;
+  // Immediate transaction: the MCP server and dream daemon share this WAL
+  // DB from separate processes, so the read must hold the write lock.
+  db.transaction(() => {
+    const row = db.prepare("SELECT * FROM memories WHERE id = ?").get(id) as
+      | MemoryRow
+      | undefined;
+    if (!row) return;
 
-  const { stability, importance } = onSuccessfulAccess(rowToMemory(row));
-  db.prepare(
-    `UPDATE memories
-     SET access_count = access_count + 1, last_accessed = unixepoch(),
-         stability = ?, importance = ?
-     WHERE id = ?`,
-  ).run(stability, importance, id);
+    const { stability, importance } = onSuccessfulAccess(rowToMemory(row));
+    db.prepare(
+      `UPDATE memories
+       SET access_count = access_count + 1, last_accessed = unixepoch(),
+           stability = ?, importance = ?
+       WHERE id = ?`,
+    ).run(stability, importance, id);
+  }).immediate();
 }
 
 /**
@@ -320,13 +324,15 @@ export function applyContradiction(
   db: Database.Database,
   id: string,
 ): void {
-  const row = db.prepare("SELECT * FROM memories WHERE id = ?").get(id) as
-    | MemoryRow
-    | undefined;
-  if (!row) return;
+  db.transaction(() => {
+    const row = db.prepare("SELECT * FROM memories WHERE id = ?").get(id) as
+      | MemoryRow
+      | undefined;
+    if (!row) return;
 
-  const { stability } = onContradiction(rowToMemory(row));
-  db.prepare("UPDATE memories SET stability = ? WHERE id = ?").run(stability, id);
+    const { stability } = onContradiction(rowToMemory(row));
+    db.prepare("UPDATE memories SET stability = ? WHERE id = ?").run(stability, id);
+  }).immediate();
 }
 
 // ─── Conflict Tracking ──────────────────────────────────────────

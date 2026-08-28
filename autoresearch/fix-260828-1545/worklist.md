@@ -28,7 +28,7 @@ Metric = count of unchecked boxes (lower is better).
 - [x] L3 `applyContradiction` has zero callers (consolidator update/keep_both branches)
 - [x] L4 `src/_core/search/orchestrator.ts:154` reranker degrade path drops results 6–20
 - [x] L5 `src/graph/search.ts:432` exploreSelective uses cosine-distance formula on L2 table
-- [ ] L6 `src/semantic/memory.ts:302` recordAccess read-modify-write not transactional
+- [x] L6 `src/semantic/memory.ts:302` recordAccess read-modify-write not transactional
 - [ ] L7 `src/interfaces/shared/remember.ts:129` merge path non-atomic (updateMemory then re-embed outside txn; redundant deleteVector)
 - [ ] L8 `src/interfaces/shared/remember.ts:324` batch entity-linking after commit, unguarded → isError after persisting
 - [ ] L9 `src/interfaces/web/routes/sse.ts:42` cooldown drops updates instead of deferring
