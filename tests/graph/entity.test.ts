@@ -190,6 +190,18 @@ describe("Entity CRUD", () => {
     });
   });
 
+  describe("getEntityByName query plan", () => {
+    it("uses the NOCASE name index instead of scanning", () => {
+      insertEntity(t.db, createTestEntity({ id: "ent-plan", name: "Kubernetes" }), randomEmbedding());
+      expect(getEntityByName(t.db, "kubernetes")?.id).toBe("ent-plan");
+      expect(getEntityByName(t.db, "KUBERNETES")?.id).toBe("ent-plan");
+      const plan = t.db
+        .prepare("EXPLAIN QUERY PLAN SELECT * FROM entities WHERE name = ? COLLATE NOCASE")
+        .all("x") as Array<{ detail: string }>;
+      expect(plan.map((p) => p.detail).join(" ")).toMatch(/USING INDEX idx_entities_name_lower/);
+    });
+  });
+
   describe("deleteEntityCascade", () => {
     it("removes vec, FTS, relationship, and bridge rows along with the entity", () => {
       const a = createTestEntity({ id: "ent-cas-a", name: "Cascade A", description: "alpha node" });
