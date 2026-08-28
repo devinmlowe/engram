@@ -75,6 +75,32 @@ def test_cli_status_reports_available(tmp_path, capsys, monkeypatch):
     assert "available" in capsys.readouterr().out.lower()
 
 
+def test_cli_recall_passes_budget_and_surfaces_failures(tmp_path, capsys, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    log = tmp_path / "cli.jsonl"
+    (home / "engram.json").write_text(
+        json.dumps({"server_command": [sys.executable, FAKE_SERVER], "extra_env": {"FAKE_LOG": str(log)}})
+    )
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    cli = load_by_path("_engram_cli4", "cli.py")
+    parser = make_plugin_parser(cli)
+
+    rc = cli.engram_command(parser.parse_args(["recall", "tailscale", "--budget", "333"]))
+    assert rc == 0
+    calls = [json.loads(l) for l in log.read_text().splitlines() if l.strip()]
+    assert calls[-1]["tool"] == "recall"
+    assert calls[-1]["args"]["budget"] == 333
+
+    # a broken server must not masquerade as "(no results)" with rc 0
+    (home / "engram.json").write_text(json.dumps({"server_command": [str(tmp_path / "missing-bin")]}))
+    rc = cli.engram_command(parser.parse_args(["recall", "tailscale"]))
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert "(no results)" not in captured.out
+    assert "failed" in captured.err
+
+
 def test_cli_recall_prints_results(tmp_path, capsys, monkeypatch):
     home = tmp_path / "home"
     home.mkdir()

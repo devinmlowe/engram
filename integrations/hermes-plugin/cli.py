@@ -52,9 +52,18 @@ def engram_command(args) -> int:
     if cmd == "recall":
         provider = _make_provider()
         try:
-            text = provider.prefetch(args.query)
+            # Go through the client directly: prefetch() swallows errors and
+            # ignores --budget by design (it serves Hermes's turn path)
+            client = provider._ensure_client()
+            call: dict = {"query": args.query, "budget": int(args.budget)}
+            if provider._config.get("sources"):
+                call["sources"] = provider._config["sources"]
+            text = client.call_tool("recall", call, timeout=60.0)
             print(text if text else "(no results)")
             return 0
+        except Exception as exc:
+            print(f"engram recall failed: {exc}", file=sys.stderr)
+            return 1
         finally:
             provider.shutdown()
 
