@@ -64,11 +64,15 @@ function hasFtsTable(db: Database.Database): boolean {
 /**
  * Insert an entity with its embedding, syncing entities, entities_fts
  * (when present), and vec_entities tables atomically.
+ *
+ * Pass `null` for entities that must not take part in vector search
+ * (file-structure entities): a zero vector is NOT neutral — it sits at L2
+ * distance 1.0 from every unit query, ahead of most real entities.
  */
 export function insertEntity(
   db: Database.Database,
   entity: Entity,
-  embedding: number[],
+  embedding: number[] | null,
 ): void {
   const run = db.transaction(() => {
     // 1. Insert into entities table
@@ -104,7 +108,11 @@ export function insertEntity(
     }
 
     // 3. Insert into vec_entities (delete first — vec0 doesn't support REPLACE)
-    insertVector(db, "vec_entities", entity.id, embedding);
+    if (embedding) {
+      insertVector(db, "vec_entities", entity.id, embedding);
+    } else {
+      deleteVector(db, "vec_entities", entity.id);
+    }
   });
 
   run();
