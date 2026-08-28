@@ -15,6 +15,9 @@ const sseClients = new Set<ServerResponse>();
 
 let lastBroadcast = 0;
 const BROADCAST_COOLDOWN = 30_000; // 30s minimum between full graph broadcasts
+// One trailing broadcast is queued when an update lands inside the cooldown,
+// so clients converge on the latest state instead of waiting for the next write
+let pendingBroadcast: ReturnType<typeof setTimeout> | null = null;
 
 export function getSseClientCount(): number {
   return sseClients.size;
@@ -39,7 +42,21 @@ export function handleSseConnection(req: IncomingMessage, res: ServerResponse): 
 export function broadcastUpdate(db: Database.Database): void {
   if (sseClients.size === 0) return;
   const now = Date.now();
-  if (now - lastBroadcast < BROADCAST_COOLDOWN) return;
+  const elapsed = now - lastBroadcast;
+  if (elapsed < BROADCAST_COOLDOWN) {
+    if (pendingBroadcast === null) {
+      pendingBroadcast = setTimeout(() => {
+        pendingBroadcast = null;
+        broadcastUpdate(db);
+      }, BROADCAST_COOLDOWN - elapsed);
+      pendingBroadcast.unref?.();
+    }
+    return;
+  }
+  if (pendingBroadcast !== null) {
+    clearTimeout(pendingBroadcast);
+    pendingBroadcast = null;
+  }
   lastBroadcast = now;
   const data = JSON.stringify(getGraphData(db));
   for (const res of sseClients) {
