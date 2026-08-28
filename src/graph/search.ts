@@ -240,7 +240,7 @@ export function exploreEntity(
 // ─── Neighborhood Traversal ──────────────────────────────────────
 
 /**
- * Bidirectional neighborhood traversal using recursive CTE.
+ * Bidirectional neighborhood traversal (breadth-first).
  *
  * Returns entities reachable within maxDepth hops from the starting
  * entity, along with the relationship connecting them.
@@ -260,49 +260,14 @@ export function traverseNeighborhood(
     direction: "outgoing" | "incoming";
   };
 }> {
-  const rows = db
-    .prepare(`
-      WITH RECURSIVE neighbors(entity_id, depth, rel_id, rel_type, rel_weight, rel_context, direction) AS (
-        SELECT ?, 0, NULL, NULL, NULL, NULL, NULL
-        UNION ALL
-        SELECT
-          CASE WHEN r.source_entity_id = n.entity_id
-               THEN r.target_entity_id
-               ELSE r.source_entity_id END,
-          n.depth + 1,
-          r.id,
-          r.type,
-          r.weight,
-          r.context,
-          CASE WHEN r.source_entity_id = n.entity_id THEN 'outgoing' ELSE 'incoming' END
-        FROM neighbors n
-        JOIN relationships r
-          ON (r.source_entity_id = n.entity_id OR r.target_entity_id = n.entity_id)
-        WHERE n.depth < ?
-      )
-      SELECT DISTINCT entity_id, depth, rel_id, rel_type, rel_weight, rel_context, direction
-      FROM neighbors
-      WHERE depth > 0
-    `)
-    .all(entityId, maxDepth) as Array<{
-    entity_id: string;
-    depth: number;
-    rel_id: string;
-    rel_type: string;
-    rel_weight: number;
-    rel_context: string | null;
-    direction: string;
-  }>;
+  // Level-by-level BFS in JS (same shape as exploreSelective). The previous
+  // recursive CTE enumerated every walk up to maxDepth — d^depth rows for a
+  // degree-d hub — before DISTINCT; this visits each edge once per level.
+  const typeSet =
+    relationshipTypes && relationshipTypes.length > 0
+      ? new Set<string>(relationshipTypes)
+      : null;
 
-  // Filter by relationship types if specified
-  let filtered = rows;
-  if (relationshipTypes && relationshipTypes.length > 0) {
-    const typeSet = new Set(relationshipTypes);
-    filtered = rows.filter((r) => typeSet.has(r.rel_type as RelationshipType));
-  }
-
-  // Deduplicate: keep first occurrence of each entity (shallowest depth)
-  const seen = new Set<string>();
   const results: Array<{
     entityId: string;
     depth: number;
@@ -314,26 +279,66 @@ export function traverseNeighborhood(
     };
   }> = [];
 
-  // Sort by depth to ensure shallowest first
-  filtered.sort((a, b) => a.depth - b.depth);
+  // `reported`: first arrival via a type-matching edge (shallowest depth).
+  // `expanded`: nodes already queued for expansion — traversal continues
+  // through non-matching edges exactly as the CTE did.
+  const reported = new Set<string>([entityId]);
+  const expanded = new Set<string>([entityId]);
+  let frontier: string[] = [entityId];
+  const CHUNK = 400; // stay well under SQLite's bound-variable limit
 
-  for (const row of filtered) {
-    // Skip the starting entity if it appears in results
-    if (row.entity_id === entityId) continue;
+  for (let depth = 1; depth <= maxDepth && frontier.length > 0; depth++) {
+    const next: string[] = [];
 
-    if (seen.has(row.entity_id)) continue;
-    seen.add(row.entity_id);
+    for (let i = 0; i < frontier.length; i += CHUNK) {
+      const chunk = frontier.slice(i, i + CHUNK);
+      const chunkSet = new Set(chunk);
+      const placeholders = chunk.map(() => "?").join(", ");
+      const rows = db
+        .prepare(
+          `SELECT id, source_entity_id, target_entity_id, type, weight, context
+           FROM relationships
+           WHERE source_entity_id IN (${placeholders}) OR target_entity_id IN (${placeholders})`,
+        )
+        .all(...chunk, ...chunk) as Array<{
+        id: string;
+        source_entity_id: string;
+        target_entity_id: string;
+        type: string;
+        weight: number;
+        context: string | null;
+      }>;
 
-    results.push({
-      entityId: row.entity_id,
-      depth: row.depth,
-      relationship: {
-        type: row.rel_type as RelationshipType,
-        weight: row.rel_weight,
-        context: row.rel_context ?? undefined,
-        direction: row.direction as "outgoing" | "incoming",
-      },
-    });
+      for (const r of rows) {
+        const hops: Array<[string, string, "outgoing" | "incoming"]> = [
+          [r.source_entity_id, r.target_entity_id, "outgoing"],
+          [r.target_entity_id, r.source_entity_id, "incoming"],
+        ];
+        for (const [from, to, direction] of hops) {
+          if (!chunkSet.has(from) || to === entityId) continue;
+
+          if (!reported.has(to) && (typeSet === null || typeSet.has(r.type))) {
+            reported.add(to);
+            results.push({
+              entityId: to,
+              depth,
+              relationship: {
+                type: r.type as RelationshipType,
+                weight: r.weight,
+                context: r.context ?? undefined,
+                direction,
+              },
+            });
+          }
+          if (!expanded.has(to)) {
+            expanded.add(to);
+            next.push(to);
+          }
+        }
+      }
+    }
+
+    frontier = next;
   }
 
   return results;
