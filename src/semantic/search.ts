@@ -103,6 +103,7 @@ function ftsSearchMemories(
   db: Database.Database,
   query: string,
   limit: number,
+  filters: { types?: string[]; scopes?: string[] } = {},
 ): RankedItem[] {
   // Sanitize FTS query: escape special chars, wrap terms in quotes
   const sanitized = query
@@ -114,17 +115,30 @@ function ftsSearchMemories(
 
   if (!sanitized) return [];
 
+  // Filters live in SQL so the LIMIT counts matching rows, not raw hits
+  const clauses = ["memories_fts MATCH ?", "m.is_active = 1"];
+  const params: unknown[] = [sanitized];
+  if (filters.types && filters.types.length > 0) {
+    clauses.push(`m.type IN (${filters.types.map(() => "?").join(", ")})`);
+    params.push(...filters.types);
+  }
+  if (filters.scopes && filters.scopes.length > 0) {
+    clauses.push(`m.scope IN (${filters.scopes.map(() => "?").join(", ")})`);
+    params.push(...filters.scopes);
+  }
+  params.push(limit);
+
   try {
     const rows = db
       .prepare(
         `SELECT m.id, fts.rank
          FROM memories_fts AS fts
          JOIN memories AS m ON m.rowid = fts.rowid
-         WHERE memories_fts MATCH ?
+         WHERE ${clauses.join(" AND ")}
          ORDER BY fts.rank
          LIMIT ?`,
       )
-      .all(sanitized, limit) as Array<{ id: string; rank: number }>;
+      .all(...params) as Array<{ id: string; rank: number }>;
 
     return rows.map((row, idx) => ({
       id: row.id,
@@ -164,50 +178,60 @@ export async function searchSemantic(
     return [];
   }
 
-  const fetchK = Math.max(limit, 20);
+  const hasFilter =
+    (types !== undefined && types.length > 0) ||
+    (scopes !== undefined && scopes.length > 0);
 
   // 1. Embed query
   const queryEmbedding = await embedQuery(query);
 
-  // 2. Vector search
-  const vectorResults = vectorSearchMemories(db, queryEmbedding, fetchK);
+  // Steps 2-5 run over a candidate window. The vector index can't filter by
+  // type/scope, so with a filter active the window escalates (×4) until it
+  // yields `limit` matches or covers every active memory — otherwise a tenant
+  // whose memories are a thin slice of the store gets < limit (often 0) hits
+  const activeCount = hasFilter
+    ? (db.prepare("SELECT COUNT(*) AS n FROM memories WHERE is_active = 1").get() as { n: number }).n
+    : 0;
+  const fetchRow = db.prepare("SELECT * FROM memories WHERE id = ? AND is_active = 1");
 
-  // 3. FTS search
-  const ftsResults = ftsSearchMemories(db, query, fetchK);
+  let fetchK = Math.max(limit, 20);
+  let memoriesWithScores: Array<{ memory: Memory; rrfScore: number }> = [];
 
-  // 4. RRF fusion
-  const fused = rrfFuse(vectorResults, ftsResults);
+  for (;;) {
+    // 2. Vector search
+    const vectorResults = vectorSearchMemories(db, queryEmbedding, fetchK);
 
-  if (fused.length === 0) {
-    return [];
-  }
+    // 3. FTS search (filters applied in SQL)
+    const ftsResults = ftsSearchMemories(db, query, fetchK, { types, scopes });
 
-  // 5. Fetch full Memory objects and filter
-  const memoriesWithScores: Array<{
-    memory: Memory;
-    rrfScore: number;
-  }> = [];
+    // 4. RRF fusion
+    const fused = rrfFuse(vectorResults, ftsResults);
 
-  for (const item of fused) {
-    const row = db
-      .prepare("SELECT * FROM memories WHERE id = ? AND is_active = 1")
-      .get(item.id) as MemoryRow | undefined;
+    // 5. Fetch full Memory objects and filter
+    memoriesWithScores = [];
+    for (const item of fused) {
+      const row = fetchRow.get(item.id) as MemoryRow | undefined;
+      if (!row) continue;
 
-    if (!row) continue;
+      const memory = rowToMemory(row);
 
-    const memory = rowToMemory(row);
+      // Apply optional type filter
+      if (types && types.length > 0 && !types.includes(memory.type)) {
+        continue;
+      }
 
-    // Apply optional type filter
-    if (types && types.length > 0 && !types.includes(memory.type)) {
-      continue;
+      // Apply optional tenant-scope filter (ADR-010)
+      if (scopes && scopes.length > 0 && !scopes.includes(memory.scope ?? "global")) {
+        continue;
+      }
+
+      memoriesWithScores.push({ memory, rrfScore: item.score });
     }
 
-    // Apply optional tenant-scope filter (ADR-010)
-    if (scopes && scopes.length > 0 && !scopes.includes(memory.scope ?? "global")) {
-      continue;
+    if (!hasFilter || memoriesWithScores.length >= limit || fetchK >= activeCount) {
+      break;
     }
-
-    memoriesWithScores.push({ memory, rrfScore: item.score });
+    fetchK = Math.min(fetchK * 4, activeCount);
   }
 
   if (memoriesWithScores.length === 0) {
