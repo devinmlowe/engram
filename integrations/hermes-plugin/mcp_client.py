@@ -16,6 +16,7 @@ import queue
 import signal
 import subprocess
 import threading
+import time
 from typing import Any, Dict, List, Optional
 
 PROTOCOL_VERSION = "2024-11-05"
@@ -173,15 +174,24 @@ class McpStdioClient:
     def _request(
         self, method: str, params: Dict[str, Any], timeout: float
     ) -> Dict[str, Any]:
-        with self._lock:
+        # One deadline bounds lock wait + response wait, so a caller's budget
+        # (e.g. prefetch's 6s) holds even behind a slow in-flight request or
+        # a burst of stale responses from earlier timed-out calls
+        deadline = time.monotonic() + timeout
+        if not self._lock.acquire(timeout=timeout):
+            raise McpError(f"{method} timed out after {timeout}s (client busy)")
+        try:
             self._next_id += 1
             msg_id = self._next_id
             self._send(
                 {"jsonrpc": "2.0", "id": msg_id, "method": method, "params": params}
             )
             while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise McpError(f"{method} timed out after {timeout}s")
                 try:
-                    msg = self._responses.get(timeout=timeout)
+                    msg = self._responses.get(timeout=remaining)
                 except queue.Empty:
                     raise McpError(f"{method} timed out after {timeout}s") from None
                 if msg.get("id") != msg_id:
@@ -190,6 +200,8 @@ class McpStdioClient:
                     err = msg["error"]
                     raise McpError(f"{err.get('message', 'unknown error')} (code {err.get('code')})")
                 return msg.get("result", {})
+        finally:
+            self._lock.release()
 
     def _send(self, msg: Dict[str, Any]) -> None:
         proc = self._proc

@@ -76,6 +76,33 @@ def test_call_tool_timeout():
         c.stop()
 
 
+def test_timeout_bounds_lock_wait_behind_slow_call():
+    import threading
+    import time
+
+    c = McpStdioClient([sys.executable, FAKE_SERVER], env={"FAKE_SLOW_S": "3"})
+    try:
+        c.start()
+        started = threading.Event()
+
+        def slow():
+            started.set()
+            c.call_tool("slow", {}, timeout=10)
+
+        t = threading.Thread(target=slow, daemon=True)
+        t.start()
+        started.wait()
+        time.sleep(0.2)  # let the slow call take the lock
+        t0 = time.monotonic()
+        with pytest.raises(McpError, match="[Tt]imed? ?out"):
+            c.call_tool("recall", {"query": "x"}, timeout=0.5)
+        # must give up on the caller's budget, not wait out the 3s slow call
+        assert time.monotonic() - t0 < 2.0
+        t.join(timeout=10)
+    finally:
+        c.stop()
+
+
 def test_failed_start_does_not_leak_child():
     c = McpStdioClient([sys.executable, FAKE_SERVER], env={"FAKE_HANG_INIT": "10"})
     with pytest.raises(McpError, match="[Tt]imed? ?out"):
