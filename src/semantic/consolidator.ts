@@ -465,7 +465,10 @@ function normalizeAction(
 /**
  * Load the conflict resolution prompt template from disk.
  */
+let conflictPromptCache: string | null = null;
+
 function loadConflictPrompt(): string {
+  if (conflictPromptCache !== null) return conflictPromptCache;
   const promptPath = join(
     __dirname,
     "..",
@@ -473,7 +476,8 @@ function loadConflictPrompt(): string {
     "prompts",
     "resolve-conflict.md",
   );
-  return readFileSync(promptPath, "utf-8");
+  conflictPromptCache = readFileSync(promptPath, "utf-8");
+  return conflictPromptCache;
 }
 
 /**
