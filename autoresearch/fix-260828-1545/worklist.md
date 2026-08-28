@@ -26,7 +26,7 @@ Metric = count of unchecked boxes (lower is better).
 - [x] L1 `src/semantic/memory.ts:396` + `search.ts:167` scope/type/active filtered after global top-k → scoped results < limit, scoped dedup misses
 - [x] L2 `src/semantic/consolidator.ts:169` dream dedup unscoped → global facts merge into hermes:* memories
 - [x] L3 `applyContradiction` has zero callers (consolidator update/keep_both branches)
-- [ ] L4 `src/_core/search/orchestrator.ts:154` reranker degrade path drops results 6–20
+- [x] L4 `src/_core/search/orchestrator.ts:154` reranker degrade path drops results 6–20
 - [ ] L5 `src/graph/search.ts:432` exploreSelective uses cosine-distance formula on L2 table
 - [ ] L6 `src/semantic/memory.ts:302` recordAccess read-modify-write not transactional
 - [ ] L7 `src/interfaces/shared/remember.ts:129` merge path non-atomic (updateMemory then re-embed outside txn; redundant deleteVector)

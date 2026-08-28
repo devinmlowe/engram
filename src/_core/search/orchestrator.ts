@@ -17,7 +17,7 @@ import type {
 } from "../types/index.js";
 import { rrfFuse, normalizeMinMaxFloored, type RankedItem } from "./rrf.js";
 import { allocateBudget } from "./budget.js";
-import { rerankResults } from "./reranker.js";
+import { rerankResults, isRerankerAvailable } from "./reranker.js";
 
 // TODO: Phase 2+ — These cross-domain imports should be replaced with a
 // callback/registry pattern so the orchestrator doesn't depend on domain modules.
@@ -167,9 +167,10 @@ export async function searchMultiSource(
         model: rerankerConfig.model,
       });
 
-      // If reranking succeeded (returned different count or order), use reranked results
-      // plus any remaining results beyond the reranked window
-      if (reranked.length > 0) {
+      // Only trust the reranked window when the model actually ran: on a
+      // load failure rerankResults degrades to candidates.slice(0, topK),
+      // and treating that as a rerank would silently drop results 6-20
+      if (reranked.length > 0 && isRerankerAvailable()) {
         const rerankedIds = new Set(reranked.map((r) => r.id));
         const remaining = allResults.slice(20).filter((r) => !rerankedIds.has(r.id));
         const budgeted = budgetResults([...reranked, ...remaining], budget);
