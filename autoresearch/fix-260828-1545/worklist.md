@@ -18,7 +18,8 @@ Metric = count of unchecked boxes (lower is better).
 - [x] B9 `hermes-plugin/provider.py:181` dashboard writes `engram/config.json`, provider reads only `engram.json`
 - [x] B10 `src/graph/reflection.ts:761` mergeRedundantEntities repoints edges without dedup → UNIQUE abort, prune step no-ops
 - [x] B11 `src/graph/reflection.ts:771,799` + `cleanup.ts:34` entity DELETE skips vec/FTS/bridge cleanup → ghost ids, FK failures
-- [ ] B12 `src/graph/file-indexer.ts:437` zero-vector symbol embeddings out-rank real entities at L2 distance 1.0
+- [x] B12 `src/graph/file-indexer.ts:437` zero-vector symbol embeddings out-rank real entities at L2 distance 1.0
+- [ ] B12b one-time idempotent cleanup: remove existing all-zero rows from vec_entities in the live DB (schema migration, reversible via re-index)
 
 ## Bug — low
 

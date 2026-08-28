@@ -431,14 +431,6 @@ export function parseFileStructure(filePath: string): ParseResult {
 // ─── Graph Indexing ─────────────────────────────────────────────
 
 /**
- * Generate a zero embedding of the correct dimension.
- * Used for file structure entities that don't need semantic search.
- */
-function zeroEmbedding(dims = 256): number[] {
-  return new Array(dims).fill(0);
-}
-
-/**
  * Simple string hash for deterministic IDs.
  * Uses djb2 algorithm — fast and sufficient for entity key generation.
  */
@@ -500,7 +492,7 @@ export function indexFileStructure(
       mentionCount: 1,
       createdAt: now,
     };
-    insertEntity(db, fileEntity, zeroEmbedding());
+    insertEntity(db, fileEntity, null); // structural: excluded from vector search
     entitiesCreated++;
   } else {
     updateEntity(db, fileId, { lastSeen: now });
@@ -530,7 +522,7 @@ export function indexFileStructure(
         mentionCount: 1,
         createdAt: now,
       };
-      insertEntity(db, symEntity, zeroEmbedding());
+      insertEntity(db, symEntity, null);
       entitiesCreated++;
     } else {
       updateEntity(db, symId, {

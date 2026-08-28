@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { indexFileStructure } from "../../src/graph/file-indexer.js";
 import { exploreEntity } from "../../src/graph/search.js";
+import { ftsSearchEntities } from "../../src/graph/entity.js";
 import { createTestDb } from "../helpers.js";
 import type { TestDb } from "../helpers.js";
 
@@ -63,6 +64,22 @@ export const formatDate = (date: Date): string => {
 `.trimStart();
 
 describe("File Indexer Integration", () => {
+  it("structural entities stay out of vector search (no zero-vector rows)", () => {
+    const filePath = writeTempFile("sample.ts", SAMPLE_TS);
+    indexFileStructure(t.db, filePath);
+
+    const indexed = t.db.prepare("SELECT COUNT(*) AS n FROM entities").get() as { n: number };
+    expect(indexed.n).toBeGreaterThan(1);
+
+    // A zero vector sits at L2 distance 1.0 from every unit query and would
+    // out-rank real entities; structural entities must not be in vec_entities
+    const vecRows = t.db.prepare("SELECT COUNT(*) AS n FROM vec_entities").get() as { n: number };
+    expect(vecRows.n).toBe(0);
+
+    // Still reachable by full-text search on the symbol name
+    expect(ftsSearchEntities(t.db, "initDatabase").map((e) => e.name)).toContain("initDatabase");
+  });
+
   it("indexes a TS file creating entities with correct types", () => {
     const filePath = writeTempFile("server.ts", SAMPLE_TS);
 
