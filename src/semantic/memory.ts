@@ -17,6 +17,7 @@ import {
   insertFtsRow,
   deleteFtsRow,
 } from "../_core/db/index.js";
+import { onSuccessfulAccess, onContradiction } from "./decay.js";
 
 // ─── Row Type Helpers ───────────────────────────────────────────
 
@@ -36,6 +37,7 @@ interface MemoryRow {
   is_active: number;
   source: string | null;
   scope: string | null;
+  stability: number | null;
 }
 
 interface ConflictRow {
@@ -67,6 +69,7 @@ function rowToMemory(row: MemoryRow): Memory {
     isActive: Boolean(row.is_active),
     source: (row.source as MemorySource) ?? "user",
     scope: row.scope ?? "global",
+    stability: row.stability ?? undefined,
   };
 }
 
@@ -294,9 +297,36 @@ export function recordAccess(
   db: Database.Database,
   id: string,
 ): void {
+  // FSRS reinforcement (ADR-010 upgrade): compute stability growth from the
+  // memory's state BEFORE this access, then persist alongside the bump.
+  const row = db.prepare("SELECT * FROM memories WHERE id = ?").get(id) as
+    | MemoryRow
+    | undefined;
+  if (!row) return;
+
+  const { stability, importance } = onSuccessfulAccess(rowToMemory(row));
   db.prepare(
-    "UPDATE memories SET access_count = access_count + 1, last_accessed = unixepoch() WHERE id = ?",
-  ).run(id);
+    `UPDATE memories
+     SET access_count = access_count + 1, last_accessed = unixepoch(),
+         stability = ?, importance = ?
+     WHERE id = ?`,
+  ).run(stability, importance, id);
+}
+
+/**
+ * Persist the contradiction penalty on a memory's stability (FSRS: ×0.8).
+ */
+export function applyContradiction(
+  db: Database.Database,
+  id: string,
+): void {
+  const row = db.prepare("SELECT * FROM memories WHERE id = ?").get(id) as
+    | MemoryRow
+    | undefined;
+  if (!row) return;
+
+  const { stability } = onContradiction(rowToMemory(row));
+  db.prepare("UPDATE memories SET stability = ? WHERE id = ?").run(stability, id);
 }
 
 // ─── Conflict Tracking ──────────────────────────────────────────

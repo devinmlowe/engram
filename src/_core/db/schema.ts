@@ -332,6 +332,9 @@ function createSchema(db: Database.Database, config: EngramConfig): void {
   idempotentAlter(db, "memories", "scope", "ALTER TABLE memories ADD COLUMN scope TEXT NOT NULL DEFAULT 'global'");
   db.exec("CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope)");
 
+  // ADR-010 upgrade: persist FSRS stability (NULL = derive from type constant)
+  idempotentAlter(db, "memories", "stability", "ALTER TABLE memories ADD COLUMN stability REAL");
+
   // FTS5 virtual tables (created separately — can't use IF NOT EXISTS)
   createFtsIfNeeded(db, "exchanges_fts", `
     CREATE VIRTUAL TABLE exchanges_fts USING fts5(
