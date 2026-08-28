@@ -106,18 +106,22 @@ function drillEpisodic(result: SearchResult, db: Database.Database): DrillResult
     };
   }
 
-  // Get surrounding exchanges from same conversation
-  const allExchanges = db.prepare(
+  // 5 before, 5 after — fetch just the window, not the whole conversation
+  const windowRows = db.prepare(
     `SELECT * FROM exchanges
      WHERE conversation_id = ?
+       AND exchange_index BETWEEN ? AND ?
+       AND id != ?
      ORDER BY exchange_index ASC`,
-  ).all(conversationId) as ExchangeRow[];
+  ).all(
+    conversationId,
+    exchange.exchange_index - 5,
+    exchange.exchange_index + 5,
+    exchange.id,
+  ) as ExchangeRow[];
 
-  const currentIndex = allExchanges.findIndex((e) => e.id === result.id);
-
-  // 5 before, 5 after
-  const beforeExchanges = allExchanges.slice(Math.max(0, currentIndex - 5), currentIndex);
-  const afterExchanges = allExchanges.slice(currentIndex + 1, currentIndex + 6);
+  const beforeExchanges = windowRows.filter((e) => e.exchange_index < exchange.exchange_index);
+  const afterExchanges = windowRows.filter((e) => e.exchange_index > exchange.exchange_index);
 
   const fullContent = formatExchange(exchange);
 
