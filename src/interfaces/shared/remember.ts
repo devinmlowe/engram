@@ -12,9 +12,13 @@ import type { MemoryType, MemorySource } from "../../_core/types/index.js";
 import { embedDocument, embedDocumentBatch } from "../../_core/embeddings/index.js";
 import {
   insertMemory,
+  updateMemory,
   findNearestMemories,
   recordAccess,
 } from "../../semantic/memory.js";
+import { deleteVector, insertVector } from "../../_core/db/index.js";
+import { generateStructured } from "../../_core/llm/index.js";
+import type { IntelligenceConfig } from "../../_core/llm/index.js";
 
 // ─── Constants ──────────────────────────────────────────────────
 
@@ -23,6 +27,36 @@ const DEDUP_NEIGHBORS = 3;
 
 /** Cosine similarity threshold for near-duplicate detection */
 const DEDUP_THRESHOLD = 0.95;
+
+/**
+ * Merge two near-duplicate memory contents via the LLM tier cascade.
+ * Returns the merged content, or null when generation fails (callers fall
+ * back to plain access-bump dedup).
+ */
+async function mergeNearDuplicate(
+  existing: string,
+  incoming: string,
+  intelligence: IntelligenceConfig,
+): Promise<string | null> {
+  try {
+    const result = await generateStructured<{ merged: string }>(
+      "You merge two near-duplicate memory statements into one. Preserve every " +
+        "distinct detail from both; do not invent information. Answer with the " +
+        "merged statement only.",
+      `Existing memory: ${existing}\nNew statement: ${incoming}`,
+      {
+        type: "object",
+        properties: { merged: { type: "string" } },
+        required: ["merged"],
+      },
+      intelligence,
+    );
+    const merged = result.result?.merged?.trim();
+    return merged && merged.length > 0 ? merged : null;
+  } catch {
+    return null;
+  }
+}
 
 /** Default confidence for user-stated facts */
 const DEFAULT_CONFIDENCE = 0.9;
@@ -39,7 +73,7 @@ export interface RememberParams {
 }
 
 export interface RememberResult {
-  action: "created" | "updated";
+  action: "created" | "updated" | "merged";
   memoryId: string;
   content: string;
 }
@@ -61,6 +95,7 @@ export interface RememberResult {
 export async function rememberFact(
   db: Database.Database,
   params: RememberParams,
+  opts?: { intelligence?: IntelligenceConfig },
 ): Promise<RememberResult> {
   // 1. Embed the content
   const embedding = await embedDocument(params.content);
@@ -74,7 +109,32 @@ export async function rememberFact(
     const similarity = 1 - (neighbor.distance * neighbor.distance) / 2;
 
     if (similarity >= DEDUP_THRESHOLD) {
-      // Near-duplicate found — update existing memory
+      // Near-duplicate found. ADR-010: differing content is MERGED via the
+      // LLM tier (when configured) instead of silently discarded.
+      const existing = db
+        .prepare("SELECT content FROM memories WHERE id = ?")
+        .get(neighbor.id) as { content: string } | undefined;
+
+      const identical =
+        existing !== undefined &&
+        existing.content.trim().toLowerCase() === params.content.trim().toLowerCase();
+
+      if (!identical && existing && opts?.intelligence) {
+        const merged = await mergeNearDuplicate(
+          existing.content,
+          params.content,
+          opts.intelligence,
+        );
+        if (merged && merged !== existing.content) {
+          const mergedEmbedding = await embedDocument(merged);
+          updateMemory(db, neighbor.id, { content: merged });
+          deleteVector(db, "vec_memories", neighbor.id);
+          insertVector(db, "vec_memories", neighbor.id, mergedEmbedding);
+          recordAccess(db, neighbor.id);
+          return { action: "merged", memoryId: neighbor.id, content: merged };
+        }
+      }
+
       recordAccess(db, neighbor.id);
       return {
         action: "updated",
