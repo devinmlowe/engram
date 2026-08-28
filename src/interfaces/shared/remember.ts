@@ -34,6 +34,8 @@ export interface RememberParams {
   type: MemoryType;
   importance: number;
   source?: MemorySource;
+  /** Tenant scope: 'global' (default) or 'hermes:<profile>' (ADR-010). */
+  scope?: string;
 }
 
 export interface RememberResult {
@@ -62,9 +64,10 @@ export async function rememberFact(
 ): Promise<RememberResult> {
   // 1. Embed the content
   const embedding = await embedDocument(params.content);
+  const scope = params.scope ?? "global";
 
-  // 2. Check for near-duplicates
-  const neighbors = findNearestMemories(db, embedding, DEDUP_NEIGHBORS);
+  // 2. Check for near-duplicates (same scope only — ADR-010)
+  const neighbors = findNearestMemories(db, embedding, DEDUP_NEIGHBORS, scope);
 
   for (const neighbor of neighbors) {
     // Convert L2 distance to cosine similarity for unit vectors
@@ -98,6 +101,7 @@ export async function rememberFact(
       sourceExchanges: [],
       isActive: true,
       source: params.source ?? "user",
+      scope,
     },
     embedding,
   );
@@ -117,6 +121,8 @@ export interface BatchMemoryInput {
   importance?: number;
   source?: MemorySource;
   relates_to_entities?: string[];  // max 10 entity names to link
+  /** Tenant scope override for this memory (ADR-010). */
+  scope?: string;
 }
 
 export interface BatchRememberResult {
@@ -156,6 +162,7 @@ const DEFAULT_IMPORTANCE = 0.7;
 export async function storeMemoryBatch(
   db: Database.Database,
   memories: BatchMemoryInput[],
+  opts?: { scope?: string },
 ): Promise<BatchRememberResult> {
   // Handle empty batch
   if (memories.length === 0) {
@@ -190,8 +197,9 @@ export async function storeMemoryBatch(
       const embedding = embeddings[i];
 
       try {
-        // Check for near-duplicates
-        const neighbors = findNearestMemories(db, embedding, DEDUP_NEIGHBORS);
+        // Check for near-duplicates (same scope only — ADR-010)
+        const scope = input.scope ?? opts?.scope ?? "global";
+        const neighbors = findNearestMemories(db, embedding, DEDUP_NEIGHBORS, scope);
         let isDuplicate = false;
 
         for (const neighbor of neighbors) {
@@ -226,6 +234,7 @@ export async function storeMemoryBatch(
               sourceExchanges: [],
               isActive: true,
               source: input.source ?? "user",
+              scope,
             },
             embedding,
           );

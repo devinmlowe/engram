@@ -359,23 +359,26 @@ export function findNearestMemories(
   db: Database.Database,
   embedding: number[],
   limit: number = 10,
+  scope?: string,
 ): Array<{ id: string; distance: number }> {
   // Query vec_memories for candidates, then filter by active status
   // We request more candidates than needed to account for inactive filtering
   const candidates = searchVector(db, "vec_memories", embedding, limit * 2);
 
-  // Filter to active memories only
+  // Filter to active memories only; when a scope is given, dedup candidates
+  // must come from the same tenant scope (ADR-010 — never collapse across scopes)
   const results: Array<{ id: string; distance: number }> = [];
   for (const candidate of candidates) {
     if (results.length >= limit) break;
 
     const memory = db
-      .prepare("SELECT is_active FROM memories WHERE id = ?")
-      .get(candidate.id) as { is_active: number } | undefined;
+      .prepare("SELECT is_active, scope FROM memories WHERE id = ?")
+      .get(candidate.id) as { is_active: number; scope: string | null } | undefined;
 
-    if (memory && memory.is_active) {
-      results.push({ id: candidate.id, distance: candidate.distance });
-    }
+    if (!memory || !memory.is_active) continue;
+    if (scope !== undefined && (memory.scope ?? "global") !== scope) continue;
+
+    results.push({ id: candidate.id, distance: candidate.distance });
   }
 
   return results;
