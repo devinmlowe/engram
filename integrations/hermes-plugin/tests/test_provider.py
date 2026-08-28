@@ -101,6 +101,22 @@ def test_handle_tool_call_unknown_tool_returns_error_json(tmp_path):
     provider.shutdown()
 
 
+def test_handle_tool_call_surfaces_tool_level_errors(tmp_path):
+    provider, home = make_provider(tmp_path)
+    provider.initialize("sess-e", hermes_home=home, platform="cli", agent_context="primary")
+    provider._client = None
+    # route the namespaced tool at the fake server's failing tool
+    import provider as provider_module
+    provider_module._TOOL_MAP["engram_toolerr"] = "toolerr"
+    try:
+        parsed = json.loads(provider.handle_tool_call("engram_toolerr", {}))
+        assert parsed["ok"] is False
+        assert "database is locked" in parsed["error"]
+    finally:
+        del provider_module._TOOL_MAP["engram_toolerr"]
+        provider.shutdown()
+
+
 def test_on_memory_write_mirrors_into_graph(tmp_path):
     log = tmp_path / "writes.jsonl"
     provider, home = make_provider(tmp_path, extra_env={"FAKE_LOG": str(log)})
