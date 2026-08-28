@@ -34,6 +34,7 @@ interface MemoryRow {
   source_exchanges: string | null;
   superseded_by: string | null;
   is_active: number;
+  scope: string | null;
 }
 
 function rowToMemory(row: MemoryRow): Memory {
@@ -53,6 +54,7 @@ function rowToMemory(row: MemoryRow): Memory {
       : [],
     supersededBy: row.superseded_by ?? undefined,
     isActive: Boolean(row.is_active),
+    scope: row.scope ?? "global",
   };
 }
 
@@ -154,7 +156,7 @@ export async function searchSemantic(
   db: Database.Database,
   options: SearchOptions,
 ): Promise<SearchResult[]> {
-  const { query, types, limit = 10 } = options;
+  const { query, types, scopes, limit = 10 } = options;
 
   if (!query || query.trim().length === 0) {
     return [];
@@ -195,6 +197,11 @@ export async function searchSemantic(
 
     // Apply optional type filter
     if (types && types.length > 0 && !types.includes(memory.type)) {
+      continue;
+    }
+
+    // Apply optional tenant-scope filter (ADR-010)
+    if (scopes && scopes.length > 0 && !scopes.includes(memory.scope ?? "global")) {
       continue;
     }
 

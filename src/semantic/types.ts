@@ -28,6 +28,8 @@ export interface Memory {
   supersededBy?: string;
   isActive: boolean;
   source?: MemorySource;
+  /** Tenant scope: 'global' (default) or 'hermes:<profile>' (ADR-010). */
+  scope?: string;
 }
 
 export interface Conflict {

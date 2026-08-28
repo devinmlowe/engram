@@ -33,6 +33,8 @@ export interface SearchOptions {
   before?: string; // ISO date
   types?: MemoryType[];
   depth?: "shallow" | "deep";
+  /** Restrict semantic results to these tenant scopes; omit for all (ADR-010). */
+  scopes?: string[];
 }
 
 export interface SearchResult {
