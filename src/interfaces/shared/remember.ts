@@ -16,7 +16,7 @@ import {
   findNearestMemories,
   recordAccess,
 } from "../../semantic/memory.js";
-import { deleteVector, insertVector } from "../../_core/db/index.js";
+import { insertVector } from "../../_core/db/index.js";
 import { generateStructured } from "../../_core/llm/index.js";
 import type { IntelligenceConfig } from "../../_core/llm/index.js";
 
@@ -127,10 +127,13 @@ export async function rememberFact(
         );
         if (merged && merged !== existing.content) {
           const mergedEmbedding = await embedDocument(merged);
-          updateMemory(db, neighbor.id, { content: merged });
-          deleteVector(db, "vec_memories", neighbor.id);
-          insertVector(db, "vec_memories", neighbor.id, mergedEmbedding);
-          recordAccess(db, neighbor.id);
+          // Content, vector and access bump must land together: a merged
+          // row with a stale (or missing) vector is invisible to recall
+          db.transaction(() => {
+            updateMemory(db, neighbor.id, { content: merged });
+            insertVector(db, "vec_memories", neighbor.id, mergedEmbedding);
+            recordAccess(db, neighbor.id);
+          })();
           return { action: "merged", memoryId: neighbor.id, content: merged };
         }
       }
