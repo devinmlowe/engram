@@ -1,0 +1,3 @@
+# metric_direction: lower_is_better
+iteration	timestamp	error_type	error_fixed	commit	metric	delta	guard	status	description
+0	2026-08-28T15:55:08-05:00	-	-	95669ce	44	0	pass	baseline	44 audit findings itemized; 950 tests green
