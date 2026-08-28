@@ -371,6 +371,42 @@ function createSchema(db: Database.Database, config: EngramConfig): void {
   createVecIfNeeded(db, "vec_exchanges", dims);
   createVecIfNeeded(db, "vec_memories", dims);
   createVecIfNeeded(db, "vec_entities", dims);
+
+  pruneZeroEntityVectors(db);
+}
+
+/**
+ * Remove all-zero vectors that file-structure indexing used to write for
+ * file/symbol entities. A zero vector is not neutral in an L2 vec0 table —
+ * it sits at distance 1.0 from every unit query and out-ranks real
+ * entities. Only structural entity types are inspected; only rows whose
+ * embedding is entirely zero are deleted; re-indexing the file restores
+ * nothing because structural entities no longer get vectors at all.
+ * Idempotent: after the first pass there is nothing to read or delete.
+ */
+export function pruneZeroEntityVectors(db: Database.Database): number {
+  const rows = db
+    .prepare(
+      `SELECT v.id, v.embedding FROM vec_entities v
+       JOIN entities e ON e.id = v.id
+       WHERE e.type IN ('file', 'function', 'class', 'module')`,
+    )
+    .all() as Array<{ id: string; embedding: Buffer }>;
+
+  const zeroIds = rows
+    .filter((r) => {
+      const f = new Float32Array(r.embedding.buffer, r.embedding.byteOffset, r.embedding.byteLength / 4);
+      return f.every((x) => x === 0);
+    })
+    .map((r) => r.id);
+
+  if (zeroIds.length === 0) return 0;
+
+  const del = db.prepare("DELETE FROM vec_entities WHERE id = ?");
+  db.transaction(() => {
+    for (const id of zeroIds) del.run(id);
+  })();
+  return zeroIds.length;
 }
 
 /**
