@@ -164,11 +164,14 @@ class EngramMemoryProvider(MemoryProviderBase):  # type: ignore[misc,valid-type]
         return "engram"
 
     def is_available(self) -> bool:
-        if self._config.get("server_command"):
+        # Hermes's provider listing calls this on a fresh instance (no
+        # initialize), so read the on-disk config here; it's a cheap file read
+        config = self._config or self._load_config()
+        if config.get("server_command"):
             return True
-        repo = self._config.get("repo_path", DEFAULT_REPO_PATH)
+        repo = os.path.expanduser(config.get("repo_path", DEFAULT_REPO_PATH))
         server_js = os.path.join(repo, "dist", "interfaces", "mcp", "server.js")
-        node = self._config.get("node_path") or shutil.which("node")
+        node = config.get("node_path") or shutil.which("node")
         return bool(node) and os.path.isfile(server_js)
 
     # ── lifecycle ────────────────────────────────────────────────
@@ -184,12 +187,19 @@ class EngramMemoryProvider(MemoryProviderBase):  # type: ignore[misc,valid-type]
     def _config_paths(self) -> List[str]:
         """CLI store (`hermes memory setup` → engram.json) then the dashboard's
         flat_json store (<home>/engram/config.json); later files win."""
-        if not self._hermes_home:
-            return []
+        home = self._resolve_hermes_home()
         return [
-            os.path.join(self._hermes_home, "engram.json"),
-            os.path.join(self._hermes_home, "engram", "config.json"),
+            os.path.join(home, "engram.json"),
+            os.path.join(home, "engram", "config.json"),
         ]
+
+    def _resolve_hermes_home(self) -> str:
+        """initialize()'s hermes_home, else the env Hermes itself uses."""
+        return (
+            self._hermes_home
+            or os.environ.get("HERMES_HOME")
+            or os.path.expanduser("~/.hermes")
+        )
 
     def _load_config(self) -> Dict[str, Any]:
         config: Dict[str, Any] = dict(self._config)
