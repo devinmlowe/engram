@@ -20,6 +20,7 @@ import { homedir } from "node:os";
 
 // Data queries
 import { getStats, computeOptimalThreshold } from "./data/graph-queries.js";
+import { getBindHost } from "./bind.js";
 
 // Route handlers
 import {
@@ -54,6 +55,7 @@ const DB_PATH =
   join(homedir(), ".local", "share", "engram", "engram.db");
 
 const PORT = parseInt(process.env.PORT ?? "3001", 10);
+const BIND_HOST = getBindHost(process.env);
 
 // ─── Pre-render pages ───────────────────────────────────────────
 
@@ -223,7 +225,7 @@ function serve() {
     res.end("Not found");
   });
 
-  server.listen(PORT, "0.0.0.0", () => {
+  server.listen(PORT, BIND_HOST, () => {
     const stats = getStats(db);
     const threshold = computeOptimalThreshold(db);
     console.log(`Engram Visualizer`);
