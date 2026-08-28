@@ -6,7 +6,7 @@
  */
 
 // Schema & initialization
-export { initDatabase } from "./schema.js";
+export { initDatabase, pruneZeroEntityVectors } from "./schema.js";
 
 // Connection management
 export {
