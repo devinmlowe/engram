@@ -14,7 +14,7 @@ Metric = count of unchecked boxes (lower is better).
 - [x] B5 `hermes-plugin/mcp_client.py:132` MCP `isError` results treated as success → "Error: …" injected as memory
 - [x] B6 `hermes-plugin/provider.py:227` failed `start()` leaks Node child (no stop())
 - [x] B7 `hermes-plugin/provider.py:154` `_stopping` never read → drain thread respawns child after shutdown
-- [ ] B8 `hermes-plugin/mcp_client.py:165` lock acquire has no timeout + per-stale-message timeout reset → prefetch can exceed Hermes 8s join
+- [x] B8 `hermes-plugin/mcp_client.py:165` lock acquire has no timeout + per-stale-message timeout reset → prefetch can exceed Hermes 8s join
 - [ ] B9 `hermes-plugin/provider.py:181` dashboard writes `engram/config.json`, provider reads only `engram.json`
 - [ ] B10 `src/graph/reflection.ts:761` mergeRedundantEntities repoints edges without dedup → UNIQUE abort, prune step no-ops
 - [ ] B11 `src/graph/reflection.ts:771,799` + `cleanup.ts:34` entity DELETE skips vec/FTS/bridge cleanup → ghost ids, FK failures
