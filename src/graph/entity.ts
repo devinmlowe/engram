@@ -243,8 +243,10 @@ export function getEntityByName(
   db: Database.Database,
   name: string,
 ): Entity | null {
+  // `name = ? COLLATE NOCASE` is satisfied by idx_entities_name_lower;
+  // `lower(name) = lower(?)` forced a full scan on the dream hot path
   const row = db
-    .prepare("SELECT * FROM entities WHERE lower(name) = lower(?)")
+    .prepare("SELECT * FROM entities WHERE name = ? COLLATE NOCASE")
     .get(name) as EntityRow | undefined;
 
   if (!row) return null;
