@@ -391,13 +391,16 @@ class EngramMemoryProvider(MemoryProviderBase):  # type: ignore[misc,valid-type]
         kicks = 0
         while True:
             with self._write_lock:
-                if not self._write_q:
-                    return
+                pending = bool(self._write_q)
                 thread = self._write_thread
+            draining = thread is not None and thread.is_alive()
+            # "drained" means nothing queued AND nothing popped-but-in-flight
+            if not pending and not draining:
+                return
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return
-            if thread is not None and thread.is_alive():
+            if draining:
                 thread.join(timeout=min(remaining, 0.25))
                 continue
             if kicks >= 1:
