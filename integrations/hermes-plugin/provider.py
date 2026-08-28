@@ -354,15 +354,22 @@ class EngramMemoryProvider(MemoryProviderBase):  # type: ignore[misc,valid-type]
     def _kick_writer(self) -> None:
         if self._stopping:
             return
-        if self._write_thread is not None and self._write_thread.is_alive():
-            return
-        self._write_thread = threading.Thread(target=self._drain_writes, daemon=True)
-        self._write_thread.start()
+        # The alive-check and the drain thread's exit hand-off both happen
+        # under _write_lock, so an item appended while the thread is
+        # winding down always gets a fresh thread (no lost wakeup)
+        with self._write_lock:
+            if not self._write_q:
+                return
+            if self._write_thread is not None and self._write_thread.is_alive():
+                return
+            self._write_thread = threading.Thread(target=self._drain_writes, daemon=True)
+            self._write_thread.start()
 
     def _drain_writes(self) -> None:
         while True:
             with self._write_lock:
                 if not self._write_q:
+                    self._write_thread = None
                     return
                 item = self._write_q.pop(0)
             try:
@@ -370,6 +377,8 @@ class EngramMemoryProvider(MemoryProviderBase):  # type: ignore[misc,valid-type]
                 client.call_tool("remember", item)
                 self._last_used = time.monotonic()
             except Exception:
+                with self._write_lock:
+                    self._write_thread = None
                 return  # drop on failure; built-in MEMORY.md still has it
 
     def flush_writes(self, timeout: float = 10.0) -> None:

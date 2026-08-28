@@ -134,6 +134,27 @@ def test_on_memory_write_mirrors_into_graph(tmp_path):
     provider.shutdown()
 
 
+def test_burst_of_writes_all_drain_without_flush(tmp_path):
+    """Hermes fires several on_memory_write calls back-to-back; every one must
+    be delivered by the background drain alone (no flush_writes re-kick)."""
+    log = tmp_path / "burst.jsonl"
+    provider, home = make_provider(tmp_path, extra_env={"FAKE_LOG": str(log)})
+    provider.initialize("sess-b", hermes_home=home, platform="cli", agent_context="primary")
+    provider.prefetch("warm up")
+    for i in range(25):
+        provider.on_memory_write("add", "memory", f"burst fact {i}")
+        if i % 5 == 4:
+            time.sleep(0.02)  # let the drain thread reach its wind-down window
+    deadline = time.monotonic() + 8.0
+    while time.monotonic() < deadline:
+        lines = [l for l in log.read_text().splitlines() if '"remember"' in l] if log.exists() else []
+        if len(lines) >= 25:
+            break
+        time.sleep(0.05)
+    assert len(lines) == 25
+    provider.shutdown()
+
+
 def test_remove_actions_are_not_mirrored(tmp_path):
     log = tmp_path / "writes2.jsonl"
     provider, home = make_provider(tmp_path, extra_env={"FAKE_LOG": str(log)})
