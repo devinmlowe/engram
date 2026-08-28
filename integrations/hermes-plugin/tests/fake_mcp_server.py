@@ -60,6 +60,10 @@ def main():
             args = msg["params"].get("arguments", {})
             if name == "slow":
                 time.sleep(float(os.environ.get("FAKE_SLOW_S", "5")))
+            log_path = os.environ.get("FAKE_LOG")
+            if log_path:
+                with open(log_path, "a") as fh:
+                    fh.write(json.dumps({"tool": name, "args": args}) + "\n")
             if name == "boom":
                 sys.stdout.write(json.dumps({
                     "jsonrpc": "2.0", "id": msg_id,
