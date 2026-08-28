@@ -30,6 +30,8 @@ export interface Memory {
   source?: MemorySource;
   /** Tenant scope: 'global' (default) or 'hermes:<profile>' (ADR-010). */
   scope?: string;
+  /** Persisted FSRS stability in days; undefined = type's initial stability. */
+  stability?: number;
 }
 
 export interface Conflict {

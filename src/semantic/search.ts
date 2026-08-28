@@ -35,6 +35,7 @@ interface MemoryRow {
   superseded_by: string | null;
   is_active: number;
   scope: string | null;
+  stability: number | null;
 }
 
 function rowToMemory(row: MemoryRow): Memory {
@@ -55,6 +56,7 @@ function rowToMemory(row: MemoryRow): Memory {
     supersededBy: row.superseded_by ?? undefined,
     isActive: Boolean(row.is_active),
     scope: row.scope ?? "global",
+    stability: row.stability ?? undefined,
   };
 }
 

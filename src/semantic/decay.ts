@@ -181,15 +181,10 @@ function computeCorroborationFactor(accessCount: number): number {
 /**
  * Get the effective stability for a memory.
  *
- * Since we don't persist stability per-memory yet, we derive it from
- * the memory type's initial stability. The confidence field serves as
- * a proxy for accumulated stability adjustments — if confidence has been
- * modified from its default (0.5), we use it as a scaling factor.
- *
- * This allows onSuccessfulAccess and onContradiction to return
- * stability values that callers can use to update the confidence
- * field proportionally, until we add a dedicated stability column.
+ * Prefers the persisted per-memory stability (memories.stability, written by
+ * recordAccess/applyContradiction); falls back to the type's initial constant
+ * for memories that have never been reinforced or penalized.
  */
 function getEffectiveStability(memory: Memory): number {
-  return INITIAL_STABILITY[memory.type];
+  return memory.stability ?? INITIAL_STABILITY[memory.type];
 }
