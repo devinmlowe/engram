@@ -7,14 +7,14 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/local/bin/node</string>
+        <string>/Users/USER/.local/share/fnm/aliases/default/bin/node</string>
         <string>--import</string>
-        <string>tsx</string>
-        <string>src/web/graph-server.ts</string>
+        <string>/Users/USER/git/engram/node_modules/tsx/dist/esm/index.mjs</string>
+        <string>src/interfaces/web/server.ts</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/usr/local/lib/engram</string>
+    <string>/Users/USER/git/engram</string>
 
     <key>EnvironmentVariables</key>
     <dict>

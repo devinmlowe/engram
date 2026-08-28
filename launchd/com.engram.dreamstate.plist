@@ -7,14 +7,14 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/local/bin/node</string>
+        <string>/Users/USER/.local/share/fnm/aliases/default/bin/node</string>
         <string>--max-old-space-size=2048</string>
         <string>dist/interfaces/cli/index.js</string>
         <string>dream</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/usr/local/lib/engram</string>
+    <string>/Users/USER/git/engram</string>
 
     <key>StartCalendarInterval</key>
     <dict>

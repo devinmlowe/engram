@@ -143,7 +143,8 @@ export function startDream(): { ok: boolean; message: string } {
   const engramBin = join(import.meta.dirname ?? ".", "..", "cli", "index.ts");
 
   dreamProcess = spawn("npx", ["tsx", engramBin, "dream", "--verbose"], {
-    cwd: join(homedir(), "Documents", "git", "engram"),
+    // Repo root: routes/ -> web/ -> interfaces/ -> src/ -> root
+    cwd: join(import.meta.dirname ?? ".", "..", "..", "..", ".."),
     stdio: "ignore",
     detached: true,
     env: { ...process.env, FORCE_COLOR: "0" },
