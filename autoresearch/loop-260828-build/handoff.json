@@ -1,0 +1,26 @@
+{
+  "version": "2.1.0",
+  "source": "loop",
+  "timestamp": "2026-08-28T20:05:00Z",
+  "status": "COMPLETE",
+  "results_tsv": "autoresearch/loop-260828-build/results.tsv",
+  "findings": [
+    "ADR-010 Phases 0-3 implemented in 14 TDD iterations, metric 887 -> 950 passing tests (919 vitest + 31 pytest), guard green throughout",
+    "engram upgrades: scope column + scoped reads/writes with scope-isolated dedup, env-based MCP tenant scoping, persisted FSRS stability, LLM-merge dedup, loopback visualizer bind, stale-path fixes",
+    "Hermes plugin at integrations/hermes-plugin: stdlib MCP stdio client, EngramMemoryProvider (lazy spawn, primary-only, idle-kill), plugin.yaml + register(ctx), dashboard config schema, hermes engram CLI",
+    "DEPLOYED to default profile: symlink + memory.provider engram; hermes memory status shows active/available; live 'hermes engram recall' returns real graph results",
+    "Scope isolation proven e2e: career-scoped write invisible to finance profile (total_results=0)",
+    "Remaining rollout: enable provider on career/finance/pmp/network profiles after a soak period on default",
+    "Live DB backed up pre-work: ~/.local/share/engram/engram.db.pre-adr010-backup-260828 (324MB APFS clone)"
+  ],
+  "config": {
+    "goal": "Implement ADR-010 Phases 0-3 via strict TDD (engram upgrades + Hermes memory-provider plugin)",
+    "scope": "src/**/*.ts, tests/**, integrations/hermes-plugin/**, launchd/*.plist, .mcp.json",
+    "metric": "total passing tests (vitest + plugin pytest)",
+    "direction": "higher_is_better",
+    "verify": "autoresearch/loop-260828-build/verify.sh",
+    "guard": "autoresearch/loop-260828-build/guard.sh",
+    "iterations_used": 14,
+    "iterations_max": 40
+  }
+}

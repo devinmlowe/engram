@@ -1,3 +1,17 @@
 # metric_direction: higher_is_better
 iteration	timestamp	commit	metric	delta	guard	guard-metric	status	description
 0	2026-08-28T19:20:00Z	252d7e2	887	0.0	pass	-	baseline	887 vitest passing, plugin not yet created; DB backed up
+1	2026-08-28T19:22:13Z	1a7ef10	891	+4	pass	-	keep	Phase 0 path fixes, 4 new tests
+2	2026-08-28T19:23:13Z	2cf87db	894	+3	pass	-	keep	scope column migration, 3 new tests
+3	2026-08-28T19:25:13Z	77555f9	897	+3	pass	-	keep	scoped semantic reads, 3 new tests
+4	2026-08-28T19:27:13Z	5704edc	901	+4	pass	-	keep	scoped writes + dedup isolation, 4 new tests
+5	2026-08-28T19:29:21Z	f081dcd	907	+6	pass	-	keep	MCP env scoping incl. UnifiedSearchParams passthrough, 6 new tests (guard-fixed in-iteration)
+6	2026-08-28T19:31:50Z	79b042e	912	+5	pass	-	keep	persisted decay stability, 5 new tests
+7	2026-08-28T19:34:21Z	50e6aa4	916	+4	pass	-	keep	LLM-merge dedup, 4 new tests
+8	2026-08-28T19:35:14Z	2d3a2d3	919	+3	pass	-	keep	visualizer loopback bind, 3 new tests
+9	2026-08-28T19:37:17Z	013b195	927	+8	pass	-	keep	MCP stdio client, 8 new pytest tests
+10	2026-08-28T19:40:32Z	a862d9b	941	+14	pass	-	keep	EngramMemoryProvider, 14 new pytest tests
+11	2026-08-28T19:42:02Z	3c97adb	945	+4	pass	-	keep	plugin packaging, 4 new pytest tests
+12	2026-08-28T19:44:47Z	4cada2a	946	+1	pass	-	keep	real-server e2e with scope isolation, 1 new test
+13	2026-08-28T19:46:33Z	ce6ebfd	950	+4	pass	-	keep	Phase 3 CLI + dashboard schema, 4 new tests
+14	2026-08-28T19:50:14Z	35ac0ea	950	0	pass	-	keep	CLI contract fix, verified live through hermes CLI
