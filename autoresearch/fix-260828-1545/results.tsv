@@ -1,3 +1,50 @@
 # metric_direction: lower_is_better
 iteration	timestamp	error_type	error_fixed	commit	metric	delta	guard	status	description
 0	2026-08-28T15:55:08-05:00	-	-	95669ce	44	0	pass	baseline	44 audit findings itemized; 950 tests green
+1	2026-08-28T15:56:10-05:00	bug-high	B1	75131ca	43	-1	pass	keep	ftsSearchEntities sanitize + ORDER BY rank + try/catch
+2	2026-08-28T15:56:56-05:00	bug-high	B2	2209be0	42	-1	pass	keep	daemon passes string memoryId; injected fn typed
+3	2026-08-28T15:57:35-05:00	bug-high	B3	731d246	41	-1	pass	keep	web dream route resolves existing CLI entry; pinned by test
+4	2026-08-28T15:58:19-05:00	bug-high	B4	f25c88a	40	-1	pass	keep	web listener try/catch → 500 instead of process death; fixed URL base
+5	2026-08-28T15:59:13-05:00	bug-high	B5	892ed69	39	-1	pass	keep	isError tool results → McpError; pinned in client + provider tests
+6	2026-08-28T16:00:05-05:00	bug-high	B6	48fe224	38	-1	pass	keep	start() failure stops child; pinned by hang-init test
+7	2026-08-28T16:01:08-05:00	bug-high	B7	c709aa9	37	-1	pass	keep	_stopping gates spawn + writer; shutdown flushes first; pinned
+8	2026-08-28T16:02:12-05:00	bug-high	B8	1a669a1	36	-1	pass	keep	lock acquire timeout + deadline; stale bursts no longer extend wait; pinned
+9	2026-08-28T16:03:03-05:00	bug-high	B9	9398f9e	35	-1	pass	keep	merge engram.json + engram/config.json (dashboard wins); pinned
+10	2026-08-28T16:04:44-05:00	bug-high	B10	4d28f86	34	-1	pass	keep	prune merge uses mergeEntities; collision case pinned; fixture rows now FTS-indexed
+11	2026-08-28T16:07:08-05:00	bug-high	B11	ceb37c7	33	-1	pass	keep	entity delete cascade helper; guarded FTS delete; pinned
+12	2026-08-28T16:08:50-05:00	bug-high	B12	9eefd4e	33	0	pass	keep	no zero-vector rows for structural entities; pinned; +B12b follow-up added
+13	2026-08-28T16:10:12-05:00	bug-high	B12b	a4360aa	32	-1	pass	keep	pruneZeroEntityVectors at init; structural types + all-zero only; pinned
+14	2026-08-28T16:12:04-05:00	bug-low	L1	76cd145	31	-1	pass	keep	candidate window escalates ×4 under filters; FTS is_active/scope/type in SQL; crowding cases pinned
+15	2026-08-28T16:13:07-05:00	bug-low	L2	df3fe89	30	-1	pass	keep	consolidator dedup scoped to global; pinned
+16	2026-08-28T16:14:29-05:00	bug-low	L3	e9cba0e	29	-1	pass	keep	applyContradiction wired into both contradiction branches; pinned
+17	2026-08-28T16:16:43-05:00	bug-low	L4	07aba1b	28	-1	pass	keep	reranker degrade no longer drops results 6-20; pinned with mocked sources
+18	2026-08-28T16:18:09-05:00	bug-low	L5	6a72b35	27	-1	pass	keep	exploreSelective similarity formula corrected; pinned
+19	2026-08-28T16:18:55-05:00	bug-low	L6	f52e4cd	26	-1	pass	keep	immediate txn around FSRS read-modify-write
+20	2026-08-28T16:19:47-05:00	bug-low	L7	230465d	25	-1	pass	keep	merge update+re-embed+access in one txn
+21	2026-08-28T16:20:50-05:00	bug-low	L8	e4b080b	24	-1	pass	keep	linking errors captured on detail; pinned
+22	2026-08-28T16:21:50-05:00	bug-low	L9	0f7600d	23	-1	pass	keep	trailing broadcast on cooldown; pinned with fake timers
+23	2026-08-28T16:23:22-05:00	bug-low	L10	7a81ad4	22	-1	pass	keep	show keeps blank lines for numbering; pinned
+24	2026-08-28T16:24:32-05:00	bug-low	L11	aec7e22	21	-1	pass	keep	health: tool names from MCP_TOOL_NAMES (pinned vs source); dist lookup
+25	2026-08-28T16:25:06-05:00	bug-low	L12	bc26f30	20	-1	pass	keep	since/limit params validated with Number.isFinite
+26	2026-08-28T16:26:43-05:00	bug-low	L13	1c1b802	19	-1	pass	keep	reaper thread started on spawn, stopped on shutdown; pinned
+27	2026-08-28T16:28:05-05:00	bug-low	L14	a66342a	18	-1	pass	keep	kick/drain hand-off locked; burst-without-flush pinned
+28	2026-08-28T16:29:40-05:00	bug-low	L15	4d5a16d	17	-1	pass	keep	EOF sentinel; child crash fails fast + respawns; pinned
+29	2026-08-28T16:30:51-05:00	bug-low	L16	79a9eff	16	-1	pass	keep	single-deadline flush; no spawn storm; pinned
+30	2026-08-28T16:31:54-05:00	bug-low	L17	e7456f0	15	-1	fail	crash	CLI recall passes budget; failures → stderr + rc 1; pinned
+31	2026-08-28T16:33:01-05:00	bug-low	L16-rework	97036f0	15	0	pass	keep (reworked)	flush waits for in-flight drain; L17 re-verified
+32	2026-08-28T16:34:15-05:00	bug-low	L18	d841b05	14	-1	pass	keep	is_available loads on-disk config; pinned
+33	2026-08-28T16:35:16-05:00	bug-low	L19	02769f5	13	-1	pass	keep	env str coercion; pinned
+34	2026-08-28T16:36:38-05:00	perf-high	P1	3972e69	12	-1	pass	keep	in-flight promise memo for embedQuery; pinned
+35	2026-08-28T16:38:00-05:00	perf-high	P2	1371c65	11	-1	pass	keep	incremental exchange embedding; pinned (1 embed for +1 exchange)
+36	2026-08-28T16:39:07-05:00	perf-high	P3	56b6d3c	10	-1	fail	crash	path column in recursive CTE; dense-hub + cyclic tests pinned
+37	2026-08-28T16:41:12-05:00	perf-high	P3-rework	963f239	10	0	pass	keep (reworked)	BFS traversal replaces recursive CTE; cyclic/filter/dense tests pinned
+38	2026-08-28T16:42:08-05:00	perf-high	P4	5a32eac	9	-1	pass	keep	index-eligible name lookup; query plan pinned
+39	2026-08-28T16:43:23-05:00	perf-high	P5	a61e75f	8	-1	pass	keep	containment short-circuit + MERGE_TIMEOUT_MS; pinned
+40	2026-08-28T16:44:24-05:00	perf-high	P6	8cfc0fb	7	-1	pass	keep	in-flight init memo; pinned
+41	2026-08-28T16:45:54-05:00	perf-low	Q1	9a28042	6	-1	pass	keep	batched IN lookups; hoisted source-name lookup
+42	2026-08-28T16:46:41-05:00	perf-low	Q2	080dfeb	5	-1	pass	keep	BETWEEN window query for drill context
+43	2026-08-28T16:48:23-05:00	perf-low	Q3	06d4b6e	4	-1	pass	keep	O(lines) function-context index instead of O(matches×lines)
+44	2026-08-28T16:48:49-05:00	perf-low	Q4	33c7331	3	-1	pass	keep	no probe INSERT/DELETE on migrated DBs
+45	2026-08-28T16:49:14-05:00	perf-low	Q5	3b10521	2	-1	pass	keep	prompt read from disk once
+46	2026-08-28T16:49:48-05:00	perf-low	Q6	4fb2889	1	-1	pass	keep	validate before model load
+47	2026-08-28T16:50:13-05:00	perf-low	Q7	a286d6f	0	-1	pass	keep	resetWordCache on DB change; no per-minute full scans

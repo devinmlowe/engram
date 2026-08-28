@@ -1,0 +1,31 @@
+{
+  "version": "2.1.0",
+  "source": "fix",
+  "timestamp": "2026-08-28T16:52:00-05:00",
+  "status": "COMPLETE",
+  "results_tsv": "autoresearch/fix-260828-1545/results.tsv",
+  "worklist": "autoresearch/fix-260828-1545/worklist.md",
+  "summary": {
+    "items_total": 45,
+    "items_fixed": 45,
+    "iterations": 47,
+    "kept": 43,
+    "kept_reworked": 2,
+    "crashes_reverted_or_reworked": 2,
+    "tests_before": { "vitest": 919, "pytest": 31 },
+    "tests_after": { "vitest": 947, "pytest": 45 },
+    "by_type": { "bug-high": 13, "bug-low": 19, "perf-high": 6, "perf-low": 7 }
+  },
+  "findings": [],
+  "notes": [
+    "Iteration 30 guard failure was caused by iteration 29 (L16 flush_writes early return); reworked in iteration 31.",
+    "Iteration 36 (P3 CTE path guard) reverted: simple-path enumeration still explodes on dense graphs; reworked as JS BFS in iteration 37.",
+    "dist/ rebuilt after the loop so the live Hermes plugin and Claude Code MCP server pick up the TypeScript fixes.",
+    "pruneZeroEntityVectors runs once on next initDatabase against the live DB (74 zero vectors among 2068 structural entities); reversible via re-index."
+  ],
+  "config": {
+    "target": "grep -c '^- \\[ \\]' autoresearch/fix-260828-1545/worklist.md",
+    "scope": "src/**, tests/**, integrations/hermes-plugin/**",
+    "guard": "npx vitest run && npm run lint && (cd integrations/hermes-plugin && pytest -q)"
+  }
+}
