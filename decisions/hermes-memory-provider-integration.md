@@ -77,7 +77,7 @@ Engram is **strictly single-tenant**: no namespace/user/agent column anywhere (`
 - **No scope column:** Hermes-originated memories would be indistinguishable from Claude-Code-derived ones and would leak across profiles (career agent's notes surfacing in finance recalls).
 - **Cross-flow risk:** `sync_turn` receives full conversation turns (`memory_provider.py:154-161`); Hermes profiles handle finance and career PII that must not enter a graph consumed by other agents until scoping exists.
 
-## Operational risks & mitigations
+## Risks & mitigations
 
 | Risk | Severity | Mitigation |
 |---|---|---|
@@ -86,7 +86,7 @@ Engram is **strictly single-tenant**: no namespace/user/agent column anywhere (`
 | Node/dist not built or moved (repo moved `~/Documents/git`→`~/git` already broke `.mcp.json` and `web/routes/dream.ts:146`) | Medium | `is_available()` checks the resolved `dist/` path; config `node_path`/`repo_path` keys; fix the three stale-path bugs found (also: `com.engram.visualizer.plist:13` points at nonexistent `src/web/graph-server.ts`). |
 | Unauthenticated surface — visualizer binds `0.0.0.0:3001`, CORS `*`, reachable over Tailscale (`web/server.ts:56, 226-234`) | Medium (pre-existing) | Not widened by this integration (MCP is stdio child-process only, no network). Still: rebind visualizer to 127.0.0.1 behind Caddy like the other services. Track separately. |
 | Orphaned MCP children on Hermes crash | Low | Spawn with process-group kill on `shutdown()`; `SIGTERM` handler; child exits on stdin EOF (stdio transport property). |
-| Provider exclusivity — engram occupies the single external-provider slot (`agent/memory_manager.py:413-426`) | Low | No provider is active today; built-in `MEMORY.md`/`USER.md` continues working alongside regardless (`hermes_cli/web_server.py:830-833`). |
+| Provider exclusivity — "Only one external memory provider is allowed at a time" (`agent/memory_manager.py:413-426`), so engram forecloses mem0 et al. while active | Low | No provider is active today; built-in `MEMORY.md`/`USER.md` continues working alongside regardless (`hermes_cli/web_server.py:830-833`). |
 | Recall quality drift / prompt injection via recalled text | Low | Hermes already fences and scrubs provider output (`<memory-context>` fencing + `sanitize_context`, `agent/memory_manager.py:174-182`). |
 
 ## Rollback
