@@ -58,6 +58,6 @@ Metric = count of unchecked boxes (lower is better).
 - [x] Q2 `src/_core/search/drill.ts:110` loads whole conversation to pick ±5 exchanges
 - [x] Q3 `src/_core/search/scan.ts:260` detectFunctionContext walks backward per match (O(matches×lines))
 - [x] Q4 `src/_core/db/schema.ts:378` migrateExpandedTypes probe INSERT/DELETE on every initDatabase
-- [ ] Q5 `src/semantic/consolidator.ts:461` conflict prompt re-read from disk per conflict
+- [x] Q5 `src/semantic/consolidator.ts:461` conflict prompt re-read from disk per conflict
 - [ ] Q6 `src/interfaces/cli/index.ts:119` `remember` loads embedding model before validating --type
 - [ ] Q7 `src/interfaces/web/data/word-queries.ts:61` full exchanges scan every 60s per open tab; resetWordCache never called
