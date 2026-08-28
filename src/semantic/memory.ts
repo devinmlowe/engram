@@ -35,6 +35,7 @@ interface MemoryRow {
   superseded_by: string | null;
   is_active: number;
   source: string | null;
+  scope: string | null;
 }
 
 interface ConflictRow {
@@ -65,6 +66,7 @@ function rowToMemory(row: MemoryRow): Memory {
     supersededBy: row.superseded_by ?? undefined,
     isActive: Boolean(row.is_active),
     source: (row.source as MemorySource) ?? "user",
+    scope: row.scope ?? "global",
   };
 }
 
@@ -96,8 +98,8 @@ export function insertMemory(
     db.prepare(`
       INSERT INTO memories
         (id, type, content, context, confidence, importance, access_count,
-         last_accessed, created_at, updated_at, source_exchanges, superseded_by, is_active, source)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         last_accessed, created_at, updated_at, source_exchanges, superseded_by, is_active, source, scope)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       memory.id,
       memory.type,
@@ -113,6 +115,7 @@ export function insertMemory(
       memory.supersededBy ?? null,
       memory.isActive ? 1 : 0,
       memory.source ?? "user",
+      memory.scope ?? "global",
     );
 
     // 2. Get rowid and insert into FTS5
