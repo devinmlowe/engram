@@ -40,7 +40,7 @@ Metric = count of unchecked boxes (lower is better).
 - [x] L15 `hermes-plugin/mcp_client.py:144` reader-thread death/EOF never signalled → full-timeout stalls, wedged provider
 - [x] L16 `hermes-plugin/provider.py:330` flush_writes blocks 2×timeout and re-kicks spawn every 50ms on failure
 - [x] L17 `hermes-plugin/cli.py:25` `--budget` parsed but ignored
-- [ ] L18 `hermes-plugin/provider.py:162` is_available ignores engram.json on fresh instance
+- [x] L18 `hermes-plugin/provider.py:162` is_available ignores engram.json on fresh instance
 - [ ] L19 `hermes-plugin/mcp_client.py:61` non-str env values → Popen TypeError swallowed, retried every turn
 
 ## Perf — high

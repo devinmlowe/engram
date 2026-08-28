@@ -204,6 +204,17 @@ def test_backup_paths_is_deliberately_empty(tmp_path):
     assert provider.backup_paths() == []
 
 
+def test_is_available_reads_config_on_fresh_instance(tmp_path, monkeypatch):
+    """`hermes memory` lists providers via is_available() without initialize()."""
+    _, home = make_provider(tmp_path)  # writes server_command into engram.json
+    monkeypatch.setenv("HERMES_HOME", home)
+    fresh = EngramMemoryProvider()
+    assert fresh.is_available() is True
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "empty-home"))
+    monkeypatch.setattr("shutil.which", lambda _name: None)
+    assert EngramMemoryProvider().is_available() is False
+
+
 def test_is_available_without_node_or_dist_is_false(tmp_path):
     provider = EngramMemoryProvider()
     provider._config = {"repo_path": str(tmp_path / "nonexistent")}
