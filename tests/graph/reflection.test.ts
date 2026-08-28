@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type Database from "better-sqlite3";
 import { createTestDb } from "../helpers.js";
+import { insertFtsRow } from "../../src/_core/db/index.js";
 import type { TestDb } from "../helpers.js";
 import type { ReflectionObservation } from "../../src/graph/types.js";
 
@@ -78,6 +79,10 @@ function insertEntity(
     opts.mentionCount ?? 1,
     NOW,
   );
+  // Mirror production insertEntity: entities_fts is external-content, so a
+  // row must be indexed before any later delete/merge touches its tokens
+  const { rowid } = db.prepare("SELECT rowid FROM entities WHERE id = ?").get(id) as { rowid: number };
+  insertFtsRow(db, "entities_fts", rowid, { name, description: null });
 }
 
 function insertRelationship(
@@ -653,6 +658,32 @@ describe("Reflection Orchestration", () => {
         .get("rel-1") as { source_entity_id: string };
 
       expect(rel.source_entity_id).toBe("e1");
+    });
+
+    it("merges when survivor and duplicate share the same edge (unique-index collision)", () => {
+      insertEntity(t.db, "e1", "TypeScript", { mentionCount: 10 });
+      insertEntity(t.db, "e2", "typescript", { mentionCount: 3 });
+      insertEntity(t.db, "e3", "React");
+
+      // Both spellings already relate to React the same way — the common
+      // case for duplicates, and the one that used to abort the merge
+      insertRelationship(t.db, "rel-keep", "e1", "e3");
+      insertRelationship(t.db, "rel-dup", "e2", "e3");
+
+      const result = mergeRedundantEntities(t.db);
+      expect(result.merged).toBe(1);
+
+      const ids = (t.db.prepare("SELECT id FROM entities").all() as Array<{ id: string }>).map((r) => r.id);
+      expect(ids).toEqual(["e1", "e3"]);
+
+      const edges = t.db
+        .prepare("SELECT source_entity_id, target_entity_id FROM relationships")
+        .all() as Array<{ source_entity_id: string; target_entity_id: string }>;
+      expect(edges).toEqual([{ source_entity_id: "e1", target_entity_id: "e3" }]);
+
+      const survivor = t.db.prepare("SELECT aliases, mention_count FROM entities WHERE id = 'e1'").get() as
+        { aliases: string; mention_count: number };
+      expect(survivor.mention_count).toBe(13);
     });
 
     it("handles no duplicates gracefully", () => {
