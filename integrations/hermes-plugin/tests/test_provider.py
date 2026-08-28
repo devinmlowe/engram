@@ -168,6 +168,24 @@ def test_shutdown_stops_child(tmp_path):
         os.kill(pid, 0)
 
 
+def test_no_respawn_after_shutdown(tmp_path):
+    provider, home = make_provider(tmp_path)
+    provider.initialize("sess-z", hermes_home=home, platform="cli", agent_context="primary")
+    provider.prefetch("spawn it")
+    provider.shutdown()
+    assert provider.child_pid is None
+    # late writes/reads after shutdown must not bring a child back
+    provider.on_memory_write("add", "memory", "late fact")
+    provider.flush_writes(timeout=0.5)
+    assert provider.child_pid is None
+    assert provider.prefetch("anything") == ""
+    assert provider.child_pid is None
+    # a fresh initialize re-opens the door
+    provider.initialize("sess-z2", hermes_home=home, platform="cli", agent_context="primary")
+    assert provider.prefetch("again") != ""
+    provider.shutdown()
+
+
 def test_idle_kill_reaps_quiet_child(tmp_path):
     provider, home = make_provider(tmp_path, idle_kill_s=1)
     provider.initialize("sess-i", hermes_home=home, platform="cli", agent_context="primary")

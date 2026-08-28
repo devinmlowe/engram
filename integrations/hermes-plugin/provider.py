@@ -174,6 +174,7 @@ class EngramMemoryProvider(MemoryProviderBase):  # type: ignore[misc,valid-type]
         self._identity = kwargs.get("agent_identity") or "default"
         context = kwargs.get("agent_context") or "primary"
         self._enabled = context == "primary"
+        self._stopping = False
         self._config = self._load_config()
 
     def _load_config(self) -> Dict[str, Any]:
@@ -188,8 +189,10 @@ class EngramMemoryProvider(MemoryProviderBase):  # type: ignore[misc,valid-type]
         return config
 
     def shutdown(self) -> None:
-        self._stopping = True
+        # Flush first (it may legitimately spawn to deliver queued mirrors),
+        # then close the door so a still-running drain can't respawn
         self.flush_writes(timeout=5.0)
+        self._stopping = True
         with self._client_lock:
             if self._client is not None:
                 self._client.stop()
@@ -227,6 +230,8 @@ class EngramMemoryProvider(MemoryProviderBase):  # type: ignore[misc,valid-type]
     def _ensure_client(self) -> McpStdioClient:
         if not self._enabled:
             raise McpError("engram provider disabled for this agent context")
+        if self._stopping:
+            raise McpError("engram provider is shutting down")
         with self._client_lock:
             if self._client is None or not self._client.alive:
                 client = McpStdioClient(
@@ -309,6 +314,8 @@ class EngramMemoryProvider(MemoryProviderBase):  # type: ignore[misc,valid-type]
         self._kick_writer()
 
     def _kick_writer(self) -> None:
+        if self._stopping:
+            return
         if self._write_thread is not None and self._write_thread.is_alive():
             return
         self._write_thread = threading.Thread(target=self._drain_writes, daemon=True)
