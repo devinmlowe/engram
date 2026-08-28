@@ -434,9 +434,10 @@ export async function exploreSelective(
     const vectorResults = searchVector(db, "vec_entities", criteriaEmbedding, maxNodes * 5);
     scoreMap = new Map();
     for (const r of vectorResults) {
-      // vec0 cosine distance: 0 = identical, 2 = opposite
-      // Convert to similarity: 1 - distance (clamped to [0, 1])
-      const similarity = Math.max(0, Math.min(1, 1 - r.distance));
+      // vec_entities is an L2 table over unit vectors: cos = 1 - d²/2
+      // (same conversion as resolver/consolidator/remember; `1 - d` is the
+      // cosine-distance formula and over-prunes everything below cos 0.5)
+      const similarity = Math.max(0, Math.min(1, 1 - (r.distance * r.distance) / 2));
       scoreMap.set(r.id, similarity);
     }
   }
