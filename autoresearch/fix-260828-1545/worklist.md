@@ -45,7 +45,7 @@ Metric = count of unchecked boxes (lower is better).
 
 ## Perf — high
 
-- [ ] P1 `src/_core/embeddings/index.ts:104` query embedded 3× per recall (cache populated after await; no in-flight memo)
+- [x] P1 `src/_core/embeddings/index.ts:104` query embedded 3× per recall (cache populated after await; no in-flight memo)
 - [ ] P2 `src/episodic/sync.ts:171` changed conversation re-embeds every exchange, not just new ones
 - [ ] P3 `src/graph/search.ts:258` traverseNeighborhood recursive CTE has no cycle guard (d³ blow-up)
 - [ ] P4 `src/graph/entity.ts:239` getEntityByName `lower(name)=lower(?)` defeats NOCASE index → full scan on dream hot path

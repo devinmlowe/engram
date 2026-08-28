@@ -14,6 +14,8 @@ const queryEmbeddingCache = new LRUCache<string, number[]>({
   maxSize: 200,
   ttlMs: 5 * 60 * 1000, // 5 minutes
 });
+/** Query embeddings currently being computed, keyed by query text */
+const inflightQueryEmbeds = new Map<string, Promise<number[]>>();
 let activeModel: "nomic" | "minilm" = "nomic";
 let activeDimensions = 256;
 
@@ -105,9 +107,19 @@ export async function embedQuery(text: string): Promise<number[]> {
   const cached = queryEmbeddingCache.get(text);
   if (cached) return cached;
 
-  const embedding = await embed(text, "search_query: ");
-  queryEmbeddingCache.set(text, embedding);
-  return embedding;
+  // Recall embeds the same query from three concurrent searches; share the
+  // in-flight promise so the model runs once, not once per caller
+  let pending = inflightQueryEmbeds.get(text);
+  if (!pending) {
+    pending = embed(text, "search_query: ")
+      .then((embedding) => {
+        queryEmbeddingCache.set(text, embedding);
+        return embedding;
+      })
+      .finally(() => inflightQueryEmbeds.delete(text));
+    inflightQueryEmbeds.set(text, pending);
+  }
+  return pending;
 }
 
 /**
@@ -220,4 +232,5 @@ export function resetEmbeddings(): void {
   activeModel = "nomic";
   activeDimensions = 256;
   queryEmbeddingCache.clear();
+  inflightQueryEmbeds.clear();
 }
