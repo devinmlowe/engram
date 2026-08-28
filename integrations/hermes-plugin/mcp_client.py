@@ -68,7 +68,7 @@ class McpStdioClient:
             return
         env = dict(os.environ)
         if self._env:
-            env.update(self._env)
+            env.update({str(k): str(v) for k, v in self._env.items()})
         # Fresh queue per child: a stale EOF sentinel or late response from a
         # previous child must not be matched against the new one
         self._responses = queue.Queue()
