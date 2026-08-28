@@ -23,6 +23,7 @@ import { analyzeGraph, persistAnalysis, persistBridgeScores, getBridgeScores } f
 import { nameCommunities } from "./naming.js";
 import { analyzeTemporalPatterns, getTemporalPatterns } from "./temporal.js";
 import { computeEdgeWeight, updateRelationshipWeight } from "./relationship.js";
+import { mergeEntities } from "./entity.js";
 import { buildIntelligenceConfig, generate } from "../_core/llm/index.js";
 import { computeConversationCounts, computeInformativeness } from "./informativeness.js";
 
@@ -758,18 +759,11 @@ export function mergeRedundantEntities(
       const duplicateIds = entities.slice(1).map((e) => e.id);
 
       for (const dupId of duplicateIds) {
-        // Redirect relationships from duplicate to survivor
-        db.prepare(
-          "UPDATE relationships SET source_entity_id = ? WHERE source_entity_id = ?",
-        ).run(survivorId, dupId);
-
-        db.prepare(
-          "UPDATE relationships SET target_entity_id = ? WHERE target_entity_id = ?",
-        ).run(survivorId, dupId);
-
-        // Delete duplicate entity
-        db.prepare("DELETE FROM entities WHERE id = ?").run(dupId);
-
+        // mergeEntities pre-dedups edges that would collide with the
+        // survivor's (idx_rel_unique_edge), transfers aliases/mentions, and
+        // removes the duplicate's vec/FTS rows — a bare repoint+DELETE did
+        // none of that and aborted on the first shared edge
+        mergeEntities(db, survivorId, dupId);
         merged++;
       }
     }
