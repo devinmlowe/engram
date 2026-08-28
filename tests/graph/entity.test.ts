@@ -353,5 +353,23 @@ describe("Entity CRUD", () => {
       expect(results[0].id).toBe("ent-fts-2");
       expect(results[0].name).toBe("Kubernetes");
     });
+
+    it("tolerates punctuation and FTS5 syntax characters in the query", () => {
+      const entity = createTestEntity({
+        id: "ent-fts-3",
+        name: "C++",
+        description: "Systems programming language",
+      });
+      insertEntity(t.db, entity, randomEmbedding());
+
+      // Each of these is an FTS5 syntax error when passed raw
+      expect(() => ftsSearchEntities(t.db, "what's the C++ build?")).not.toThrow();
+      expect(() => ftsSearchEntities(t.db, "foo-bar (memory)")).not.toThrow();
+      expect(() => ftsSearchEntities(t.db, '"unbalanced')).not.toThrow();
+      expect(ftsSearchEntities(t.db, "   ")).toEqual([]);
+
+      const results = ftsSearchEntities(t.db, "what's the systems language?");
+      expect(results.map((e) => e.id)).toContain("ent-fts-3");
+    });
   });
 });
