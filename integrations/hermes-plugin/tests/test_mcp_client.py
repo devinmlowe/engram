@@ -76,6 +76,15 @@ def test_call_tool_timeout():
         c.stop()
 
 
+def test_failed_start_does_not_leak_child():
+    c = McpStdioClient([sys.executable, FAKE_SERVER], env={"FAKE_HANG_INIT": "10"})
+    with pytest.raises(McpError, match="[Tt]imed? ?out"):
+        c.start(timeout=0.5)
+    assert not c.alive
+    # the spawned process must be reaped, not orphaned
+    assert c._proc is None
+
+
 def test_stop_terminates_child(client):
     client.start()
     pid = client.pid

@@ -46,6 +46,8 @@ def main():
         msg_id = msg.get("id")
 
         if method == "initialize":
+            if os.environ.get("FAKE_HANG_INIT"):
+                time.sleep(float(os.environ["FAKE_HANG_INIT"]))
             reply(msg_id, {
                 "protocolVersion": "2024-11-05",
                 "capabilities": {"tools": {}},
