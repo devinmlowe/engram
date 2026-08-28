@@ -35,6 +35,7 @@ import {
 } from "./routes/graph.js";
 import { handleWordFrequencies } from "./routes/words.js";
 import { broadcastUpdate } from "./routes/sse.js";
+import { resetWordCache } from "./data/word-queries.js";
 
 // Page templates
 import { graphPage } from "./pages/graph.html.js";
@@ -81,7 +82,10 @@ function serve() {
   try {
     watcher = watch(DB_PATH + "-wal", () => {
       if (debounce) clearTimeout(debounce);
-      debounce = setTimeout(() => broadcastUpdate(db), 5000);
+      debounce = setTimeout(() => {
+        resetWordCache(); // the DB changed; don't serve a stale word cloud for up to a minute
+        broadcastUpdate(db);
+      }, 5000);
     });
   } catch {
     console.log("Note: WAL watcher not available, SSE updates disabled");

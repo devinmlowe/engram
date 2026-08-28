@@ -60,4 +60,4 @@ Metric = count of unchecked boxes (lower is better).
 - [x] Q4 `src/_core/db/schema.ts:378` migrateExpandedTypes probe INSERT/DELETE on every initDatabase
 - [x] Q5 `src/semantic/consolidator.ts:461` conflict prompt re-read from disk per conflict
 - [x] Q6 `src/interfaces/cli/index.ts:119` `remember` loads embedding model before validating --type
-- [ ] Q7 `src/interfaces/web/data/word-queries.ts:61` full exchanges scan every 60s per open tab; resetWordCache never called
+- [x] Q7 `src/interfaces/web/data/word-queries.ts:61` full exchanges scan every 60s per open tab; resetWordCache never called
