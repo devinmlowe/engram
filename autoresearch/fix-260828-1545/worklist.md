@@ -13,7 +13,7 @@ Metric = count of unchecked boxes (lower is better).
 - [x] B4 `src/interfaces/web/server.ts:90` sync throw in listener (bad Host → Invalid URL) kills visualizer
 - [x] B5 `hermes-plugin/mcp_client.py:132` MCP `isError` results treated as success → "Error: …" injected as memory
 - [x] B6 `hermes-plugin/provider.py:227` failed `start()` leaks Node child (no stop())
-- [ ] B7 `hermes-plugin/provider.py:154` `_stopping` never read → drain thread respawns child after shutdown
+- [x] B7 `hermes-plugin/provider.py:154` `_stopping` never read → drain thread respawns child after shutdown
 - [ ] B8 `hermes-plugin/mcp_client.py:165` lock acquire has no timeout + per-stale-message timeout reset → prefetch can exceed Hermes 8s join
 - [ ] B9 `hermes-plugin/provider.py:181` dashboard writes `engram/config.json`, provider reads only `engram.json`
 - [ ] B10 `src/graph/reflection.ts:761` mergeRedundantEntities repoints edges without dedup → UNIQUE abort, prune step no-ops
