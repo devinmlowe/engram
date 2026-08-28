@@ -183,6 +183,26 @@ describe("deduplicateFact", () => {
     expect(updated!.accessCount).toBe(4);
   });
 
+  it("never merges a global dream fact into a tenant-scoped memory (ADR-010)", async () => {
+    const embedding = seededEmbedding(42);
+    const tenant = createTestMemory({
+      id: "mem-career-1",
+      content: "User prefers Fish shell",
+      accessCount: 3,
+      scope: "hermes:career",
+    });
+    insertMemory(t.db, tenant, embedding);
+    mockedEmbedDocument.mockResolvedValue(embedding);
+
+    const result = await deduplicateFact(t.db, createTestFact({ content: "User prefers Fish shell" }), "conv-001");
+
+    expect(result.action).toBe("insert");
+    expect(result.memoryId).not.toBe("mem-career-1");
+    expect(getMemory(t.db, result.memoryId)!.scope).toBe("global");
+    // tenant memory untouched
+    expect(getMemory(t.db, "mem-career-1")!.accessCount).toBe(3);
+  });
+
   it("merges on NLI entailment (sim 0.85-0.95)", async () => {
     // Insert existing memory
     const baseEmbedding = seededEmbedding(100);
