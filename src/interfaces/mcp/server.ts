@@ -13,6 +13,7 @@ import { escapeXml } from "../../_core/search/index.js";
 import { initEmbeddings } from "../../_core/embeddings/index.js";
 import { rememberFact, storeMemoryBatch } from "../shared/remember.js";
 import { getTenantScoping } from "./scoping.js";
+import { buildIntelligenceConfig } from "../../_core/llm/index.js";
 import type { MemorySource } from "../../_core/types/index.js";
 import {
   unifiedSearch,
@@ -836,13 +837,29 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const params = RememberInputSchema.parse(args);
       await ensureEmbeddings();
 
-      const result = await rememberFact(getDb(), {
-        content: params.content,
-        type: params.type as MemoryType,
-        importance: params.importance,
-        source: params.source as MemorySource,
-        scope: getTenantScoping(process.env).writeScope,
-      });
+      if (!config) config = loadConfig();
+      const result = await rememberFact(
+        getDb(),
+        {
+          content: params.content,
+          type: params.type as MemoryType,
+          importance: params.importance,
+          source: params.source as MemorySource,
+          scope: getTenantScoping(process.env).writeScope,
+        },
+        { intelligence: buildIntelligenceConfig(config) },
+      );
+
+      if (result.action === "merged") {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Merged with existing memory ${result.memoryId}: ${result.content}`,
+            },
+          ],
+        };
+      }
 
       if (result.action === "updated") {
         return {
