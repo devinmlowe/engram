@@ -382,17 +382,28 @@ class EngramMemoryProvider(MemoryProviderBase):  # type: ignore[misc,valid-type]
                 return  # drop on failure; built-in MEMORY.md still has it
 
     def flush_writes(self, timeout: float = 10.0) -> None:
-        """Block until queued writes are drained (bounded)."""
-        thread = self._write_thread
-        if thread is not None and thread.is_alive():
-            thread.join(timeout=timeout)
+        """Block until queued writes are drained (bounded by ONE deadline).
+
+        Re-kicks a dead drain thread at most once: if the drain fails again
+        (e.g. node missing) we stop rather than spawn-storm every 50 ms.
+        """
         deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
+        kicks = 0
+        while True:
             with self._write_lock:
                 if not self._write_q:
                     return
+                thread = self._write_thread
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            if thread is not None and thread.is_alive():
+                thread.join(timeout=min(remaining, 0.25))
+                continue
+            if kicks >= 1:
+                return
             self._kick_writer()
-            time.sleep(0.05)
+            kicks += 1
 
     # ── config surface ───────────────────────────────────────────
 
