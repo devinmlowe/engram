@@ -499,14 +499,30 @@ export function ftsSearchEntities(
 ): Entity[] {
   if (!hasFtsTable(db)) return [];
 
-  const rows = db
-    .prepare(`
-      SELECT e.* FROM entities e
-      JOIN entities_fts fts ON e.rowid = fts.rowid
-      WHERE entities_fts MATCH ?
-      LIMIT ?
-    `)
-    .all(query, limit) as EntityRow[];
+  // Same sanitizer as semantic/episodic FTS: strip quotes, quote each term,
+  // OR-join — so punctuation in a user query can't become FTS5 syntax
+  const sanitized = query
+    .replace(/['"]/g, "")
+    .split(/\s+/)
+    .filter((t) => t.length > 0)
+    .map((t) => `"${t}"`)
+    .join(" OR ");
 
-  return rows.map(rowToEntity);
+  if (!sanitized) return [];
+
+  try {
+    const rows = db
+      .prepare(`
+        SELECT e.* FROM entities e
+        JOIN entities_fts fts ON e.rowid = fts.rowid
+        WHERE entities_fts MATCH ?
+        ORDER BY fts.rank
+        LIMIT ?
+      `)
+      .all(sanitized, limit) as EntityRow[];
+
+    return rows.map(rowToEntity);
+  } catch {
+    return [];
+  }
 }
