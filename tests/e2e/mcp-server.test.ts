@@ -120,6 +120,21 @@ describe("MCP Server Tool Definitions", () => {
     }
   });
 
+  it("MCP_TOOL_NAMES matches the tools registered in the server source", async () => {
+    const { MCP_TOOL_NAMES } = await import("../../src/interfaces/mcp/tool-names.js");
+    const { readFileSync } = await import("node:fs");
+    const serverSource = readFileSync(
+      new URL("../../src/interfaces/mcp/server.ts", import.meta.url),
+      "utf-8",
+    );
+    const listBlock = serverSource.slice(
+      serverSource.indexOf("ListToolsRequestSchema, async"),
+      serverSource.indexOf("server.setRequestHandler(CallToolRequestSchema"),
+    );
+    const registered = [...listBlock.matchAll(/^\s{6}name: "([a-z_]+)"/gm)].map((m) => m[1]);
+    expect([...registered].sort()).toEqual([...MCP_TOOL_NAMES].sort());
+  });
+
   it("recall tool has correct input schema shape", async () => {
     const { readFileSync } = await import("node:fs");
     const serverSource = readFileSync(
