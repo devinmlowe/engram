@@ -17,7 +17,7 @@ Metric = count of unchecked boxes (lower is better).
 - [x] B8 `hermes-plugin/mcp_client.py:165` lock acquire has no timeout + per-stale-message timeout reset → prefetch can exceed Hermes 8s join
 - [x] B9 `hermes-plugin/provider.py:181` dashboard writes `engram/config.json`, provider reads only `engram.json`
 - [x] B10 `src/graph/reflection.ts:761` mergeRedundantEntities repoints edges without dedup → UNIQUE abort, prune step no-ops
-- [ ] B11 `src/graph/reflection.ts:771,799` + `cleanup.ts:34` entity DELETE skips vec/FTS/bridge cleanup → ghost ids, FK failures
+- [x] B11 `src/graph/reflection.ts:771,799` + `cleanup.ts:34` entity DELETE skips vec/FTS/bridge cleanup → ghost ids, FK failures
 - [ ] B12 `src/graph/file-indexer.ts:437` zero-vector symbol embeddings out-rank real entities at L2 distance 1.0
 
 ## Bug — low

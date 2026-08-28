@@ -23,7 +23,7 @@ import { analyzeGraph, persistAnalysis, persistBridgeScores, getBridgeScores } f
 import { nameCommunities } from "./naming.js";
 import { analyzeTemporalPatterns, getTemporalPatterns } from "./temporal.js";
 import { computeEdgeWeight, updateRelationshipWeight } from "./relationship.js";
-import { mergeEntities } from "./entity.js";
+import { mergeEntities, deleteEntityCascade } from "./entity.js";
 import { buildIntelligenceConfig, generate } from "../_core/llm/index.js";
 import { computeConversationCounts, computeInformativeness } from "./informativeness.js";
 
@@ -788,19 +788,29 @@ export function pruneOrphanEntities(
   const maxAgeDays = options.maxAgeDays ?? 90;
   const cutoff = Math.floor(Date.now() / 1000) - maxAgeDays * 86400;
 
-  const result = db
-    .prepare(
-      `DELETE FROM entities
-       WHERE mention_count < ?
-         AND last_seen < ?
-         AND NOT EXISTS (
-           SELECT 1 FROM relationships r
-           WHERE r.source_entity_id = entities.id OR r.target_entity_id = entities.id
-         )`,
-    )
-    .run(minMentions, cutoff);
+  const orphanIds = (
+    db
+      .prepare(
+        `SELECT id FROM entities
+         WHERE mention_count < ?
+           AND last_seen < ?
+           AND NOT EXISTS (
+             SELECT 1 FROM relationships r
+             WHERE r.source_entity_id = entities.id OR r.target_entity_id = entities.id
+           )`,
+      )
+      .all(minMentions, cutoff) as Array<{ id: string }>
+  ).map((r) => r.id);
 
-  return { pruned: result.changes };
+  let pruned = 0;
+  const run = db.transaction(() => {
+    for (const id of orphanIds) {
+      if (deleteEntityCascade(db, id)) pruned++;
+    }
+  });
+  run();
+
+  return { pruned };
 }
 
 /**
