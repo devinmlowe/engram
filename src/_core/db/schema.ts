@@ -327,6 +327,11 @@ function createSchema(db: Database.Database, config: EngramConfig): void {
   // Phase 6D: Add source tracking to memories (user, dream, rlm, import)
   idempotentAlter(db, "memories", "source", "ALTER TABLE memories ADD COLUMN source TEXT NOT NULL DEFAULT 'user'");
 
+  // ADR-010: per-tenant scoping for Hermes integration.
+  // 'global' = Claude Code / dream derived; 'hermes:<profile>' = Hermes-originated.
+  idempotentAlter(db, "memories", "scope", "ALTER TABLE memories ADD COLUMN scope TEXT NOT NULL DEFAULT 'global'");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope)");
+
   // FTS5 virtual tables (created separately — can't use IF NOT EXISTS)
   createFtsIfNeeded(db, "exchanges_fts", `
     CREATE VIRTUAL TABLE exchanges_fts USING fts5(
