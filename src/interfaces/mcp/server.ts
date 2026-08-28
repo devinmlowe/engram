@@ -13,6 +13,7 @@ import { escapeXml } from "../../_core/search/index.js";
 import { initEmbeddings } from "../../_core/embeddings/index.js";
 import { rememberFact, storeMemoryBatch } from "../shared/remember.js";
 import { getTenantScoping } from "./scoping.js";
+import { sliceShowLines, formatShowOutput } from "./show-format.js";
 import { buildIntelligenceConfig } from "../../_core/llm/index.js";
 import type { MemorySource } from "../../_core/types/index.js";
 import {
@@ -920,14 +921,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       const content = readFileSync(params.path, "utf-8");
-      const allLines = content.split("\n").filter((l) => l.trim());
-
-      const start = params.startLine ? params.startLine - 1 : 0;
-      const end = params.endLine ?? allLines.length;
-      const lines = allLines.slice(start, end);
+      const { lines, firstLineNum } = sliceShowLines(content, params.startLine, params.endLine);
 
       // Format JSONL lines as readable markdown
-      const formatted = formatShowOutput(lines, start + 1);
+      const formatted = formatShowOutput(lines, firstLineNum);
 
       return {
         content: [{ type: "text", text: formatted }],
@@ -1244,44 +1241,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     };
   }
 });
-
-// ─── Show Formatting ───────────────────────────────────────────
-
-function formatShowOutput(lines: string[], startLineNum: number): string {
-  let output = "# Conversation\n\n";
-
-  for (let i = 0; i < lines.length; i++) {
-    try {
-      const parsed = JSON.parse(lines[i]);
-      if (parsed.type !== "user" && parsed.type !== "assistant") continue;
-      if (!parsed.message?.content) continue;
-
-      const lineNum = startLineNum + i;
-      const role = parsed.type === "user" ? "User" : "Assistant";
-      const timestamp = parsed.timestamp
-        ? new Date(parsed.timestamp).toLocaleString()
-        : "";
-
-      output += `### ${role} (line ${lineNum}${timestamp ? `, ${timestamp}` : ""})\n\n`;
-
-      if (typeof parsed.message.content === "string") {
-        output += `${parsed.message.content}\n\n`;
-      } else if (Array.isArray(parsed.message.content)) {
-        for (const block of parsed.message.content) {
-          if (block.type === "text" && block.text) {
-            output += `${block.text}\n\n`;
-          } else if (block.type === "tool_use") {
-            output += `**Tool:** \`${block.name}\`\n\n`;
-          }
-        }
-      }
-    } catch {
-      continue;
-    }
-  }
-
-  return output;
-}
 
 // ─── Reflect Formatting ─────────────────────────────────────────
 
