@@ -152,6 +152,10 @@ class EngramMemoryProvider(MemoryProviderBase):  # type: ignore[misc,valid-type]
         self._write_lock = threading.Lock()
         self._write_thread: Optional[threading.Thread] = None
         self._stopping = False
+        # Hermes never polls providers for idle work, so the idle-kill must be
+        # driven by our own timer thread (started with the first spawn)
+        self._reaper: Optional[threading.Thread] = None
+        self._reaper_stop = threading.Event()
 
     # ── identity / availability ──────────────────────────────────
 
@@ -206,10 +210,14 @@ class EngramMemoryProvider(MemoryProviderBase):  # type: ignore[misc,valid-type]
         # then close the door so a still-running drain can't respawn
         self.flush_writes(timeout=5.0)
         self._stopping = True
+        self._reaper_stop.set()
         with self._client_lock:
             if self._client is not None:
                 self._client.stop()
                 self._client = None
+        reaper = self._reaper
+        if reaper is not None and reaper.is_alive():
+            reaper.join(timeout=1.0)
 
     # ── child management ─────────────────────────────────────────
 
@@ -254,8 +262,25 @@ class EngramMemoryProvider(MemoryProviderBase):  # type: ignore[misc,valid-type]
                 )
                 client.start()
                 self._client = client
+                self._start_reaper()
             self._last_used = time.monotonic()
             return self._client
+
+    def _start_reaper(self) -> None:
+        if self._reaper is not None and self._reaper.is_alive():
+            return
+        self._reaper_stop.clear()
+        self._reaper = threading.Thread(target=self._reaper_loop, daemon=True)
+        self._reaper.start()
+
+    def _reaper_loop(self) -> None:
+        idle_kill_s = float(self._config.get("idle_kill_s", DEFAULT_IDLE_KILL_S))
+        period = max(0.25, idle_kill_s / 2.0)
+        while not self._reaper_stop.wait(period):
+            self.reap_if_idle()
+            with self._client_lock:
+                if self._client is None:
+                    return  # nothing to watch; the next spawn restarts us
 
     def reap_if_idle(self) -> None:
         """Kill the child when it has been idle past idle_kill_s (RSS control)."""

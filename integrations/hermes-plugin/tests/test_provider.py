@@ -186,6 +186,21 @@ def test_no_respawn_after_shutdown(tmp_path):
     provider.shutdown()
 
 
+def test_idle_child_is_reaped_automatically_without_manual_polling(tmp_path):
+    provider, home = make_provider(tmp_path, idle_kill_s=1)
+    provider.initialize("sess-auto", hermes_home=home, platform="cli", agent_context="primary")
+    provider.prefetch("spawn it")
+    assert provider.child_pid is not None
+    deadline = time.monotonic() + 4.0
+    while provider.child_pid is not None and time.monotonic() < deadline:
+        time.sleep(0.1)
+    assert provider.child_pid is None  # reaper thread did it, nobody called reap_if_idle
+    # a later call transparently respawns (and restarts the reaper)
+    assert provider.prefetch("again") != ""
+    assert provider.child_pid is not None
+    provider.shutdown()
+
+
 def test_idle_kill_reaps_quiet_child(tmp_path):
     provider, home = make_provider(tmp_path, idle_kill_s=1)
     provider.initialize("sess-i", hermes_home=home, platform="cli", agent_context="primary")
