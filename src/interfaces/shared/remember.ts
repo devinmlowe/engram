@@ -333,8 +333,15 @@ export async function storeMemoryBatch(
       input.relates_to_entities &&
       input.relates_to_entities.length > 0
     ) {
-      const linked = linkMemoryToEntities(db, detail.id, input.relates_to_entities);
-      result.entitiesLinked += linked;
+      // The memory is already committed; a linking failure must be reported
+      // on this item, not thrown past N persisted memories as a tool error
+      try {
+        const linked = linkMemoryToEntities(db, detail.id, input.relates_to_entities);
+        result.entitiesLinked += linked;
+      } catch (err) {
+        result.errors++;
+        detail.error = `entity linking failed: ${err instanceof Error ? err.message : String(err)}`;
+      }
     }
   }
 

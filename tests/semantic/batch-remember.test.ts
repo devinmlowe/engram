@@ -191,6 +191,31 @@ describe("storeMemoryBatch", () => {
     expect(result.details.every((d) => d.status === "created")).toBe(true);
   });
 
+  it("reports an entity-linking failure on the item without losing the persisted batch", async () => {
+    const { storeMemoryBatch } = await import(
+      "../../src/interfaces/shared/remember.js"
+    );
+    const ins = t.db.prepare("INSERT INTO entities (id, name, type) VALUES (?, ?, ?)");
+    ins.run("ent-a", "Alpha", "concept");
+    ins.run("ent-b", "Beta", "concept");
+    // malformed source_memories makes linkMemoryToEntities throw on JSON.parse
+    t.db.prepare(
+      "INSERT INTO relationships (id, source_entity_id, target_entity_id, type, weight, source_memories) VALUES ('r1', 'ent-a', 'ent-b', 'related_to', 1.0, 'not json')",
+    ).run();
+
+    const result = await storeMemoryBatch(t.db, [
+      { content: "Alpha relates to Beta", type: "fact", relates_to_entities: ["Alpha", "Beta"] },
+      { content: "Unrelated fact", type: "fact" },
+    ]);
+
+    expect(result.created).toBe(2);
+    expect(result.errors).toBe(1);
+    expect(result.details[0].status).toBe("created");
+    expect(result.details[0].error).toMatch(/entity linking failed/);
+    expect(result.details[1].error).toBeUndefined();
+    expect(t.db.prepare("SELECT COUNT(*) AS n FROM memories").get()).toEqual({ n: 2 });
+  });
+
   it("deduplicates within the batch", async () => {
     const { storeMemoryBatch } = await import(
       "../../src/interfaces/shared/remember.js"
