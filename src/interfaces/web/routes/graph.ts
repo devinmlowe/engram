@@ -24,7 +24,9 @@ export function handleGraphEvents(req: IncomingMessage, res: ServerResponse, _db
 }
 
 export function handleGraphDiff(_req: IncomingMessage, res: ServerResponse, db: Database.Database, url: URL): void {
-  const since = parseInt(url.searchParams.get("since") ?? "0", 10);
+  // NaN binds as NULL in better-sqlite3 → silently empty diff; fall back to 0
+  const parsed = parseInt(url.searchParams.get("since") ?? "0", 10);
+  const since = Number.isFinite(parsed) ? parsed : 0;
   res.writeHead(200, JSON_HEADERS);
   res.end(JSON.stringify(getGraphDiff(db, since)));
 }
