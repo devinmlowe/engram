@@ -29,6 +29,7 @@ import {
   recordAccess,
   deactivateMemory,
   insertConflict,
+  applyContradiction,
 } from "./memory.js";
 import { classifyNli } from "./nli.js";
 
@@ -298,6 +299,7 @@ async function resolveMemoryConflict(
         source: "dream",
       };
 
+      applyContradiction(db, existingMemory.id);
       deactivateMemory(db, existingMemory.id, newId);
       insertMemory(db, newMemory, newEmbedding);
 
@@ -335,6 +337,9 @@ async function resolveMemoryConflict(
         source: "dream",
       };
 
+      // Both stay active, but the existing memory was contradicted: persist
+      // the FSRS penalty so its retrievability decays faster
+      applyContradiction(db, existingMemory.id);
       insertMemory(db, newMemory, newEmbedding);
 
       const conflictId = crypto.randomUUID();

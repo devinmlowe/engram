@@ -16,6 +16,7 @@ import { createTestDb } from "../helpers.js";
 import type { TestDb } from "../helpers.js";
 import type { Memory } from "../../src/semantic/types.js";
 import type { ExtractedFact } from "../../src/semantic/types.js";
+import { INITIAL_STABILITY } from "../../src/semantic/types.js";
 
 // ─── Mocks ──────────────────────────────────────────────────────
 
@@ -298,6 +299,8 @@ describe("deduplicateFact", () => {
       const oldMemory = getMemory(t.db, "mem-contradict-1");
       expect(oldMemory!.isActive).toBe(false);
       expect(oldMemory!.supersededBy).toBe(result.memoryId);
+      // ...and carries the persisted FSRS contradiction penalty (×0.8)
+      expect(oldMemory!.stability).toBeCloseTo(INITIAL_STABILITY.preference * 0.8, 5);
 
       // Verify new memory was inserted
       const newMemory = getMemory(t.db, result.memoryId);
