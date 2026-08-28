@@ -87,8 +87,23 @@ function serve() {
     console.log("Note: WAL watcher not available, SSE updates disabled");
   }
 
+  // Route handlers are synchronous; an uncaught throw here would take the
+  // whole visualizer down, so every request is fenced by handleRequest
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
-    const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
+    try {
+      route(req, res);
+    } catch (err) {
+      console.error("Request failed:", err instanceof Error ? err.message : err);
+      if (!res.headersSent) {
+        res.writeHead(500, { "Content-Type": "text/plain" });
+      }
+      res.end("Internal error");
+    }
+  });
+
+  function route(req: IncomingMessage, res: ServerResponse): void {
+    // Fixed base: the Host header is client-controlled and may not parse
+    const url = new URL(req.url ?? "/", "http://localhost");
     const pathname = url.pathname;
 
     // ─── Threshold route ────────────────────────────────
@@ -223,7 +238,7 @@ function serve() {
 
     res.writeHead(404, { "Content-Type": "text/plain" });
     res.end("Not found");
-  });
+  }
 
   server.listen(PORT, BIND_HOST, () => {
     const stats = getStats(db);
