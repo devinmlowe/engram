@@ -165,8 +165,10 @@ export async function deduplicateFact(
   // 1. Embed the fact content
   const embedding = await embedDocument(fact.content);
 
-  // 2. Find nearest neighbors
-  const neighbors = findNearestMemories(db, embedding, 5);
+  // 2. Find nearest neighbors — within the global scope only: dream facts
+  // are written as 'global' (insertNovelMemory), and a tenant's hermes:*
+  // memory must never absorb, reinforce, or be deactivated by a global fact
+  const neighbors = findNearestMemories(db, embedding, 5, "global");
 
   // 3. Check each neighbor against thresholds
   for (const neighbor of neighbors) {
