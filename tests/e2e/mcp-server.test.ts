@@ -120,6 +120,18 @@ describe("MCP Server Tool Definitions", () => {
     }
   });
 
+  it("remember's LLM merge is bounded by its own timeout, not the dream pipeline's", async () => {
+    const { readFileSync } = await import("node:fs");
+    const serverSource = readFileSync(
+      new URL("../../src/interfaces/mcp/server.ts", import.meta.url),
+      "utf-8",
+    );
+    expect(serverSource).toMatch(/const MERGE_TIMEOUT_MS = (\d+)_?(\d*);/);
+    const ms = Number(serverSource.match(/const MERGE_TIMEOUT_MS = ([\d_]+);/)![1].replace(/_/g, ""));
+    expect(ms).toBeLessThanOrEqual(30_000);
+    expect(serverSource).toContain("timeoutMs: MERGE_TIMEOUT_MS");
+  });
+
   it("MCP_TOOL_NAMES matches the tools registered in the server source", async () => {
     const { MCP_TOOL_NAMES } = await import("../../src/interfaces/mcp/tool-names.js");
     const { readFileSync } = await import("node:fs");

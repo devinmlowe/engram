@@ -94,6 +94,23 @@ describe("LLM-merge dedup (ADR-010)", () => {
     expect(mockedLlm).not.toHaveBeenCalled();
   });
 
+  it("a statement already contained in the existing memory skips the LLM", async () => {
+    mockedEmbed.mockResolvedValue(seededEmbedding(7));
+    const first = await rememberFact(t.db, {
+      content: "Deploy uses launchd with a 02:00 daily schedule",
+      type: "fact",
+      importance: 0.6,
+    });
+    const second = await rememberFact(
+      t.db,
+      { content: "deploy   uses LAUNCHD", type: "fact", importance: 0.6 },
+      { intelligence: FAKE_INTELLIGENCE },
+    );
+    expect(second.action).toBe("updated");
+    expect(second.memoryId).toBe(first.memoryId);
+    expect(mockedLlm).not.toHaveBeenCalled();
+  });
+
   it("falls back to plain dedup when the LLM tier fails", async () => {
     mockedEmbed.mockResolvedValue(seededEmbedding(8));
     const first = await rememberFact(t.db, {
