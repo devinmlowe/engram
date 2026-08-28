@@ -115,11 +115,15 @@ export async function rememberFact(
         .prepare("SELECT content FROM memories WHERE id = ?")
         .get(neighbor.id) as { content: string } | undefined;
 
-      const identical =
-        existing !== undefined &&
-        existing.content.trim().toLowerCase() === params.content.trim().toLowerCase();
+      const normalize = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
+      const existingNorm = existing ? normalize(existing.content) : "";
+      const incomingNorm = normalize(params.content);
+      const identical = existing !== undefined && existingNorm === incomingNorm;
+      // The LLM merge exists to preserve details the existing memory lacks;
+      // a statement already contained in it has none, so skip the call
+      const subsumed = !identical && existing !== undefined && existingNorm.includes(incomingNorm);
 
-      if (!identical && existing && opts?.intelligence) {
+      if (!identical && !subsumed && existing && opts?.intelligence) {
         const merged = await mergeNearDuplicate(
           existing.content,
           params.content,

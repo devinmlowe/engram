@@ -59,6 +59,9 @@ async function ensureEmbeddings(): Promise<void> {
 
 // ─── Constants ──────────────────────────────────────────────────
 
+/** Upper bound for the LLM merge inside a `remember` tool call */
+const MERGE_TIMEOUT_MS = 15_000;
+
 const VALID_MEMORY_TYPES: readonly MemoryType[] = [
   "preference",
   "decision",
@@ -848,7 +851,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           source: params.source as MemorySource,
           scope: getTenantScoping(process.env).writeScope,
         },
-        { intelligence: buildIntelligenceConfig(config) },
+        // The merge runs inside a synchronous tool call; the dream pipeline's
+        // 120s generation timeout is far too long to block the agent on
+        { intelligence: { ...buildIntelligenceConfig(config), timeoutMs: MERGE_TIMEOUT_MS } },
       );
 
       if (result.action === "merged") {
