@@ -32,7 +32,7 @@ Metric = count of unchecked boxes (lower is better).
 - [x] L7 `src/interfaces/shared/remember.ts:129` merge path non-atomic (updateMemory then re-embed outside txn; redundant deleteVector)
 - [x] L8 `src/interfaces/shared/remember.ts:324` batch entity-linking after commit, unguarded → isError after persisting
 - [x] L9 `src/interfaces/web/routes/sse.ts:42` cooldown drops updates instead of deferring
-- [ ] L10 `src/interfaces/mcp/server.ts:923` `show` strips blank lines before slicing → wrong line numbers
+- [x] L10 `src/interfaces/mcp/server.ts:923` `show` strips blank lines before slicing → wrong line numbers
 - [ ] L11 `src/interfaces/cli/index.ts:852` health hardcodes "MCP tools: 5" and wrong build-check path
 - [ ] L12 `src/interfaces/web/routes/graph.ts:27`, `words.ts:10` NaN query params → silent empty responses
 - [ ] L13 `hermes-plugin/provider.py:242` reap_if_idle never called in production
