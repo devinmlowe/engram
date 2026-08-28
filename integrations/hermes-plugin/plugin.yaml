@@ -1,0 +1,7 @@
+name: engram
+version: 0.1.0
+description: >-
+  Recall from Devin's engram knowledge graph (local SQLite: episodic history,
+  semantic memories, entity graph) with per-profile scoped writes. Spawns
+  engram's MCP server as a lazy stdio child; primary agent contexts only.
+requires_env: []
