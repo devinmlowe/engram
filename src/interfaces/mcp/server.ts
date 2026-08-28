@@ -12,6 +12,7 @@ import { loadConfig } from "../../_core/config/index.js";
 import { escapeXml } from "../../_core/search/index.js";
 import { initEmbeddings } from "../../_core/embeddings/index.js";
 import { rememberFact, storeMemoryBatch } from "../shared/remember.js";
+import { getTenantScoping } from "./scoping.js";
 import type { MemorySource } from "../../_core/types/index.js";
 import {
   unifiedSearch,
@@ -813,6 +814,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       await ensureEmbeddings();
 
       if (!config) config = loadConfig();
+      const scoping = getTenantScoping(process.env);
       const response = await unifiedSearch(getDb(), {
         query: params.query,
         sources: (params.sources ?? ["episodic", "semantic"]) as SearchSource[],
@@ -821,6 +823,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         after: params.after,
         before: params.before,
         depth: params.depth ?? "shallow",
+        scopes: scoping.readScopes,
       }, config);
       const xml = formatRecallXml(response);
 
@@ -838,6 +841,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         type: params.type as MemoryType,
         importance: params.importance,
         source: params.source as MemorySource,
+        scope: getTenantScoping(process.env).writeScope,
       });
 
       if (result.action === "updated") {
@@ -870,7 +874,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         relates_to_entities: m.relates_to_entities,
       }));
 
-      const result = await storeMemoryBatch(getDb(), batchInput);
+      const result = await storeMemoryBatch(getDb(), batchInput, {
+        scope: getTenantScoping(process.env).writeScope,
+      });
 
       return {
         content: [

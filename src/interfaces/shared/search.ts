@@ -34,6 +34,8 @@ export interface UnifiedSearchParams {
   before?: string;
   mode?: "hybrid" | "vector" | "text";
   depth?: "shallow" | "deep";
+  /** Restrict semantic results to these tenant scopes (ADR-010). */
+  scopes?: string[];
 }
 
 export interface RecallSessionResult {
@@ -74,6 +76,7 @@ export async function unifiedSearch(
       after: params.after,
       before: params.before,
       depth: params.depth,
+      scopes: params.scopes,
     },
     config,
   );
