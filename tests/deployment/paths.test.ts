@@ -39,4 +39,10 @@ describe("deployment path integrity (ADR-010 Phase 0)", () => {
     const src = readFileSync(join(ROOT, "src/interfaces/web/routes/dream.ts"), "utf-8");
     expect(src.includes('"Documents"'), "no stale ~/Documents path").toBe(false);
   });
+
+  it("dream route resolves an existing CLI entry point to spawn", async () => {
+    const { resolveEngramCli } = await import("../../src/interfaces/web/routes/dream.js");
+    const cli = resolveEngramCli();
+    expect(existsSync(cli), `CLI entry ${cli} exists`).toBe(true);
+  });
 });
