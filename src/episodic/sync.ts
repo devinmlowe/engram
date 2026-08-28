@@ -179,11 +179,30 @@ export async function syncConversations(
         continue;
       }
 
+      // Exchanges already stored for this conversation are immutable in the
+      // source JSONL, so a changed file only costs embeddings for NEW ones
+      // (an active 300-exchange session used to re-embed all 300 per sync)
+      const alreadyStored = options.force
+        ? new Set<string>()
+        : new Set(
+            (db
+              .prepare("SELECT id FROM exchanges WHERE conversation_id = ?")
+              .all(conversationId) as Array<{ id: string }>).map((r) => r.id),
+          );
+
+      const toolCallsByExchange = new Map<string, typeof parsed.toolCalls>();
+      for (const tc of parsed.toolCalls) {
+        const list = toolCallsByExchange.get(tc.exchangeId);
+        if (list) list.push(tc);
+        else toolCallsByExchange.set(tc.exchangeId, [tc]);
+      }
+
       // Embed and store each exchange
       for (const exchange of parsed.exchanges) {
-        const toolNames = parsed.toolCalls
-          .filter((tc) => tc.exchangeId === exchange.id)
-          .map((tc) => tc.toolName);
+        if (alreadyStored.has(exchange.id)) continue;
+
+        const exchangeToolCalls = toolCallsByExchange.get(exchange.id) ?? [];
+        const toolNames = exchangeToolCalls.map((tc) => tc.toolName);
 
         const embedding = await embedExchange(
           exchange.userMessage,
@@ -194,10 +213,6 @@ export async function syncConversations(
             branch: exchange.gitBranch,
             tools: toolNames,
           },
-        );
-
-        const exchangeToolCalls = parsed.toolCalls.filter(
-          (tc) => tc.exchangeId === exchange.id,
         );
 
         insertExchange(db, exchange, embedding, exchangeToolCalls);
