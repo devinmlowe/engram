@@ -4,12 +4,14 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const state = vi.hoisted(() => ({ modelCalls: 0 }));
+const state = vi.hoisted(() => ({ modelCalls: 0, loads: 0 }));
 
 vi.mock("@xenova/transformers", () => ({
   layer_norm: vi.fn(),
   pipeline: vi.fn(async (_task: string, model: string) => {
     if (model.includes("nomic")) throw new Error("force MiniLM fallback (no post-processing)");
+    state.loads++;
+    await new Promise((r) => setTimeout(r, 20));
     return async () => {
       state.modelCalls++;
       await new Promise((r) => setTimeout(r, 20));
@@ -18,7 +20,21 @@ vi.mock("@xenova/transformers", () => ({
   }),
 }));
 
-import { embedQuery, resetEmbeddings } from "../../src/_core/embeddings/index.js";
+import { embedQuery, initEmbeddings, resetEmbeddings } from "../../src/_core/embeddings/index.js";
+
+describe("initEmbeddings in-flight coalescing", () => {
+  beforeEach(() => {
+    resetEmbeddings();
+    state.loads = 0;
+  });
+
+  it("loads the model once for concurrent cold initializers", async () => {
+    await Promise.all([initEmbeddings(), initEmbeddings(), embedQuery("cold start")]);
+    expect(state.loads).toBe(1);
+    await initEmbeddings();
+    expect(state.loads).toBe(1);
+  });
+});
 
 describe("embedQuery in-flight coalescing", () => {
   beforeEach(() => {
