@@ -64,6 +64,12 @@ def main():
             if log_path:
                 with open(log_path, "a") as fh:
                     fh.write(json.dumps({"tool": name, "args": args}) + "\n")
+            if name == "toolerr":
+                reply(msg_id, {
+                    "content": [{"type": "text", "text": "Error: database is locked"}],
+                    "isError": True,
+                })
+                continue
             if name == "boom":
                 sys.stdout.write(json.dumps({
                     "jsonrpc": "2.0", "id": msg_id,

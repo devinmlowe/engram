@@ -137,7 +137,12 @@ class McpStdioClient:
             for c in result.get("content", [])
             if c.get("type") == "text"
         ]
-        return "\n".join(parts)
+        text = "\n".join(parts)
+        # MCP tool-level failures arrive as a successful JSON-RPC result with
+        # isError=true (not a JSON-RPC error); they must not read as memory
+        if result.get("isError"):
+            raise McpError(text or f"tool {name} failed")
+        return text
 
     # ── JSON-RPC plumbing ────────────────────────────────────────
 

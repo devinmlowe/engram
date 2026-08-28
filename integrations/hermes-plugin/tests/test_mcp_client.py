@@ -58,6 +58,14 @@ def test_tool_error_raises_mcp_error(client):
         client.call_tool("boom", {})
 
 
+def test_tool_level_is_error_result_raises_mcp_error(client):
+    client.start()
+    with pytest.raises(McpError, match="database is locked"):
+        client.call_tool("toolerr", {})
+    # client remains usable afterwards
+    assert json.loads(client.call_tool("recall", {"query": "x"}))["tool"] == "recall"
+
+
 def test_call_tool_timeout():
     c = McpStdioClient([sys.executable, FAKE_SERVER], env={"FAKE_SLOW_S": "5"})
     try:
