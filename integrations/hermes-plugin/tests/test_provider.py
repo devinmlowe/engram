@@ -80,6 +80,17 @@ def test_child_env_carries_profile_scope(tmp_path):
     provider.shutdown()
 
 
+def test_non_string_extra_env_values_do_not_break_spawn(tmp_path):
+    log = tmp_path / "env.jsonl"
+    provider, home = make_provider(
+        tmp_path, extra_env={"FAKE_LOG": str(log), "FAKE_INT": 7, "FAKE_BOOL": True}
+    )
+    provider.initialize("sess-env", hermes_home=home, platform="cli", agent_context="primary")
+    assert provider.prefetch("spawn") != ""  # Popen would TypeError on int/bool values
+    assert provider.child_pid is not None
+    provider.shutdown()
+
+
 def test_handle_tool_call_proxies_and_returns_json_string(tmp_path):
     provider, home = make_provider(tmp_path)
     provider.initialize("sess-t", hermes_home=home, platform="cli", agent_context="primary")

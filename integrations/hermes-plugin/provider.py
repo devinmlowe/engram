@@ -247,8 +247,10 @@ class EngramMemoryProvider(MemoryProviderBase):  # type: ignore[misc,valid-type]
             ),
         }
         if self._config.get("db_path"):
-            env["ENGRAM_DB_PATH"] = self._config["db_path"]
-        env.update(self._config.get("extra_env", {}))
+            env["ENGRAM_DB_PATH"] = str(self._config["db_path"])
+        # JSON config may carry ints/bools; Popen requires str values
+        for key, value in (self._config.get("extra_env") or {}).items():
+            env[str(key)] = str(value)
         return env
 
     def _server_command(self) -> List[str]:
