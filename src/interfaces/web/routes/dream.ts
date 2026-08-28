@@ -135,12 +135,17 @@ export function getDreamStatus(db: Database.Database): DreamStatus {
 
 // ─── Start Dream ────────────────────────────────────────────────
 
+/** Path to the CLI entry: routes/ -> web/ -> interfaces/ -> cli/index.ts */
+export function resolveEngramCli(): string {
+  return join(import.meta.dirname ?? ".", "..", "..", "cli", "index.ts");
+}
+
 export function startDream(): { ok: boolean; message: string } {
   if (dreamProcess) {
     return { ok: false, message: "Dream already running" };
   }
 
-  const engramBin = join(import.meta.dirname ?? ".", "..", "cli", "index.ts");
+  const engramBin = resolveEngramCli();
 
   dreamProcess = spawn("npx", ["tsx", engramBin, "dream", "--verbose"], {
     // Repo root: routes/ -> web/ -> interfaces/ -> src/ -> root
