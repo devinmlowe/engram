@@ -117,6 +117,24 @@ def test_handle_tool_call_surfaces_tool_level_errors(tmp_path):
         provider.shutdown()
 
 
+def test_provider_respawns_after_child_crash(tmp_path):
+    provider, home = make_provider(tmp_path)
+    provider.initialize("sess-crash", hermes_home=home, platform="cli", agent_context="primary")
+    provider.prefetch("spawn")
+    first_pid = provider.child_pid
+    import provider as provider_module
+    provider_module._TOOL_MAP["engram_die"] = "die"
+    try:
+        parsed = json.loads(provider.handle_tool_call("engram_die", {}))
+        assert parsed["ok"] is False
+        # next use transparently respawns instead of timing out forever
+        assert provider.prefetch("after crash") != ""
+        assert provider.child_pid not in (None, first_pid)
+    finally:
+        del provider_module._TOOL_MAP["engram_die"]
+        provider.shutdown()
+
+
 def test_on_memory_write_mirrors_into_graph(tmp_path):
     log = tmp_path / "writes.jsonl"
     provider, home = make_provider(tmp_path, extra_env={"FAKE_LOG": str(log)})
