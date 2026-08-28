@@ -8,6 +8,7 @@ import type { EngramConfig } from "../types/index.js";
 import { LRUCache } from "../cache/index.js";
 
 let embeddingPipeline: FeatureExtractionPipeline | null = null;
+let initInFlight: Promise<void> | null = null;
 
 /** Cache for query embeddings — avoids re-embedding identical queries within a session */
 const queryEmbeddingCache = new LRUCache<string, number[]>({
@@ -32,14 +33,22 @@ const TARGET_DIMS = 256;
 export async function initEmbeddings(_config?: EngramConfig): Promise<void> {
   if (embeddingPipeline) return;
 
-  try {
-    embeddingPipeline = await pipeline("feature-extraction", NOMIC_MODEL);
-    activeModel = "nomic";
-  } catch {
-    embeddingPipeline = await pipeline("feature-extraction", MINILM_MODEL);
-    activeModel = "minilm";
+  // Concurrent cold callers (parallel MCP tool calls) share one model load
+  if (!initInFlight) {
+    initInFlight = (async () => {
+      try {
+        embeddingPipeline = await pipeline("feature-extraction", NOMIC_MODEL);
+        activeModel = "nomic";
+      } catch {
+        embeddingPipeline = await pipeline("feature-extraction", MINILM_MODEL);
+        activeModel = "minilm";
+      }
+      activeDimensions = TARGET_DIMS;
+    })().finally(() => {
+      initInFlight = null;
+    });
   }
-  activeDimensions = TARGET_DIMS;
+  return initInFlight;
 }
 
 /**
@@ -233,4 +242,5 @@ export function resetEmbeddings(): void {
   activeDimensions = 256;
   queryEmbeddingCache.clear();
   inflightQueryEmbeds.clear();
+  initInFlight = null;
 }

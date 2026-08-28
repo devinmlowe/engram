@@ -50,7 +50,7 @@ Metric = count of unchecked boxes (lower is better).
 - [x] P3 `src/graph/search.ts:258` traverseNeighborhood recursive CTE has no cycle guard (d³ blow-up)
 - [x] P4 `src/graph/entity.ts:239` getEntityByName `lower(name)=lower(?)` defeats NOCASE index → full scan on dream hot path
 - [x] P5 `src/interfaces/mcp/server.ts:841` merge pays full LLM cascade + 120s timeout; skip when incoming ⊂ existing, cap timeout
-- [ ] P6 `src/interfaces/mcp/server.ts:52` ensureEmbeddings has no in-flight guard → concurrent cold calls load model twice
+- [x] P6 `src/interfaces/mcp/server.ts:52` ensureEmbeddings has no in-flight guard → concurrent cold calls load model twice
 
 ## Perf — low
 
