@@ -132,12 +132,20 @@ function buildEntityContent(db: Database.Database, entity: Entity): string {
 
   const rels = getRelationshipsForEntity(db, entity.id);
   if (rels.length > 0) {
+    const shown = rels.slice(0, 10);
+    const otherIds = [...new Set(shown.map((rel) =>
+      rel.sourceEntityId === entity.id ? rel.targetEntityId : rel.sourceEntityId,
+    ))];
+    const nameById = new Map(
+      (db
+        .prepare(`SELECT id, name FROM entities WHERE id IN (${otherIds.map(() => "?").join(", ")})`)
+        .all(...otherIds) as Array<{ id: string; name: string }>).map((r) => [r.id, r.name]),
+    );
     const relDescriptions: string[] = [];
-    for (const rel of rels.slice(0, 10)) {
+    for (const rel of shown) {
       const isSource = rel.sourceEntityId === entity.id;
       const otherId = isSource ? rel.targetEntityId : rel.sourceEntityId;
-      const other = getEntity(db, otherId);
-      const otherName = other?.name ?? otherId;
+      const otherName = nameById.get(otherId) ?? otherId;
       const dir = isSource ? "->" : "<-";
       relDescriptions.push(`${dir} ${rel.type} ${otherName}`);
     }
@@ -475,6 +483,9 @@ export async function exploreSelective(
         relationshipTypes,
       );
 
+      // The expanding node's name is the same for every neighbor below
+      const sourceName = getEntity(db, current.entityId)?.name ?? current.entityId;
+
       for (const neighbor of neighbors) {
         if (visited.has(neighbor.entityId)) continue;
         visited.add(neighbor.entityId);
@@ -491,8 +502,6 @@ export async function exploreSelective(
         }
 
         // Add edge regardless of pruning (edges between visited nodes)
-        const sourceEntity = getEntity(db, current.entityId);
-        const sourceName = sourceEntity?.name ?? current.entityId;
         const isOutgoing = neighbor.relationship.direction === "outgoing";
 
         resultEdges.push({
