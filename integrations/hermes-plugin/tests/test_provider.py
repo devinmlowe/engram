@@ -198,6 +198,20 @@ def test_idle_kill_reaps_quiet_child(tmp_path):
     provider.shutdown()
 
 
+def test_dashboard_flat_json_config_is_honored(tmp_path):
+    """Hermes's dashboard persists flat_json provider config at
+    <hermes_home>/<provider>/config.json — it must be read, and win."""
+    provider, home = make_provider(tmp_path, budget=500)
+    dash_dir = tmp_path / "hermes_home" / "engram"
+    dash_dir.mkdir()
+    (dash_dir / "config.json").write_text(json.dumps({"budget": 777, "idle_kill_s": 42}))
+    provider.initialize("sess-d", hermes_home=home, platform="cli", agent_context="primary")
+    assert provider._config["budget"] == 777
+    assert provider._config["idle_kill_s"] == 42
+    assert provider._config["server_command"]  # engram.json keys still present
+    provider.shutdown()
+
+
 def test_get_config_schema_and_save_config(tmp_path):
     provider, home = make_provider(tmp_path)
     schema = provider.get_config_schema()

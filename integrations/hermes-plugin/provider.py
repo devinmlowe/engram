@@ -177,15 +177,28 @@ class EngramMemoryProvider(MemoryProviderBase):  # type: ignore[misc,valid-type]
         self._stopping = False
         self._config = self._load_config()
 
+    def _config_paths(self) -> List[str]:
+        """CLI store (`hermes memory setup` → engram.json) then the dashboard's
+        flat_json store (<home>/engram/config.json); later files win."""
+        if not self._hermes_home:
+            return []
+        return [
+            os.path.join(self._hermes_home, "engram.json"),
+            os.path.join(self._hermes_home, "engram", "config.json"),
+        ]
+
     def _load_config(self) -> Dict[str, Any]:
         config: Dict[str, Any] = dict(self._config)
-        path = os.path.join(self._hermes_home, "engram.json") if self._hermes_home else ""
-        if path and os.path.isfile(path):
+        for path in self._config_paths():
+            if not os.path.isfile(path):
+                continue
             try:
                 with open(path) as fh:
-                    config.update(json.load(fh))
+                    loaded = json.load(fh)
             except (OSError, json.JSONDecodeError):
-                pass
+                continue
+            if isinstance(loaded, dict):
+                config.update(loaded)
         return config
 
     def shutdown(self) -> None:
