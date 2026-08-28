@@ -40,11 +40,19 @@ def test_config_schema_matches_hermes_dashboard_contract(hermes_path):
         assert expected in keys
 
 
+def make_plugin_parser(cli):
+    # Mirror Hermes exactly (hermes_cli/main.py): the plugin's register_cli
+    # receives the `hermes engram` ArgumentParser itself, and the handler is
+    # attached via set_defaults(func=...).
+    parser = argparse.ArgumentParser(prog="hermes engram")
+    cli.register_cli(parser)
+    parser.set_defaults(func=cli.engram_command)
+    return parser
+
+
 def test_cli_registers_subcommands():
     cli = load_by_path("_engram_cli", "cli.py")
-    parser = argparse.ArgumentParser()
-    sub = parser.add_subparsers(dest="engram_cmd")
-    cli.register_cli(sub)
+    parser = make_plugin_parser(cli)
     args = parser.parse_args(["status"])
     assert args.engram_cmd == "status"
     args = parser.parse_args(["recall", "tailscale", "--budget", "500"])
@@ -61,9 +69,7 @@ def test_cli_status_reports_available(tmp_path, capsys, monkeypatch):
     )
     monkeypatch.setenv("HERMES_HOME", str(home))
     cli = load_by_path("_engram_cli2", "cli.py")
-    parser = argparse.ArgumentParser()
-    sub = parser.add_subparsers(dest="engram_cmd")
-    cli.register_cli(sub)
+    parser = make_plugin_parser(cli)
     rc = cli.engram_command(parser.parse_args(["status"]))
     assert rc == 0
     assert "available" in capsys.readouterr().out.lower()
@@ -77,9 +83,7 @@ def test_cli_recall_prints_results(tmp_path, capsys, monkeypatch):
     )
     monkeypatch.setenv("HERMES_HOME", str(home))
     cli = load_by_path("_engram_cli3", "cli.py")
-    parser = argparse.ArgumentParser()
-    sub = parser.add_subparsers(dest="engram_cmd")
-    cli.register_cli(sub)
+    parser = make_plugin_parser(cli)
     rc = cli.engram_command(parser.parse_args(["recall", "kubernetes"]))
     assert rc == 0
     out = capsys.readouterr().out

@@ -11,10 +11,16 @@ if _here not in sys.path:
 
 
 def register_cli(subparser):
-    status = subparser.add_parser("status", help="Show engram provider status")
-    del status
+    """Build the ``hermes engram`` subcommand tree.
 
-    recall = subparser.add_parser("recall", help="Query the knowledge graph")
+    Hermes passes the ``hermes engram`` ArgumentParser itself (see
+    hermes_cli/main.py plugin CLI wiring); we attach our own subparsers.
+    """
+    commands = subparser.add_subparsers(dest="engram_cmd")
+
+    commands.add_parser("status", help="Show engram provider status")
+
+    recall = commands.add_parser("recall", help="Query the knowledge graph")
     recall.add_argument("query", help="What to recall")
     recall.add_argument("--budget", type=int, default=1200, help="Token budget")
 
