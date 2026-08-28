@@ -38,7 +38,7 @@ Metric = count of unchecked boxes (lower is better).
 - [x] L13 `hermes-plugin/provider.py:242` reap_if_idle never called in production
 - [x] L14 `hermes-plugin/provider.py:311` lost-wakeup race between _kick_writer and _drain_writes
 - [x] L15 `hermes-plugin/mcp_client.py:144` reader-thread death/EOF never signalled → full-timeout stalls, wedged provider
-- [ ] L16 `hermes-plugin/provider.py:330` flush_writes blocks 2×timeout and re-kicks spawn every 50ms on failure
+- [x] L16 `hermes-plugin/provider.py:330` flush_writes blocks 2×timeout and re-kicks spawn every 50ms on failure
 - [ ] L17 `hermes-plugin/cli.py:25` `--budget` parsed but ignored
 - [ ] L18 `hermes-plugin/provider.py:162` is_available ignores engram.json on fresh instance
 - [ ] L19 `hermes-plugin/mcp_client.py:61` non-str env values → Popen TypeError swallowed, retried every turn

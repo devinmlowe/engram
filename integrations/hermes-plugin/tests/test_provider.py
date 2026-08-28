@@ -173,6 +173,20 @@ def test_burst_of_writes_all_drain_without_flush(tmp_path):
     provider.shutdown()
 
 
+def test_flush_gives_up_promptly_when_server_cannot_start(tmp_path):
+    provider, home = make_provider(tmp_path, server_command=[str(tmp_path / "no-such-binary")])
+    provider.initialize("sess-nf", hermes_home=home, platform="cli", agent_context="primary")
+    for i in range(5):
+        provider.on_memory_write("add", "memory", f"fact {i}")
+    t0 = time.monotonic()
+    provider.flush_writes(timeout=3.0)
+    elapsed = time.monotonic() - t0
+    # one re-kick, then stop — well inside the deadline, not 2× it
+    assert elapsed < 2.0
+    assert provider.child_pid is None
+    provider.shutdown()
+
+
 def test_remove_actions_are_not_mirrored(tmp_path):
     log = tmp_path / "writes2.jsonl"
     provider, home = make_provider(tmp_path, extra_env={"FAKE_LOG": str(log)})
