@@ -51,7 +51,7 @@ install_service() {
     fi
 
     # Kill any existing graph-server process
-    lsof -ti :3000 2>/dev/null | xargs kill 2>/dev/null || true
+    lsof -ti :3001 2>/dev/null | xargs kill 2>/dev/null || true
 
     NODE_BIN="$(resolve_node)"
     echo "Using node: $NODE_BIN ($($NODE_BIN --version))"
@@ -85,7 +85,7 @@ install_service() {
     echo ""
     echo "Engram visualizer installed and loaded."
     echo "  Plist:  $PLIST_DST"
-    echo "  URL:    http://localhost:3000/graph"
+    echo "  URL:    http://localhost:3001/graph"
     echo "  Logs:   $LOG_DIR/visualizer.log"
     echo ""
     echo "To restart:   $0 restart"
@@ -106,10 +106,10 @@ status_service() {
     if launchctl list "$LABEL" 2>/dev/null; then
         echo ""
         echo "Service is loaded."
-        if lsof -ti :3000 &>/dev/null; then
-            echo "Port 3000: listening"
+        if lsof -ti :3001 &>/dev/null; then
+            echo "Port 3001: listening"
         else
-            echo "Port 3000: not listening (may be starting)"
+            echo "Port 3001: not listening (may be starting)"
         fi
     else
         echo "Service is not loaded."

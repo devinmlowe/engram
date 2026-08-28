@@ -9,7 +9,7 @@
  *
  * Watches the SQLite WAL for changes and pushes updates via SSE.
  *
- * Usage: npx tsx src/interfaces/web/server.ts [--port 3000]
+ * Usage: npx tsx src/interfaces/web/server.ts [--port 3001]
  */
 
 import Database from "better-sqlite3";
@@ -53,7 +53,7 @@ const DB_PATH =
   process.env.ENGRAM_DB_PATH ??
   join(homedir(), ".local", "share", "engram", "engram.db");
 
-const PORT = parseInt(process.env.PORT ?? "3000", 10);
+const PORT = parseInt(process.env.PORT ?? "3001", 10);
 
 // ─── Pre-render pages ───────────────────────────────────────────
 

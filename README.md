@@ -80,7 +80,7 @@ engram validate        # Validate migration integrity
 
 ## Web Visualization
 
-Interactive knowledge graph visualization at `localhost:3000`:
+Interactive knowledge graph visualization at `localhost:3001`:
 
 | | |
 |---|---|

@@ -20,6 +20,8 @@
     <dict>
         <key>NODE_ENV</key>
         <string>production</string>
+        <key>PORT</key>
+        <string>3001</string>
         <key>PATH</key>
         <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
     </dict>

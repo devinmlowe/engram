@@ -1,6 +1,6 @@
 # Web
 
-HTTP server for interactive knowledge graph visualization and dream pipeline control. Serves at `localhost:3000` with real-time updates via Server-Sent Events.
+HTTP server for interactive knowledge graph visualization and dream pipeline control. Serves at `localhost:3001` with real-time updates via Server-Sent Events.
 
 ## In Scope
 
