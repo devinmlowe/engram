@@ -127,7 +127,8 @@ describe("searchSemantic", () => {
 
     const meta = result!.metadata as Record<string, unknown>;
     expect(meta.type).toBe("fact");
-    expect(meta.confidence).toBe(0.7);
+    // Composite confidence: base 0.7 × corroboration 0.5 (access_count 0) × retrievability ~1.0
+    expect(meta.confidence).toBeCloseTo(0.35, 3);
     expect(meta.importance).toBe(0.9);
     expect(meta.context).toBe("Discussed during code review");
   });
