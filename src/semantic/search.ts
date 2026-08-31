@@ -16,7 +16,7 @@ import type {
 import type { MemoryType, Memory } from "./types.js";
 import { embedQuery } from "../_core/embeddings/index.js";
 import { rrfFuse, normalizeMinMaxFloored } from "../_core/search/rrf.js";
-import { computeRetrievalScore } from "./decay.js";
+import { computeRetrievalScore, computeConfidence } from "./decay.js";
 
 // ─── Row Type Helpers ───────────────────────────────────────────
 
@@ -269,7 +269,10 @@ export async function searchSemantic(
       content: r.memory.content,
       metadata: {
         type: r.memory.type,
-        confidence: r.memory.confidence,
+        // Composite confidence (base × corroboration × retrievability), not
+        // the stored base — dream memories all share base 0.5, so reporting
+        // the raw value renders every result as a flat 50%
+        confidence: computeConfidence(r.memory),
         importance: r.memory.importance,
         context: r.memory.context,
         accessCount: r.memory.accessCount,

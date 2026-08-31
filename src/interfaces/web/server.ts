@@ -34,6 +34,7 @@ import {
   handleCommunityData,
 } from "./routes/graph.js";
 import { handleWordFrequencies } from "./routes/words.js";
+import { handleHealth } from "./routes/health.js";
 import { broadcastUpdate } from "./routes/sse.js";
 import { resetWordCache } from "./data/word-queries.js";
 
@@ -109,6 +110,12 @@ function serve() {
     // Fixed base: the Host header is client-controlled and may not parse
     const url = new URL(req.url ?? "/", "http://localhost");
     const pathname = url.pathname;
+
+    // ─── Health route ───────────────────────────────────
+    if (pathname === "/api/health" || pathname === "/graph/api/health") {
+      handleHealth(req, res, db);
+      return;
+    }
 
     // ─── Threshold route ────────────────────────────────
     if (pathname === "/api/threshold" || pathname === "/graph/api/threshold" || pathname === "/depth/api/threshold" || pathname === "/graph/depth/api/threshold") {
