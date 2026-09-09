@@ -54,6 +54,8 @@ const DB_PATH =
   join(homedir(), ".local", "share", "engram", "engram.db");
 
 const PORT = parseInt(process.env.PORT ?? "3001", 10);
+// Bind to loopback by default; set ENGRAM_BIND=0.0.0.0 to expose on the network.
+const BIND = process.env.ENGRAM_BIND ?? "127.0.0.1";
 
 // ─── Pre-render pages ───────────────────────────────────────────
 
@@ -223,15 +225,16 @@ function serve() {
     res.end("Not found");
   });
 
-  server.listen(PORT, "0.0.0.0", () => {
+  server.listen(PORT, BIND, () => {
     const stats = getStats(db);
     const threshold = computeOptimalThreshold(db);
     console.log(`Engram Visualizer`);
-    console.log(`  Graph: https://127.0.0.1/graph`);
-    console.log(`  Depth: https://127.0.0.1/graph/depth`);
-    console.log(`  Galaxy: https://127.0.0.1/graph/galaxy`);
-    console.log(`  Words: https://127.0.0.1/graph/words`);
-    console.log(`  Terminal: https://127.0.0.1/terminal/graph`);
+    const base = `http://${BIND === "0.0.0.0" ? "127.0.0.1" : BIND}:${PORT}`;
+    console.log(`  Graph: ${base}/graph`);
+    console.log(`  Depth: ${base}/graph/depth`);
+    console.log(`  Galaxy: ${base}/graph/galaxy`);
+    console.log(`  Words: ${base}/graph/words`);
+    console.log(`  Terminal: ${base}/terminal/graph`);
     console.log(`  ${stats.nodes} nodes, ${stats.edges} edges, ${stats.communities} communities`);
     console.log(`  Auto-threshold: ${threshold.value} (${threshold.nodes} nodes, ${threshold.edges} edges, ${threshold.edgePct}% edge retention)`);
     console.log(`  Watching for real-time updates...`);
