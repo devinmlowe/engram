@@ -17,7 +17,7 @@ import type { TestDb } from "../helpers.js";
 
 describe("extractProjectName", () => {
   it("extracts last segment from encoded dir name", () => {
-    expect(extractProjectName("-Users-devinmlowe-Documents-git-engram")).toBe("engram");
+    expect(extractProjectName("-Users-alice-Documents-git-engram")).toBe("engram");
   });
 
   it("handles single-segment names", () => {

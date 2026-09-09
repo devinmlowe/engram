@@ -75,7 +75,7 @@ The MCP server is configured in `~/.claude/settings.json` under `mcpServers`:
   "mcpServers": {
     "engram": {
       "command": "node",
-      "args": ["/Users/USER/Documents/git/engram/dist/interfaces/mcp/server.js"],
+      "args": ["/absolute/path/to/engram/dist/interfaces/mcp/server.js"],
       "env": {}
     }
   }

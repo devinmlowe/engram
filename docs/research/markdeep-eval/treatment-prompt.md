@@ -70,7 +70,7 @@ Answer ALL 8 questions below. For EACH question:
 
 ## Output
 
-Write ALL results to a single file: `/Users/USER/Documents/git/engram/docs/research/markdeep-eval/result-rlm.md`
+Write ALL results to a single file: `<repo>/docs/research/markdeep-eval/result-rlm.md`
 
 Use this format:
 

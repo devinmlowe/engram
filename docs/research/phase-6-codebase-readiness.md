@@ -36,7 +36,7 @@ The codebase has strong foundations for Phase 6. Community detection (Louvain), 
 
 **Current State: IMPLEMENTED**
 
-- **File:** `/Users/USER/Documents/git/engram/.claude/worktrees/phase-6-emergence/src/graph/analyzer.ts`, lines 68-132
+- **File:** `<repo>/.claude/worktrees/phase-6-emergence/src/graph/analyzer.ts`, lines 68-132
 - `detectCommunities()` (line 76) calls `louvain.detailed()` with configurable resolution, returns community map, count, and modularity score
 - `groupByCommunity()` (line 117) inverts node-to-community into community-to-nodes
 - `computeCoherence()` (line 143) scores each community's internal vs external edge ratio
@@ -85,7 +85,7 @@ The codebase has strong foundations for Phase 6. Community detection (Louvain), 
 
 **Current State: FULLY IMPLEMENTED**
 
-- **File:** `/Users/USER/Documents/git/engram/.claude/worktrees/phase-6-emergence/src/graph/analyzer.ts`, lines 195-250
+- **File:** `<repo>/.claude/worktrees/phase-6-emergence/src/graph/analyzer.ts`, lines 195-250
 - `computeBetweenness()` (line 179) wraps `graphology-metrics/centrality/betweenness`
 - `detectBridgeEntities()` (line 205) combines betweenness centrality with community span
 - Bridge score formula: `bridgeScore = betweenness * communitySpan` (line 239)
@@ -190,7 +190,7 @@ The server uses a clean pattern:
 
 **Current State: IMPLEMENTED**
 
-- **File:** `/Users/USER/Documents/git/engram/.claude/worktrees/phase-6-emergence/src/dream/daemon.ts`
+- **File:** `<repo>/.claude/worktrees/phase-6-emergence/src/dream/daemon.ts`
 - `runReflectPhase()` (line 423): Calls `analyzeGraph()` and `persistAnalysis()`, records checkpoint
 - `runPrunePhase()` (line 476): Scans all active memories, applies `isPruneEligible()` from decay.ts, deactivates eligible memories
 - Pipeline orchestration (line 99): Runs phases sequentially with checkpointing and resume support
@@ -220,7 +220,7 @@ The server uses a clean pattern:
 
 ### 3.1 Graph Analyzer Tests
 
-**File:** `/Users/USER/Documents/git/engram/.claude/worktrees/phase-6-emergence/tests/graph/analyzer.test.ts`
+**File:** `<repo>/.claude/worktrees/phase-6-emergence/tests/graph/analyzer.test.ts`
 **Coverage:** 477 lines, 21 test cases
 
 | Function | Tests | Status |
@@ -249,7 +249,7 @@ The server uses a clean pattern:
 
 ### 3.2 Dream Daemon Tests
 
-**File:** `/Users/USER/Documents/git/engram/.claude/worktrees/phase-6-emergence/tests/dream/daemon.test.ts`
+**File:** `<repo>/.claude/worktrees/phase-6-emergence/tests/dream/daemon.test.ts`
 **Coverage:** 617 lines, 19 test cases
 
 | Area | Tests | Status |

@@ -35,7 +35,7 @@ interface DiscoveredFile {
 
 /**
  * Extract the human-readable project name from an encoded dir name.
- * e.g. "-Users-devinmlowe-Documents-git-engram" → "engram"
+ * e.g. "-Users-alice-Documents-git-engram" → "engram"
  */
 export function extractProjectName(dirName: string): string {
   // Split on path-separator encoding, take last non-empty segment

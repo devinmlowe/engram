@@ -105,7 +105,7 @@ launchctl bootout gui/$(id -u)/com.engram.dream
         <!-- Use absolute path to node binary -->
         <string>/opt/homebrew/bin/node</string>
         <!-- Use absolute path to the compiled daemon entry point -->
-        <string>/Users/USER/.local/share/engram/dist/daemon/index.js</string>
+        <string>~/.local/share/engram/dist/daemon/index.js</string>
     </array>
 
     <!-- Schedule: Run every 4 hours -->
@@ -151,7 +151,7 @@ launchctl bootout gui/$(id -u)/com.engram.dream
 
     <!-- Working directory -->
     <key>WorkingDirectory</key>
-    <string>/Users/USER/.local/share/engram</string>
+    <string>~/.local/share/engram</string>
 
     <!-- Environment variables -->
     <key>EnvironmentVariables</key>
@@ -159,18 +159,18 @@ launchctl bootout gui/$(id -u)/com.engram.dream
         <key>PATH</key>
         <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
         <key>HOME</key>
-        <string>/Users/USER</string>
+        <string>~</string>
         <key>NODE_ENV</key>
         <string>production</string>
         <key>ENGRAM_DATA_DIR</key>
-        <string>/Users/USER/.local/share/engram</string>
+        <string>~/.local/share/engram</string>
     </dict>
 
     <!-- Logging -->
     <key>StandardOutPath</key>
-    <string>/Users/USER/.local/share/engram/logs/dream-stdout.log</string>
+    <string>~/.local/share/engram/logs/dream-stdout.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/USER/.local/share/engram/logs/dream-stderr.log</string>
+    <string>~/.local/share/engram/logs/dream-stderr.log</string>
 
     <!-- Don't keep alive -- this is a scheduled batch job, not a long-running service -->
     <key>KeepAlive</key>
@@ -281,7 +281,7 @@ launchd can watch filesystem paths and trigger when they change:
 ```xml
 <key>WatchPaths</key>
 <array>
-    <string>/Users/USER/.local/share/engram/pending/</string>
+    <string>~/.local/share/engram/pending/</string>
 </array>
 ```
 
@@ -409,9 +409,9 @@ launchd captures stdout and stderr and routes them to the paths specified in the
 
 ```xml
 <key>StandardOutPath</key>
-<string>/Users/USER/.local/share/engram/logs/dream-stdout.log</string>
+<string>~/.local/share/engram/logs/dream-stdout.log</string>
 <key>StandardErrorPath</key>
-<string>/Users/USER/.local/share/engram/logs/dream-stderr.log</string>
+<string>~/.local/share/engram/logs/dream-stderr.log</string>
 ```
 
 **Important**: These files are opened once when the job starts and appended to on each run. They are NOT automatically rotated. The daemon must handle rotation or use a log rotation mechanism.
@@ -723,7 +723,7 @@ Engram uses `"type": "module"` (ESM). Node.js 22+ runs TypeScript natively with 
 <array>
     <string>/opt/homebrew/bin/node</string>
     <!-- ESM entry point (compiled .js) -->
-    <string>/Users/USER/.local/share/engram/dist/daemon/index.js</string>
+    <string>~/.local/share/engram/dist/daemon/index.js</string>
 </array>
 ```
 
@@ -734,7 +734,7 @@ Alternatively, for development, use `tsx` directly:
 <array>
     <string>/opt/homebrew/bin/npx</string>
     <string>tsx</string>
-    <string>/Users/USER/Documents/git/engram/src/daemon/index.ts</string>
+    <string><repo>/src/daemon/index.ts</string>
 </array>
 ```
 
@@ -789,7 +789,7 @@ const svc = new Service({
   name: 'Engram Dream',
   description: 'Background memory consolidation daemon',
   script: '/path/to/daemon/index.js',
-  logpath: '/Users/USER/Library/Logs/engram/',
+  logpath: '~/Library/Logs/engram/',
 });
 
 svc.on('install', () => svc.start());

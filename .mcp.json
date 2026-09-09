@@ -3,7 +3,6 @@
     "engram": {
       "command": "node",
       "args": ["./dist/interfaces/mcp/server.js"],
-      "cwd": "/Users/USER/Documents/git/engram",
       "env": {}
     }
   }

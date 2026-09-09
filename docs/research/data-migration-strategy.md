@@ -282,7 +282,7 @@ function formatProgress(p: MigrationProgress): string {
 The source has no `conversations` table. Each exchange has an `archive_path` like:
 
 ```
-/Users/USER/.config/superpowers/conversation-archive/-Users-devinmlowe-Documents-git-engram/78ff1399-2d22-4859-bbf2-e4273dfc2b9d.jsonl
+~/.config/superpowers/conversation-archive/-Users-alice-Documents-git-engram/<conversation-uuid>.jsonl
 ```
 
 The conversation ID is the filename without the `.jsonl` extension. There are 1,502 unique conversation IDs across 7,660 exchanges.
@@ -291,15 +291,15 @@ The conversation ID is the filename without the `.jsonl` extension. There are 1,
 import { basename } from "node:path";
 
 function deriveConversationId(archivePath: string): string {
-  // "78ff1399-2d22-4859-bbf2-e4273dfc2b9d.jsonl" -> "78ff1399-2d22-4859-bbf2-e4273dfc2b9d"
+  // "<conversation-uuid>.jsonl" -> "<conversation-uuid>"
   // "agent-a4ac4fa.jsonl" -> "agent-a4ac4fa"
   return basename(archivePath, ".jsonl");
 }
 
 function deriveProject(archivePath: string): string {
   // Extract the project directory segment from the archive path
-  // ".../conversation-archive/-Users-devinmlowe-Documents-git-engram/file.jsonl"
-  // -> "-Users-devinmlowe-Documents-git-engram"
+  // ".../conversation-archive/-Users-alice-Documents-git-engram/file.jsonl"
+  // -> "-Users-alice-Documents-git-engram"
   // -> "engram" (via extractProjectName)
   const dir = basename(dirname(archivePath));
   return extractProjectName(dir);

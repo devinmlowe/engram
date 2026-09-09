@@ -45,7 +45,7 @@ Answer ALL 8 questions below. For EACH question:
 
 ## Output
 
-Write ALL results to a single file: `/Users/USER/Documents/git/engram/docs/research/markdeep-eval/result-control.md`
+Write ALL results to a single file: `<repo>/docs/research/markdeep-eval/result-control.md`
 
 Use this format:
 

@@ -301,7 +301,7 @@
 3. Register MCP server with Claude Code:
    ```bash
    claude mcp add --transport stdio --scope user engram -- \
-     node /Users/USER/Documents/git/engram/dist/mcp/server.js
+     node <repo>/dist/mcp/server.js
    ```
 4. Verify tools appear: start Claude Code, check `/mcp`
 5. Test recall tool with a real query

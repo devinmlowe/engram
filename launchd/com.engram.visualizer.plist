@@ -8,9 +8,7 @@
     <key>ProgramArguments</key>
     <array>
         <string>/usr/local/bin/node</string>
-        <string>--import</string>
-        <string>tsx</string>
-        <string>src/web/graph-server.ts</string>
+        <string>dist/interfaces/web/server.js</string>
     </array>
 
     <key>WorkingDirectory</key>
