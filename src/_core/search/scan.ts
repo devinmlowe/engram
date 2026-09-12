@@ -51,23 +51,35 @@ const FUNCTION_PATTERNS = [
   /(\w+)\s*:\s*(?:async\s+)?function/,
 ];
 
-function detectFunctionContext(lines: string[], matchLineIdx: number): string | undefined {
-  // Scan backwards from the match line to find the nearest enclosing function/method
-  for (let i = matchLineIdx; i >= 0; i--) {
-    const line = lines[i];
-    for (const pattern of FUNCTION_PATTERNS) {
-      const m = pattern.exec(line);
-      if (m?.[1]) {
-        return m[1];
-      }
-    }
-    // Also check for class declarations (skip them, keep looking for method)
-    if (/^\s*class\s+\w+/.test(line) && i < matchLineIdx) {
-      // We hit a class without finding a method — no function context
-      return undefined;
-    }
+function functionNameOnLine(line: string): string | undefined {
+  for (const pattern of FUNCTION_PATTERNS) {
+    const m = pattern.exec(line);
+    if (m?.[1]) return m[1];
   }
   return undefined;
+}
+
+/**
+ * Enclosing function name for every line, computed in ONE forward pass.
+ * Equivalent to scanning backwards from each match to the nearest function
+ * line, giving up at a class declaration — but O(lines) once per file rather
+ * than O(matches × lines) (500 matches × 20k lines was ~40M regex execs).
+ */
+function buildFunctionContextIndex(lines: string[]): Array<string | undefined> {
+  const answers: Array<string | undefined> = new Array(lines.length);
+  let ctx: string | undefined; // context carried from the previous line
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const fn = functionNameOnLine(line);
+    // A match ON a class line keeps looking upward, so it reports `ctx`
+    answers[i] = fn ?? ctx;
+    if (fn !== undefined) {
+      ctx = fn;
+    } else if (/^\s*class\s+\w+/.test(line)) {
+      ctx = undefined;
+    }
+  }
+  return answers;
 }
 
 // ─── Context Extraction ─────────────────────────────────────────
@@ -208,6 +220,8 @@ export function scanFile(params: ScanFileParams): ScanFileResult {
 
   // ── Build context windows and deduplicate overlaps ────────────
   const matches: ScanMatch[] = [];
+  const functionContextIndex =
+    effectiveMatches.length > 0 ? buildFunctionContextIndex(allLines) : [];
 
   if (deduplicate_overlaps && effectiveMatches.length > 0) {
     // Compute context windows and merge overlapping ones
@@ -257,7 +271,7 @@ export function scanFile(params: ScanFileParams): ScanFileResult {
         pattern: wm.pattern,
         matchText: wm.matchText,
         context: contextParts.join("\n"),
-        functionContext: detectFunctionContext(allLines, wm.lineIdx),
+        functionContext: functionContextIndex[wm.lineIdx],
       });
     }
   } else {
@@ -268,7 +282,7 @@ export function scanFile(params: ScanFileParams): ScanFileResult {
         pattern: rm.pattern,
         matchText: rm.matchText,
         context: extractContext(allLines, rm.lineIdx, context_lines, totalLines),
-        functionContext: detectFunctionContext(allLines, rm.lineIdx),
+        functionContext: functionContextIndex[rm.lineIdx],
       });
     }
   }

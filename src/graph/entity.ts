@@ -64,11 +64,15 @@ function hasFtsTable(db: Database.Database): boolean {
 /**
  * Insert an entity with its embedding, syncing entities, entities_fts
  * (when present), and vec_entities tables atomically.
+ *
+ * Pass `null` for entities that must not take part in vector search
+ * (file-structure entities): a zero vector is NOT neutral — it sits at L2
+ * distance 1.0 from every unit query, ahead of most real entities.
  */
 export function insertEntity(
   db: Database.Database,
   entity: Entity,
-  embedding: number[],
+  embedding: number[] | null,
 ): void {
   const run = db.transaction(() => {
     // 1. Insert into entities table
@@ -104,7 +108,11 @@ export function insertEntity(
     }
 
     // 3. Insert into vec_entities (delete first — vec0 doesn't support REPLACE)
-    insertVector(db, "vec_entities", entity.id, embedding);
+    if (embedding) {
+      insertVector(db, "vec_entities", entity.id, embedding);
+    } else {
+      deleteVector(db, "vec_entities", entity.id);
+    }
   });
 
   run();
@@ -235,8 +243,10 @@ export function getEntityByName(
   db: Database.Database,
   name: string,
 ): Entity | null {
+  // `name = ? COLLATE NOCASE` is satisfied by idx_entities_name_lower;
+  // `lower(name) = lower(?)` forced a full scan on the dream hot path
   const row = db
-    .prepare("SELECT * FROM entities WHERE lower(name) = lower(?)")
+    .prepare("SELECT * FROM entities WHERE name = ? COLLATE NOCASE")
     .get(name) as EntityRow | undefined;
 
   if (!row) return null;
@@ -451,18 +461,11 @@ export function mergeEntities(
     );
 
     // 7. Delete merged entity from all tables
-    const ftsExists = hasFtsTable(db);
-    if (ftsExists) {
-      const mergeRowid = db
-        .prepare("SELECT rowid FROM entities WHERE id = ?")
-        .get(mergeId) as { rowid: number } | undefined;
-
-      if (mergeRowid) {
-        deleteFtsRow(db, "entities_fts", mergeRowid.rowid, {
-          name: mergeRow.name,
-          description: mergeRow.description,
-        });
-      }
+    const mergeRowid = db
+      .prepare("SELECT rowid FROM entities WHERE id = ?")
+      .get(mergeId) as { rowid: number } | undefined;
+    if (mergeRowid) {
+      deleteEntityFtsRow(db, mergeRowid.rowid, mergeRow.name, mergeRow.description);
     }
 
     deleteVector(db, "vec_entities", mergeId);
@@ -470,6 +473,81 @@ export function mergeEntities(
   });
 
   run();
+}
+
+/**
+ * True if entities_fts actually indexes this row. entities_fts is an
+ * external-content table: issuing the 'delete' command for a row that was
+ * never indexed (raw insert, or inserted before the FTS table existed —
+ * createFtsIfNeeded does not rebuild) corrupts the index.
+ */
+function ftsRowIndexed(
+  db: Database.Database,
+  rowid: number,
+  name: string,
+  description: string | null,
+): boolean {
+  for (const text of [name, description]) {
+    if (!text || !text.trim()) continue;
+    const phrase = `"${text.replace(/"/g, "")}"`;
+    try {
+      const hit = db
+        .prepare("SELECT rowid FROM entities_fts WHERE entities_fts MATCH ? AND rowid = ?")
+        .get(phrase, rowid);
+      if (hit) return true;
+    } catch {
+      // unparseable phrase — try the other column
+    }
+  }
+  return false;
+}
+
+/**
+ * Remove an entity's tokens from entities_fts, but only when they are
+ * provably there (see ftsRowIndexed).
+ */
+function deleteEntityFtsRow(
+  db: Database.Database,
+  rowid: number,
+  name: string,
+  description: string | null,
+): void {
+  if (!hasFtsTable(db)) return;
+  if (!ftsRowIndexed(db, rowid, name, description)) return;
+  deleteFtsRow(db, "entities_fts", rowid, { name, description });
+}
+
+/**
+ * Delete an entity and everything that references it: relationships,
+ * entity_conversations, bridge_scores (no ON DELETE CASCADE), its
+ * entities_fts tokens and its vec_entities row. Runs in a transaction.
+ *
+ * A bare `DELETE FROM entities` leaves ghost ids in vector search, stale
+ * FTS tokens under a rowid SQLite will reuse, and FK failures on bridge rows.
+ */
+export function deleteEntityCascade(
+  db: Database.Database,
+  id: string,
+): boolean {
+  const run = db.transaction((): boolean => {
+    const row = db
+      .prepare("SELECT rowid, name, description FROM entities WHERE id = ?")
+      .get(id) as { rowid: number; name: string; description: string | null } | undefined;
+    if (!row) return false;
+
+    db.prepare(
+      "DELETE FROM relationships WHERE source_entity_id = ? OR target_entity_id = ?",
+    ).run(id, id);
+    db.prepare("DELETE FROM entity_conversations WHERE entity_id = ?").run(id);
+    db.prepare("DELETE FROM bridge_scores WHERE entity_id = ?").run(id);
+
+    deleteEntityFtsRow(db, row.rowid, row.name, row.description);
+    deleteVector(db, "vec_entities", id);
+    db.prepare("DELETE FROM entities WHERE id = ?").run(id);
+    return true;
+  });
+
+  return run();
 }
 
 // ─── Vector Search ──────────────────────────────────────────────
@@ -499,14 +577,30 @@ export function ftsSearchEntities(
 ): Entity[] {
   if (!hasFtsTable(db)) return [];
 
-  const rows = db
-    .prepare(`
-      SELECT e.* FROM entities e
-      JOIN entities_fts fts ON e.rowid = fts.rowid
-      WHERE entities_fts MATCH ?
-      LIMIT ?
-    `)
-    .all(query, limit) as EntityRow[];
+  // Same sanitizer as semantic/episodic FTS: strip quotes, quote each term,
+  // OR-join — so punctuation in a user query can't become FTS5 syntax
+  const sanitized = query
+    .replace(/['"]/g, "")
+    .split(/\s+/)
+    .filter((t) => t.length > 0)
+    .map((t) => `"${t}"`)
+    .join(" OR ");
 
-  return rows.map(rowToEntity);
+  if (!sanitized) return [];
+
+  try {
+    const rows = db
+      .prepare(`
+        SELECT e.* FROM entities_fts fts
+        CROSS JOIN entities e ON e.rowid = fts.rowid
+        WHERE entities_fts MATCH ?
+        ORDER BY fts.rank
+        LIMIT ?
+      `)
+      .all(sanitized, limit) as EntityRow[];
+
+    return rows.map(rowToEntity);
+  } catch {
+    return [];
+  }
 }

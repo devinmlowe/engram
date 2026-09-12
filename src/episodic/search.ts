@@ -12,6 +12,7 @@ import {
 } from "../_core/search/rrf.js";
 import { budgetResults } from "../_core/search/orchestrator.js";
 import { allocateBudget } from "../_core/search/budget.js";
+import { buildFtsMatchQuery } from "../_core/search/fts-query.js";
 
 // ─── Re-exports ─────────────────────────────────────────────────
 // Preserve backward compatibility for existing imports from episodic/search.
@@ -107,13 +108,9 @@ function ftsSearch(
   after?: string,
   before?: string,
 ): RankedItem[] {
-  // Sanitize FTS query: escape special chars, wrap terms in quotes for safety
-  const sanitized = query
-    .replace(/['"]/g, "")
-    .split(/\s+/)
-    .filter((t) => t.length > 0)
-    .map((t) => `"${t}"`)
-    .join(" OR ");
+  // Bounded, de-noised OR query (stop words dropped, term count capped) —
+  // see _core/search/fts-query.ts for why an unbounded OR is catastrophic.
+  const sanitized = buildFtsMatchQuery(query);
 
   if (!sanitized) return [];
 
@@ -124,7 +121,7 @@ function ftsSearch(
       .prepare(
         `SELECT e.id, fts.rank
          FROM exchanges_fts AS fts
-         JOIN exchanges AS e ON e.rowid = fts.rowid
+         CROSS JOIN exchanges AS e ON e.rowid = fts.rowid
          WHERE exchanges_fts MATCH ?
          ${clause}
          ORDER BY fts.rank

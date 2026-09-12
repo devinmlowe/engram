@@ -670,7 +670,7 @@ async function processConversation(
   extractEntities: Function,
   resolveEntities: Function,
   extractRelationships: Function,
-  findOrCreateRelationship: Function,
+  findOrCreateRelationship: typeof import("../graph/relationship.js").findOrCreateRelationship,
 ): Promise<ConversationResult> {
   // Load exchanges
   const rows = db
@@ -766,7 +766,7 @@ async function processConversation(
         if (sourceId && targetId) {
           findOrCreateRelationship(
             db, sourceId, targetId, rel.type,
-            rel.context, [conversationId],
+            rel.context, conversationId,
           );
           relationshipsCreated++;
         }

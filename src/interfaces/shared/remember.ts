@@ -12,9 +12,13 @@ import type { MemoryType, MemorySource } from "../../_core/types/index.js";
 import { embedDocument, embedDocumentBatch } from "../../_core/embeddings/index.js";
 import {
   insertMemory,
+  updateMemory,
   findNearestMemories,
   recordAccess,
 } from "../../semantic/memory.js";
+import { insertVector } from "../../_core/db/index.js";
+import { generateStructured } from "../../_core/llm/index.js";
+import type { IntelligenceConfig } from "../../_core/llm/index.js";
 
 // ─── Constants ──────────────────────────────────────────────────
 
@@ -23,6 +27,36 @@ const DEDUP_NEIGHBORS = 3;
 
 /** Cosine similarity threshold for near-duplicate detection */
 const DEDUP_THRESHOLD = 0.95;
+
+/**
+ * Merge two near-duplicate memory contents via the LLM tier cascade.
+ * Returns the merged content, or null when generation fails (callers fall
+ * back to plain access-bump dedup).
+ */
+async function mergeNearDuplicate(
+  existing: string,
+  incoming: string,
+  intelligence: IntelligenceConfig,
+): Promise<string | null> {
+  try {
+    const result = await generateStructured<{ merged: string }>(
+      "You merge two near-duplicate memory statements into one. Preserve every " +
+        "distinct detail from both; do not invent information. Answer with the " +
+        "merged statement only.",
+      `Existing memory: ${existing}\nNew statement: ${incoming}`,
+      {
+        type: "object",
+        properties: { merged: { type: "string" } },
+        required: ["merged"],
+      },
+      intelligence,
+    );
+    const merged = result.result?.merged?.trim();
+    return merged && merged.length > 0 ? merged : null;
+  } catch {
+    return null;
+  }
+}
 
 /** Default confidence for user-stated facts */
 const DEFAULT_CONFIDENCE = 0.9;
@@ -34,10 +68,12 @@ export interface RememberParams {
   type: MemoryType;
   importance: number;
   source?: MemorySource;
+  /** Tenant scope: 'global' (default) or 'hermes:<profile>' (ADR-010). */
+  scope?: string;
 }
 
 export interface RememberResult {
-  action: "created" | "updated";
+  action: "created" | "updated" | "merged";
   memoryId: string;
   content: string;
 }
@@ -59,19 +95,53 @@ export interface RememberResult {
 export async function rememberFact(
   db: Database.Database,
   params: RememberParams,
+  opts?: { intelligence?: IntelligenceConfig },
 ): Promise<RememberResult> {
   // 1. Embed the content
   const embedding = await embedDocument(params.content);
+  const scope = params.scope ?? "global";
 
-  // 2. Check for near-duplicates
-  const neighbors = findNearestMemories(db, embedding, DEDUP_NEIGHBORS);
+  // 2. Check for near-duplicates (same scope only — ADR-010)
+  const neighbors = findNearestMemories(db, embedding, DEDUP_NEIGHBORS, scope);
 
   for (const neighbor of neighbors) {
     // Convert L2 distance to cosine similarity for unit vectors
     const similarity = 1 - (neighbor.distance * neighbor.distance) / 2;
 
     if (similarity >= DEDUP_THRESHOLD) {
-      // Near-duplicate found — update existing memory
+      // Near-duplicate found. ADR-010: differing content is MERGED via the
+      // LLM tier (when configured) instead of silently discarded.
+      const existing = db
+        .prepare("SELECT content FROM memories WHERE id = ?")
+        .get(neighbor.id) as { content: string } | undefined;
+
+      const normalize = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
+      const existingNorm = existing ? normalize(existing.content) : "";
+      const incomingNorm = normalize(params.content);
+      const identical = existing !== undefined && existingNorm === incomingNorm;
+      // The LLM merge exists to preserve details the existing memory lacks;
+      // a statement already contained in it has none, so skip the call
+      const subsumed = !identical && existing !== undefined && existingNorm.includes(incomingNorm);
+
+      if (!identical && !subsumed && existing && opts?.intelligence) {
+        const merged = await mergeNearDuplicate(
+          existing.content,
+          params.content,
+          opts.intelligence,
+        );
+        if (merged && merged !== existing.content) {
+          const mergedEmbedding = await embedDocument(merged);
+          // Content, vector and access bump must land together: a merged
+          // row with a stale (or missing) vector is invisible to recall
+          db.transaction(() => {
+            updateMemory(db, neighbor.id, { content: merged });
+            insertVector(db, "vec_memories", neighbor.id, mergedEmbedding);
+            recordAccess(db, neighbor.id);
+          })();
+          return { action: "merged", memoryId: neighbor.id, content: merged };
+        }
+      }
+
       recordAccess(db, neighbor.id);
       return {
         action: "updated",
@@ -98,6 +168,7 @@ export async function rememberFact(
       sourceExchanges: [],
       isActive: true,
       source: params.source ?? "user",
+      scope,
     },
     embedding,
   );
@@ -117,6 +188,8 @@ export interface BatchMemoryInput {
   importance?: number;
   source?: MemorySource;
   relates_to_entities?: string[];  // max 10 entity names to link
+  /** Tenant scope override for this memory (ADR-010). */
+  scope?: string;
 }
 
 export interface BatchRememberResult {
@@ -156,6 +229,7 @@ const DEFAULT_IMPORTANCE = 0.7;
 export async function storeMemoryBatch(
   db: Database.Database,
   memories: BatchMemoryInput[],
+  opts?: { scope?: string },
 ): Promise<BatchRememberResult> {
   // Handle empty batch
   if (memories.length === 0) {
@@ -190,8 +264,9 @@ export async function storeMemoryBatch(
       const embedding = embeddings[i];
 
       try {
-        // Check for near-duplicates
-        const neighbors = findNearestMemories(db, embedding, DEDUP_NEIGHBORS);
+        // Check for near-duplicates (same scope only — ADR-010)
+        const scope = input.scope ?? opts?.scope ?? "global";
+        const neighbors = findNearestMemories(db, embedding, DEDUP_NEIGHBORS, scope);
         let isDuplicate = false;
 
         for (const neighbor of neighbors) {
@@ -226,6 +301,7 @@ export async function storeMemoryBatch(
               sourceExchanges: [],
               isActive: true,
               source: input.source ?? "user",
+              scope,
             },
             embedding,
           );
@@ -261,8 +337,15 @@ export async function storeMemoryBatch(
       input.relates_to_entities &&
       input.relates_to_entities.length > 0
     ) {
-      const linked = linkMemoryToEntities(db, detail.id, input.relates_to_entities);
-      result.entitiesLinked += linked;
+      // The memory is already committed; a linking failure must be reported
+      // on this item, not thrown past N persisted memories as a tool error
+      try {
+        const linked = linkMemoryToEntities(db, detail.id, input.relates_to_entities);
+        result.entitiesLinked += linked;
+      } catch (err) {
+        result.errors++;
+        detail.error = `entity linking failed: ${err instanceof Error ? err.message : String(err)}`;
+      }
     }
   }
 

@@ -17,6 +17,7 @@ import {
   insertFtsRow,
   deleteFtsRow,
 } from "../_core/db/index.js";
+import { onSuccessfulAccess, onContradiction } from "./decay.js";
 
 // ─── Row Type Helpers ───────────────────────────────────────────
 
@@ -35,6 +36,8 @@ interface MemoryRow {
   superseded_by: string | null;
   is_active: number;
   source: string | null;
+  scope: string | null;
+  stability: number | null;
 }
 
 interface ConflictRow {
@@ -65,6 +68,8 @@ function rowToMemory(row: MemoryRow): Memory {
     supersededBy: row.superseded_by ?? undefined,
     isActive: Boolean(row.is_active),
     source: (row.source as MemorySource) ?? "user",
+    scope: row.scope ?? "global",
+    stability: row.stability ?? undefined,
   };
 }
 
@@ -96,8 +101,8 @@ export function insertMemory(
     db.prepare(`
       INSERT INTO memories
         (id, type, content, context, confidence, importance, access_count,
-         last_accessed, created_at, updated_at, source_exchanges, superseded_by, is_active, source)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         last_accessed, created_at, updated_at, source_exchanges, superseded_by, is_active, source, scope)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       memory.id,
       memory.type,
@@ -113,6 +118,7 @@ export function insertMemory(
       memory.supersededBy ?? null,
       memory.isActive ? 1 : 0,
       memory.source ?? "user",
+      memory.scope ?? "global",
     );
 
     // 2. Get rowid and insert into FTS5
@@ -291,9 +297,42 @@ export function recordAccess(
   db: Database.Database,
   id: string,
 ): void {
-  db.prepare(
-    "UPDATE memories SET access_count = access_count + 1, last_accessed = unixepoch() WHERE id = ?",
-  ).run(id);
+  // FSRS reinforcement (ADR-010 upgrade): compute stability growth from the
+  // memory's state BEFORE this access, then persist alongside the bump.
+  // Immediate transaction: the MCP server and dream daemon share this WAL
+  // DB from separate processes, so the read must hold the write lock.
+  db.transaction(() => {
+    const row = db.prepare("SELECT * FROM memories WHERE id = ?").get(id) as
+      | MemoryRow
+      | undefined;
+    if (!row) return;
+
+    const { stability, importance } = onSuccessfulAccess(rowToMemory(row));
+    db.prepare(
+      `UPDATE memories
+       SET access_count = access_count + 1, last_accessed = unixepoch(),
+           stability = ?, importance = ?
+       WHERE id = ?`,
+    ).run(stability, importance, id);
+  }).immediate();
+}
+
+/**
+ * Persist the contradiction penalty on a memory's stability (FSRS: ×0.8).
+ */
+export function applyContradiction(
+  db: Database.Database,
+  id: string,
+): void {
+  db.transaction(() => {
+    const row = db.prepare("SELECT * FROM memories WHERE id = ?").get(id) as
+      | MemoryRow
+      | undefined;
+    if (!row) return;
+
+    const { stability } = onContradiction(rowToMemory(row));
+    db.prepare("UPDATE memories SET stability = ? WHERE id = ?").run(stability, id);
+  }).immediate();
 }
 
 // ─── Conflict Tracking ──────────────────────────────────────────
@@ -356,23 +395,46 @@ export function findNearestMemories(
   db: Database.Database,
   embedding: number[],
   limit: number = 10,
+  scope?: string,
 ): Array<{ id: string; distance: number }> {
-  // Query vec_memories for candidates, then filter by active status
-  // We request more candidates than needed to account for inactive filtering
-  const candidates = searchVector(db, "vec_memories", embedding, limit * 2);
+  // The vector index can't filter by active/scope, so candidates are
+  // post-filtered from a window that escalates (×4) until `limit` survive or
+  // every active memory has been considered. With a scope given, dedup
+  // candidates must come from the same tenant scope (ADR-010 — never collapse
+  // across scopes), and that tenant's true near-duplicate may sit well below
+  // the global top-k.
+  const lookup = db.prepare("SELECT is_active, scope FROM memories WHERE id = ?");
+  const activeCount = (
+    db.prepare("SELECT COUNT(*) AS n FROM memories WHERE is_active = 1").get() as { n: number }
+  ).n;
 
-  // Filter to active memories only
-  const results: Array<{ id: string; distance: number }> = [];
-  for (const candidate of candidates) {
-    if (results.length >= limit) break;
+  // sqlite-vec (vec0) has a hard limit of 4096 for the k parameter in
+  // kNN queries. Cap the escalation so we never exceed it — if 4096
+  // candidates still don't yield enough active+scope-filtered results,
+  // we return what we have.
+  const VEC_K_MAX = 4096;
 
-    const memory = db
-      .prepare("SELECT is_active FROM memories WHERE id = ?")
-      .get(candidate.id) as { is_active: number } | undefined;
+  let k = Math.min(limit * 2, VEC_K_MAX);
+  let results: Array<{ id: string; distance: number }> = [];
 
-    if (memory && memory.is_active) {
+  for (;;) {
+    const candidates = searchVector(db, "vec_memories", embedding, k);
+    results = [];
+    for (const candidate of candidates) {
+      if (results.length >= limit) break;
+
+      const memory = lookup.get(candidate.id) as
+        | { is_active: number; scope: string | null }
+        | undefined;
+
+      if (!memory || !memory.is_active) continue;
+      if (scope !== undefined && (memory.scope ?? "global") !== scope) continue;
+
       results.push({ id: candidate.id, distance: candidate.distance });
     }
+
+    if (results.length >= limit || k >= VEC_K_MAX) break;
+    k = Math.min(k * 4, VEC_K_MAX);
   }
 
   return results;

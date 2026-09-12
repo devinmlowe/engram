@@ -12,7 +12,7 @@
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/usr/local/lib/engram</string>
+    <string>/Users/USER/git/engram</string>
 
     <key>EnvironmentVariables</key>
     <dict>

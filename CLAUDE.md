@@ -50,13 +50,34 @@ For large file analysis, combine tools in this order:
 
 ## Web Visualization
 
-Port 3000 — Force graph (`/graph`), 3D depth view (`/graph/depth`), galaxy view (`/graph/galaxy`), word cloud (`/words`). Real-time SSE updates via WAL watching, dream pipeline control with live phase tracking.
+Port 3001 — Force graph (`/graph`), 3D depth view (`/graph/depth`), galaxy view (`/graph/galaxy`), word cloud (`/words`). Real-time SSE updates via WAL watching, dream pipeline control with live phase tracking.
 
 Terminal-optimized views at `/terminal/graph`, `/terminal/depth`, `/terminal/words`, `/terminal/communities` — SVG-based, pre-stabilized, high-contrast layouts for carbonyl or other terminal browsers.
 
 **Theme:** Everforest Hard Dark, centralized in `src/interfaces/web/pages/theme.ts`. All page files import colors from this module — no hardcoded hex values in pages. See ADR-009 for theming architecture and carbonyl rendering lessons.
 
 Start: `npx tsx src/interfaces/web/server.ts`
+
+## MCP Server Transports
+
+`dist/interfaces/mcp/server.js` speaks stdio by default. With `--http [--port N]`
+(default port 9907) it serves Streamable HTTP at `/mcp` (one MCP session per
+client, routed by `Mcp-Session-Id`) plus a `/health` JSON endpoint, bound to
+127.0.0.1. The Hermes fleet runs it this way via the `ai.hermes.engram-mcp`
+LaunchAgent.
+
+In HTTP mode every tool call is dispatched to a `node:worker_threads` pool
+(`src/interfaces/mcp/worker-pool.ts`, `dispatch.ts`, `worker.ts`) so a
+multi-second recall never blocks `/health`, the handshake, or other clients.
+Each worker owns its own better-sqlite3 connection (WAL + `busy_timeout`) and
+embedding model. Recall sessions are pinned to the worker that created them.
+Stdio mode never spawns workers. Startup logs
+`Engram MCP HTTP server listening on http://127.0.0.1:9907/mcp (workers: N, ...)`.
+
+- `ENGRAM_HTTP_WORKERS` — worker count in HTTP mode (default 2; `0` = inline on the main thread)
+- `ENGRAM_WORKER_TIMEOUT_MS` — per-call timeout (default 8000). `remember`,
+  `remember_batch`, `index_file_structure` and `reflect --refresh` use higher
+  floors. A worker still silent at 2× the timeout is killed and respawned.
 
 ## Key Configuration
 

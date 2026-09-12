@@ -7,6 +7,7 @@
 
 import type Database from "better-sqlite3";
 import { isBlockedEntityName } from "./extractor.js";
+import { deleteEntityCascade } from "./entity.js";
 
 /**
  * Remove all entities whose names match the blocklist, along with
@@ -24,14 +25,7 @@ export function cleanBlockedEntities(db: Database.Database): number {
 
   const tx = db.transaction(() => {
     for (const id of blockedIds) {
-      // Remove relationships referencing this entity
-      db.prepare("DELETE FROM relationships WHERE source_entity_id = ? OR target_entity_id = ?").run(id, id);
-      // Remove from entity_conversations if table exists
-      try { db.prepare("DELETE FROM entity_conversations WHERE entity_id = ?").run(id); } catch {}
-      // Remove from bridge_scores
-      try { db.prepare("DELETE FROM bridge_scores WHERE entity_id = ?").run(id); } catch {}
-      // Remove entity
-      db.prepare("DELETE FROM entities WHERE id = ?").run(id);
+      deleteEntityCascade(db, id);
     }
   });
 

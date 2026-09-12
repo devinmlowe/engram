@@ -179,6 +179,30 @@ afterEach(() => {
 });
 
 describe("exploreSelective", () => {
+  it("scores neighbors with the L2→cosine conversion (cos 0.6 survives a 0.3 threshold)", async () => {
+    const criteria = makeEmbedding([1, 0]);
+    // unit vector at cosine 0.6 to criteria → L2 distance ≈ 0.894;
+    // the old `1 - d` formula scored it 0.106 and pruned it
+    const mid = makeEmbedding([0.6, 0.8]);
+    const hub = createTestEntity({ id: "hub", name: "Hub" });
+    const midEnt = createTestEntity({ id: "mid", name: "Mid" });
+    insertEntity(t.db, hub, makeEmbedding([0, 0, 1]));
+    insertEntity(t.db, midEnt, mid);
+    insertRelationship(t.db, createTestRelationship({ id: "hub-mid", sourceEntityId: "hub", targetEntityId: "mid" }));
+    mockEmbedQuery.mockResolvedValue(criteria);
+
+    const result = await exploreSelective(t.db, {
+      entityName: "Hub",
+      criteria: "anything",
+      maxDepth: 1,
+      relevanceThreshold: 0.3,
+    });
+
+    const midNode = result.nodes.find((n) => n.entity.name === "Mid");
+    expect(midNode).toBeDefined();
+    expect(midNode!.relevanceScore).toBeCloseTo(0.6, 2);
+  });
+
   it("finds center entity by name", async () => {
     const embs = setupTestGraph();
     mockEmbedQuery.mockResolvedValue(embs.runtimeEmb);

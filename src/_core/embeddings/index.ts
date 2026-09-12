@@ -8,12 +8,15 @@ import type { EngramConfig } from "../types/index.js";
 import { LRUCache } from "../cache/index.js";
 
 let embeddingPipeline: FeatureExtractionPipeline | null = null;
+let initInFlight: Promise<void> | null = null;
 
 /** Cache for query embeddings — avoids re-embedding identical queries within a session */
 const queryEmbeddingCache = new LRUCache<string, number[]>({
   maxSize: 200,
   ttlMs: 5 * 60 * 1000, // 5 minutes
 });
+/** Query embeddings currently being computed, keyed by query text */
+const inflightQueryEmbeds = new Map<string, Promise<number[]>>();
 let activeModel: "nomic" | "minilm" = "nomic";
 let activeDimensions = 256;
 
@@ -30,14 +33,22 @@ const TARGET_DIMS = 256;
 export async function initEmbeddings(_config?: EngramConfig): Promise<void> {
   if (embeddingPipeline) return;
 
-  try {
-    embeddingPipeline = await pipeline("feature-extraction", NOMIC_MODEL);
-    activeModel = "nomic";
-  } catch {
-    embeddingPipeline = await pipeline("feature-extraction", MINILM_MODEL);
-    activeModel = "minilm";
+  // Concurrent cold callers (parallel MCP tool calls) share one model load
+  if (!initInFlight) {
+    initInFlight = (async () => {
+      try {
+        embeddingPipeline = await pipeline("feature-extraction", NOMIC_MODEL);
+        activeModel = "nomic";
+      } catch {
+        embeddingPipeline = await pipeline("feature-extraction", MINILM_MODEL);
+        activeModel = "minilm";
+      }
+      activeDimensions = TARGET_DIMS;
+    })().finally(() => {
+      initInFlight = null;
+    });
   }
-  activeDimensions = TARGET_DIMS;
+  return initInFlight;
 }
 
 /**
@@ -105,9 +116,19 @@ export async function embedQuery(text: string): Promise<number[]> {
   const cached = queryEmbeddingCache.get(text);
   if (cached) return cached;
 
-  const embedding = await embed(text, "search_query: ");
-  queryEmbeddingCache.set(text, embedding);
-  return embedding;
+  // Recall embeds the same query from three concurrent searches; share the
+  // in-flight promise so the model runs once, not once per caller
+  let pending = inflightQueryEmbeds.get(text);
+  if (!pending) {
+    pending = embed(text, "search_query: ")
+      .then((embedding) => {
+        queryEmbeddingCache.set(text, embedding);
+        return embedding;
+      })
+      .finally(() => inflightQueryEmbeds.delete(text));
+    inflightQueryEmbeds.set(text, pending);
+  }
+  return pending;
 }
 
 /**
@@ -220,4 +241,6 @@ export function resetEmbeddings(): void {
   activeModel = "nomic";
   activeDimensions = 256;
   queryEmbeddingCache.clear();
+  inflightQueryEmbeds.clear();
+  initInFlight = null;
 }

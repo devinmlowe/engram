@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { initDatabase, rebuildFts } from "../../src/_core/db/index.js";
+import { initDatabase, rebuildFts, pruneZeroEntityVectors } from "../../src/_core/db/index.js";
 import { loadConfig } from "../../src/_core/config/index.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -22,6 +22,24 @@ describe("Database Schema", () => {
   afterEach(() => {
     db.close();
     rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("prunes legacy all-zero vectors for structural entities only", () => {
+    const zero = Buffer.from(new Float32Array(256).buffer);
+    const real = Buffer.from(new Float32Array(256).fill(0.0625).buffer);
+    const ins = db.prepare("INSERT INTO entities (id, name, type) VALUES (?, ?, ?)");
+    ins.run("f1", "index.ts", "file");
+    ins.run("fn1", "initDatabase", "function");
+    ins.run("c1", "Kubernetes", "concept");
+    const vec = db.prepare("INSERT INTO vec_entities(id, embedding) VALUES (?, ?)");
+    vec.run("f1", zero); // legacy zero vector — must go
+    vec.run("fn1", real); // structural but real embedding — must stay
+    vec.run("c1", zero); // non-structural — never touched
+
+    expect(pruneZeroEntityVectors(db)).toBe(1);
+    expect(pruneZeroEntityVectors(db)).toBe(0); // idempotent
+    const ids = (db.prepare("SELECT id FROM vec_entities ORDER BY id").all() as Array<{ id: string }>).map((r) => r.id);
+    expect(ids).toEqual(["c1", "fn1"]);
   });
 
   it("creates all required tables", () => {

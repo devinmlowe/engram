@@ -29,6 +29,7 @@ import {
   recordAccess,
   deactivateMemory,
   insertConflict,
+  applyContradiction,
 } from "./memory.js";
 import { classifyNli } from "./nli.js";
 
@@ -165,8 +166,10 @@ export async function deduplicateFact(
   // 1. Embed the fact content
   const embedding = await embedDocument(fact.content);
 
-  // 2. Find nearest neighbors
-  const neighbors = findNearestMemories(db, embedding, 5);
+  // 2. Find nearest neighbors — within the global scope only: dream facts
+  // are written as 'global' (insertNovelMemory), and a tenant's hermes:*
+  // memory must never absorb, reinforce, or be deactivated by a global fact
+  const neighbors = findNearestMemories(db, embedding, 5, "global");
 
   // 3. Check each neighbor against thresholds
   for (const neighbor of neighbors) {
@@ -296,6 +299,7 @@ async function resolveMemoryConflict(
         source: "dream",
       };
 
+      applyContradiction(db, existingMemory.id);
       deactivateMemory(db, existingMemory.id, newId);
       insertMemory(db, newMemory, newEmbedding);
 
@@ -333,6 +337,9 @@ async function resolveMemoryConflict(
         source: "dream",
       };
 
+      // Both stay active, but the existing memory was contradicted: persist
+      // the FSRS penalty so its retrievability decays faster
+      applyContradiction(db, existingMemory.id);
       insertMemory(db, newMemory, newEmbedding);
 
       const conflictId = crypto.randomUUID();
@@ -458,7 +465,10 @@ function normalizeAction(
 /**
  * Load the conflict resolution prompt template from disk.
  */
+let conflictPromptCache: string | null = null;
+
 function loadConflictPrompt(): string {
+  if (conflictPromptCache !== null) return conflictPromptCache;
   const promptPath = join(
     __dirname,
     "..",
@@ -466,7 +476,8 @@ function loadConflictPrompt(): string {
     "prompts",
     "resolve-conflict.md",
   );
-  return readFileSync(promptPath, "utf-8");
+  conflictPromptCache = readFileSync(promptPath, "utf-8");
+  return conflictPromptCache;
 }
 
 /**

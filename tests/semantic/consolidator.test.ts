@@ -16,6 +16,7 @@ import { createTestDb } from "../helpers.js";
 import type { TestDb } from "../helpers.js";
 import type { Memory } from "../../src/semantic/types.js";
 import type { ExtractedFact } from "../../src/semantic/types.js";
+import { INITIAL_STABILITY } from "../../src/semantic/types.js";
 
 // ─── Mocks ──────────────────────────────────────────────────────
 
@@ -183,6 +184,26 @@ describe("deduplicateFact", () => {
     expect(updated!.accessCount).toBe(4);
   });
 
+  it("never merges a global dream fact into a tenant-scoped memory (ADR-010)", async () => {
+    const embedding = seededEmbedding(42);
+    const tenant = createTestMemory({
+      id: "mem-career-1",
+      content: "User prefers Fish shell",
+      accessCount: 3,
+      scope: "hermes:career",
+    });
+    insertMemory(t.db, tenant, embedding);
+    mockedEmbedDocument.mockResolvedValue(embedding);
+
+    const result = await deduplicateFact(t.db, createTestFact({ content: "User prefers Fish shell" }), "conv-001");
+
+    expect(result.action).toBe("insert");
+    expect(result.memoryId).not.toBe("mem-career-1");
+    expect(getMemory(t.db, result.memoryId)!.scope).toBe("global");
+    // tenant memory untouched
+    expect(getMemory(t.db, "mem-career-1")!.accessCount).toBe(3);
+  });
+
   it("merges on NLI entailment (sim 0.85-0.95)", async () => {
     // Insert existing memory
     const baseEmbedding = seededEmbedding(100);
@@ -278,6 +299,8 @@ describe("deduplicateFact", () => {
       const oldMemory = getMemory(t.db, "mem-contradict-1");
       expect(oldMemory!.isActive).toBe(false);
       expect(oldMemory!.supersededBy).toBe(result.memoryId);
+      // ...and carries the persisted FSRS contradiction penalty (×0.8)
+      expect(oldMemory!.stability).toBeCloseTo(INITIAL_STABILITY.preference * 0.8, 5);
 
       // Verify new memory was inserted
       const newMemory = getMemory(t.db, result.memoryId);

@@ -20,6 +20,7 @@ import { homedir } from "node:os";
 
 // Data queries
 import { getStats, computeOptimalThreshold } from "./data/graph-queries.js";
+import { getBindHost } from "./bind.js";
 
 // Route handlers
 import {
@@ -33,7 +34,9 @@ import {
   handleCommunityData,
 } from "./routes/graph.js";
 import { handleWordFrequencies } from "./routes/words.js";
+import { handleHealth } from "./routes/health.js";
 import { broadcastUpdate } from "./routes/sse.js";
+import { resetWordCache } from "./data/word-queries.js";
 
 // Page templates
 import { graphPage } from "./pages/graph.html.js";
@@ -54,8 +57,8 @@ const DB_PATH =
   join(homedir(), ".local", "share", "engram", "engram.db");
 
 const PORT = parseInt(process.env.PORT ?? "3001", 10);
-// Bind to loopback by default; set ENGRAM_BIND=0.0.0.0 to expose on the network.
-const BIND = process.env.ENGRAM_BIND ?? "127.0.0.1";
+// Bind to loopback by default; set ENGRAM_BIND=0.0.0.0 (or HOST) to expose on the network.
+const BIND_HOST = getBindHost(process.env);
 
 // ─── Pre-render pages ───────────────────────────────────────────
 
@@ -81,15 +84,39 @@ function serve() {
   try {
     watcher = watch(DB_PATH + "-wal", () => {
       if (debounce) clearTimeout(debounce);
-      debounce = setTimeout(() => broadcastUpdate(db), 5000);
+      debounce = setTimeout(() => {
+        resetWordCache(); // the DB changed; don't serve a stale word cloud for up to a minute
+        broadcastUpdate(db);
+      }, 5000);
     });
   } catch {
     console.log("Note: WAL watcher not available, SSE updates disabled");
   }
 
+  // Route handlers are synchronous; an uncaught throw here would take the
+  // whole visualizer down, so every request is fenced by handleRequest
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
-    const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
+    try {
+      route(req, res);
+    } catch (err) {
+      console.error("Request failed:", err instanceof Error ? err.message : err);
+      if (!res.headersSent) {
+        res.writeHead(500, { "Content-Type": "text/plain" });
+      }
+      res.end("Internal error");
+    }
+  });
+
+  function route(req: IncomingMessage, res: ServerResponse): void {
+    // Fixed base: the Host header is client-controlled and may not parse
+    const url = new URL(req.url ?? "/", "http://localhost");
     const pathname = url.pathname;
+
+    // ─── Health route ───────────────────────────────────
+    if (pathname === "/api/health" || pathname === "/graph/api/health") {
+      handleHealth(req, res, db);
+      return;
+    }
 
     // ─── Threshold route ────────────────────────────────
     if (pathname === "/api/threshold" || pathname === "/graph/api/threshold" || pathname === "/depth/api/threshold" || pathname === "/graph/depth/api/threshold") {
@@ -223,13 +250,13 @@ function serve() {
 
     res.writeHead(404, { "Content-Type": "text/plain" });
     res.end("Not found");
-  });
+  }
 
-  server.listen(PORT, BIND, () => {
+  server.listen(PORT, BIND_HOST, () => {
     const stats = getStats(db);
     const threshold = computeOptimalThreshold(db);
     console.log(`Engram Visualizer`);
-    const base = `http://${BIND === "0.0.0.0" ? "127.0.0.1" : BIND}:${PORT}`;
+    const base = `http://${BIND_HOST === "0.0.0.0" ? "127.0.0.1" : BIND_HOST}:${PORT}`;
     console.log(`  Graph: ${base}/graph`);
     console.log(`  Depth: ${base}/graph/depth`);
     console.log(`  Galaxy: ${base}/graph/galaxy`);

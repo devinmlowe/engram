@@ -1,5 +1,11 @@
-import { describe, it, expect, beforeEach, afterEach, beforeAll } from "vitest";
-import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
+import { describe, it, expect, beforeEach, afterEach, beforeAll, vi } from "vitest";
+import { mkdirSync, writeFileSync, rmSync, existsSync, utimesSync } from "node:fs";
+
+// Wrap (not replace) embedExchange so tests can count real embedding calls
+vi.mock("../../src/_core/embeddings/index.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/_core/embeddings/index.js")>();
+  return { ...actual, embedExchange: vi.fn(actual.embedExchange) };
+});
 import { join } from "node:path";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -9,7 +15,7 @@ import {
   extractProjectName,
 } from "../../src/episodic/sync.js";
 import { getConversation } from "../../src/episodic/store.js";
-import { initEmbeddings } from "../../src/_core/embeddings/index.js";
+import { initEmbeddings, embedExchange } from "../../src/_core/embeddings/index.js";
 import { createTestDb } from "../helpers.js";
 import type { TestDb } from "../helpers.js";
 
@@ -161,6 +167,32 @@ describe("syncConversations (integration)", () => {
     const result2 = await syncConversations(t.db, t.config);
     expect(result2.skipped).toBe(1);
     expect(result2.indexed).toBe(0);
+  });
+
+  it("a grown conversation only embeds the NEW exchanges", async () => {
+    createProjectConversation("test-project", "conv-grow", [
+      { user: "First question", assistant: "First answer" },
+      { user: "Second question", assistant: "Second answer" },
+    ]);
+    await syncConversations(t.db, t.config);
+    vi.mocked(embedExchange).mockClear();
+
+    // Same conversation gains one exchange; bump mtime so the copy is detected
+    createProjectConversation("test-project", "conv-grow", [
+      { user: "First question", assistant: "First answer" },
+      { user: "Second question", assistant: "Second answer" },
+      { user: "Third question", assistant: "Third answer" },
+    ]);
+    const src = join(projectsDir, "test-project", "conv-grow.jsonl");
+    const future = new Date(Date.now() + 5_000);
+    utimesSync(src, future, future);
+
+    const result = await syncConversations(t.db, t.config);
+    expect(result.indexed).toBe(1);
+    expect(vi.mocked(embedExchange)).toHaveBeenCalledTimes(1);
+    const count = t.db.prepare("SELECT COUNT(*) AS n FROM exchanges WHERE conversation_id = 'conv-grow'").get() as { n: number };
+    expect(count.n).toBe(3);
+    expect(getConversation(t.db, "conv-grow")!.exchangeCount).toBe(3);
   });
 
   it("force flag re-indexes everything", async () => {

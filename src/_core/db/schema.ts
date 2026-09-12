@@ -16,6 +16,9 @@ export function initDatabase(config: EngramConfig): Database.Database {
   // Performance: WAL mode for concurrent reads + single writer
   db.pragma("journal_mode = WAL");
   db.pragma("synchronous = NORMAL");
+  // Several connections share this file (MCP main thread + worker threads,
+  // CLI, dream pipeline). Wait for a busy writer instead of failing instantly.
+  db.pragma("busy_timeout = 5000");
   db.pragma("foreign_keys = ON");
   db.pragma("mmap_size = 268435456"); // 256MB memory-mapped I/O
   db.pragma("cache_size = -64000"); // 64MB page cache
@@ -327,6 +330,14 @@ function createSchema(db: Database.Database, config: EngramConfig): void {
   // Phase 6D: Add source tracking to memories (user, dream, rlm, import)
   idempotentAlter(db, "memories", "source", "ALTER TABLE memories ADD COLUMN source TEXT NOT NULL DEFAULT 'user'");
 
+  // ADR-010: per-tenant scoping for Hermes integration.
+  // 'global' = Claude Code / dream derived; 'hermes:<profile>' = Hermes-originated.
+  idempotentAlter(db, "memories", "scope", "ALTER TABLE memories ADD COLUMN scope TEXT NOT NULL DEFAULT 'global'");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope)");
+
+  // ADR-010 upgrade: persist FSRS stability (NULL = derive from type constant)
+  idempotentAlter(db, "memories", "stability", "ALTER TABLE memories ADD COLUMN stability REAL");
+
   // FTS5 virtual tables (created separately — can't use IF NOT EXISTS)
   createFtsIfNeeded(db, "exchanges_fts", `
     CREATE VIRTUAL TABLE exchanges_fts USING fts5(
@@ -363,6 +374,42 @@ function createSchema(db: Database.Database, config: EngramConfig): void {
   createVecIfNeeded(db, "vec_exchanges", dims);
   createVecIfNeeded(db, "vec_memories", dims);
   createVecIfNeeded(db, "vec_entities", dims);
+
+  pruneZeroEntityVectors(db);
+}
+
+/**
+ * Remove all-zero vectors that file-structure indexing used to write for
+ * file/symbol entities. A zero vector is not neutral in an L2 vec0 table —
+ * it sits at distance 1.0 from every unit query and out-ranks real
+ * entities. Only structural entity types are inspected; only rows whose
+ * embedding is entirely zero are deleted; re-indexing the file restores
+ * nothing because structural entities no longer get vectors at all.
+ * Idempotent: after the first pass there is nothing to read or delete.
+ */
+export function pruneZeroEntityVectors(db: Database.Database): number {
+  const rows = db
+    .prepare(
+      `SELECT v.id, v.embedding FROM vec_entities v
+       JOIN entities e ON e.id = v.id
+       WHERE e.type IN ('file', 'function', 'class', 'module')`,
+    )
+    .all() as Array<{ id: string; embedding: Buffer }>;
+
+  const zeroIds = rows
+    .filter((r) => {
+      const f = new Float32Array(r.embedding.buffer, r.embedding.byteOffset, r.embedding.byteLength / 4);
+      return f.every((x) => x === 0);
+    })
+    .map((r) => r.id);
+
+  if (zeroIds.length === 0) return 0;
+
+  const del = db.prepare("DELETE FROM vec_entities WHERE id = ?");
+  db.transaction(() => {
+    for (const id of zeroIds) del.run(id);
+  })();
+  return zeroIds.length;
 }
 
 /**
@@ -373,6 +420,13 @@ function createSchema(db: Database.Database, config: EngramConfig): void {
  * tables if the new types aren't already supported.
  */
 function migrateExpandedTypes(db: Database.Database): void {
+  // Fast path: the CHECK constraint text is in sqlite_master, so migrated
+  // databases are recognized without a probe write on every startup
+  const ddl = db
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'entities'")
+    .get() as { sql: string } | undefined;
+  if (ddl?.sql.includes("'function'")) return;
+
   // Test if new types are already supported
   const testId = '__type_migration_test__';
   try {

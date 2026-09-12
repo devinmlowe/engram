@@ -106,18 +106,22 @@ function drillEpisodic(result: SearchResult, db: Database.Database): DrillResult
     };
   }
 
-  // Get surrounding exchanges from same conversation
-  const allExchanges = db.prepare(
+  // 5 before, 5 after — fetch just the window, not the whole conversation
+  const windowRows = db.prepare(
     `SELECT * FROM exchanges
      WHERE conversation_id = ?
+       AND exchange_index BETWEEN ? AND ?
+       AND id != ?
      ORDER BY exchange_index ASC`,
-  ).all(conversationId) as ExchangeRow[];
+  ).all(
+    conversationId,
+    exchange.exchange_index - 5,
+    exchange.exchange_index + 5,
+    exchange.id,
+  ) as ExchangeRow[];
 
-  const currentIndex = allExchanges.findIndex((e) => e.id === result.id);
-
-  // 5 before, 5 after
-  const beforeExchanges = allExchanges.slice(Math.max(0, currentIndex - 5), currentIndex);
-  const afterExchanges = allExchanges.slice(currentIndex + 1, currentIndex + 6);
+  const beforeExchanges = windowRows.filter((e) => e.exchange_index < exchange.exchange_index);
+  const afterExchanges = windowRows.filter((e) => e.exchange_index > exchange.exchange_index);
 
   const fullContent = formatExchange(exchange);
 
@@ -211,21 +215,31 @@ function drillGraph(result: SearchResult, db: Database.Database): DrillResult {
      ORDER BY weight DESC`,
   ).all(entity.id, entity.id) as RelRow[];
 
+  // One batched lookup for every counterpart entity (was two prepared
+  // statements per relationship)
+  const otherIdOf = (rel: RelRow) =>
+    rel.source_entity_id === entity.id ? rel.target_entity_id : rel.source_entity_id;
+  const otherIds = [...new Set(rels.map(otherIdOf))];
+  const entityById = new Map<string, EntityRow>();
+  for (let i = 0; i < otherIds.length; i += 400) {
+    const chunk = otherIds.slice(i, i + 400);
+    const rows = db.prepare(
+      `SELECT * FROM entities WHERE id IN (${chunk.map(() => "?").join(", ")})`,
+    ).all(...chunk) as EntityRow[];
+    for (const row of rows) entityById.set(row.id, row);
+  }
+
   // Build related entities list
   const relatedEntities: EntitySummary[] = [];
   const seenIds = new Set<string>();
 
   for (const rel of rels) {
-    const otherId = rel.source_entity_id === entity.id
-      ? rel.target_entity_id
-      : rel.source_entity_id;
+    const otherId = otherIdOf(rel);
 
     if (seenIds.has(otherId)) continue;
     seenIds.add(otherId);
 
-    const other = db.prepare(
-      "SELECT * FROM entities WHERE id = ?",
-    ).get(otherId) as EntityRow | undefined;
+    const other = entityById.get(otherId);
 
     if (other) {
       relatedEntities.push({
@@ -246,10 +260,7 @@ function drillGraph(result: SearchResult, db: Database.Database): DrillResult {
   for (const rel of rels.slice(0, 15)) {
     const isSource = rel.source_entity_id === entity.id;
     const otherId = isSource ? rel.target_entity_id : rel.source_entity_id;
-    const other = db.prepare(
-      "SELECT name FROM entities WHERE id = ?",
-    ).get(otherId) as { name: string } | undefined;
-    const otherName = other?.name ?? otherId;
+    const otherName = entityById.get(otherId)?.name ?? otherId;
     const dir = isSource ? "->" : "<-";
     const relStr = rel.context
       ? `${dir} ${rel.type} ${otherName}: ${rel.context}`

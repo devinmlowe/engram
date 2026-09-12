@@ -6,12 +6,26 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { isMainThread, Worker } from "node:worker_threads";
 import { getDatabase } from "../../_core/db/index.js";
+import {
+  createToolDispatcher,
+  parseTimeoutMs,
+  parseWorkerCount,
+  DEFAULT_WORKER_TIMEOUT_MS,
+  type ToolHandler,
+  type ToolResult,
+} from "./dispatch.js";
+import { createEngramHttpServer } from "./http.js";
 import { loadConfig } from "../../_core/config/index.js";
 import { escapeXml } from "../../_core/search/index.js";
 import { initEmbeddings } from "../../_core/embeddings/index.js";
 import { rememberFact, storeMemoryBatch } from "../shared/remember.js";
+import { getTenantScoping } from "./scoping.js";
+import { sliceShowLines, formatShowOutput } from "./show-format.js";
+import { buildIntelligenceConfig } from "../../_core/llm/index.js";
 import type { MemorySource } from "../../_core/types/index.js";
 import {
   unifiedSearch,
@@ -54,7 +68,30 @@ async function ensureEmbeddings(): Promise<void> {
   embeddingsReady = true;
 }
 
+/**
+ * Pre-warm the embedding model with a dummy inference so the first real
+ * request doesn't pay the ONNX runtime initialization cost (which can exceed
+ * the 30s MCP tool-call timeout). Used by the HTTP server and by each worker.
+ */
+export async function warmUpEmbeddings(): Promise<void> {
+  await ensureEmbeddings();
+  const { embedQuery } = await import("../../_core/embeddings/index.js");
+  await embedQuery("warmup");
+  // The cross-encoder reranker is otherwise loaded lazily by the first recall
+  // that reranks — inside that call's timeout window. Load it up front so a
+  // fresh worker's first recall pays no model start-up cost. Failure is
+  // non-fatal: recall degrades to the original ranking.
+  if (!config) config = loadConfig();
+  if (config.search.rerankEnabled && config.search.reranker.enabled) {
+    const { initReranker } = await import("../../_core/search/index.js");
+    await initReranker(config.search.reranker.model);
+  }
+}
+
 // ─── Constants ──────────────────────────────────────────────────
+
+/** Upper bound for the LLM merge inside a `remember` tool call */
+const MERGE_TIMEOUT_MS = 15_000;
 
 const VALID_MEMORY_TYPES: readonly MemoryType[] = [
   "preference",
@@ -216,10 +253,17 @@ const server = new Server(
   { capabilities: { tools: {} } },
 );
 
-// ─── Tool Definitions ──────────────────────────────────────────
-
-server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: [
+/**
+ * Register all MCP tool handlers on a Server instance.
+ * Used by both the stdio server and the per-session HTTP server.
+ *
+ * `callTool` decides where a tool executes: inline on this thread (stdio
+ * mode, the historical behaviour) or via the worker-pool dispatcher (HTTP
+ * mode). The list-tools handler always runs on the calling thread.
+ */
+function registerToolHandlers(srv: Server, callTool: ToolHandler = handleToolCall) {
+  srv.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: [
     {
       name: "recall",
       description:
@@ -802,17 +846,27 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
   ],
 }));
 
-// ─── Tool Handlers ─────────────────────────────────────────────
+  // ─── Tool Handlers ─────────────────────────────────────────────
 
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  try {
+  srv.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
+    return callTool(name, args);
+  });
+}  // end registerToolHandlers
 
+/**
+ * Execute one MCP tool call on the current thread and return its result.
+ * Never throws: every failure is reported as an `isError` result. This is
+ * the unit of work the worker pool ships to worker threads.
+ */
+export async function handleToolCall(name: string, args: unknown): Promise<ToolResult> {
+  try {
     if (name === "recall") {
       const params = RecallInputSchema.parse(args);
       await ensureEmbeddings();
 
       if (!config) config = loadConfig();
+      const scoping = getTenantScoping(process.env);
       const response = await unifiedSearch(getDb(), {
         query: params.query,
         sources: (params.sources ?? ["episodic", "semantic"]) as SearchSource[],
@@ -821,6 +875,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         after: params.after,
         before: params.before,
         depth: params.depth ?? "shallow",
+        scopes: scoping.readScopes,
       }, config);
       const xml = formatRecallXml(response);
 
@@ -833,12 +888,31 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const params = RememberInputSchema.parse(args);
       await ensureEmbeddings();
 
-      const result = await rememberFact(getDb(), {
-        content: params.content,
-        type: params.type as MemoryType,
-        importance: params.importance,
-        source: params.source as MemorySource,
-      });
+      if (!config) config = loadConfig();
+      const result = await rememberFact(
+        getDb(),
+        {
+          content: params.content,
+          type: params.type as MemoryType,
+          importance: params.importance,
+          source: params.source as MemorySource,
+          scope: getTenantScoping(process.env).writeScope,
+        },
+        // The merge runs inside a synchronous tool call; the dream pipeline's
+        // 120s generation timeout is far too long to block the agent on
+        { intelligence: { ...buildIntelligenceConfig(config), timeoutMs: MERGE_TIMEOUT_MS } },
+      );
+
+      if (result.action === "merged") {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Merged with existing memory ${result.memoryId}: ${result.content}`,
+            },
+          ],
+        };
+      }
 
       if (result.action === "updated") {
         return {
@@ -870,7 +944,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         relates_to_entities: m.relates_to_entities,
       }));
 
-      const result = await storeMemoryBatch(getDb(), batchInput);
+      const result = await storeMemoryBatch(getDb(), batchInput, {
+        scope: getTenantScoping(process.env).writeScope,
+      });
 
       return {
         content: [
@@ -897,14 +973,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       const content = readFileSync(params.path, "utf-8");
-      const allLines = content.split("\n").filter((l) => l.trim());
-
-      const start = params.startLine ? params.startLine - 1 : 0;
-      const end = params.endLine ?? allLines.length;
-      const lines = allLines.slice(start, end);
+      const { lines, firstLineNum } = sliceShowLines(content, params.startLine, params.endLine);
 
       // Format JSONL lines as readable markdown
-      const formatted = formatShowOutput(lines, start + 1);
+      const formatted = formatShowOutput(lines, firstLineNum);
 
       return {
         content: [{ type: "text", text: formatted }],
@@ -1220,45 +1292,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       isError: true,
     };
   }
-});
+}  // end handleToolCall
 
-// ─── Show Formatting ───────────────────────────────────────────
-
-function formatShowOutput(lines: string[], startLineNum: number): string {
-  let output = "# Conversation\n\n";
-
-  for (let i = 0; i < lines.length; i++) {
-    try {
-      const parsed = JSON.parse(lines[i]);
-      if (parsed.type !== "user" && parsed.type !== "assistant") continue;
-      if (!parsed.message?.content) continue;
-
-      const lineNum = startLineNum + i;
-      const role = parsed.type === "user" ? "User" : "Assistant";
-      const timestamp = parsed.timestamp
-        ? new Date(parsed.timestamp).toLocaleString()
-        : "";
-
-      output += `### ${role} (line ${lineNum}${timestamp ? `, ${timestamp}` : ""})\n\n`;
-
-      if (typeof parsed.message.content === "string") {
-        output += `${parsed.message.content}\n\n`;
-      } else if (Array.isArray(parsed.message.content)) {
-        for (const block of parsed.message.content) {
-          if (block.type === "text" && block.text) {
-            output += `${block.text}\n\n`;
-          } else if (block.type === "tool_use") {
-            output += `**Tool:** \`${block.name}\`\n\n`;
-          }
-        }
-      }
-    } catch {
-      continue;
-    }
-  }
-
-  return output;
-}
+// Register handlers on the stdio server (used when --http is not passed)
+registerToolHandlers(server);
 
 // ─── Reflect Formatting ─────────────────────────────────────────
 
@@ -1364,13 +1401,95 @@ function formatReflectXml(result: ReflectResult, mode: string): string {
 
 // ─── Main ──────────────────────────────────────────────────────
 
-async function main() {
-  console.error("Engram MCP server running via stdio");
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
+/** Path of the compiled worker script, resolved next to this module. */
+function resolveWorkerPath(): string {
+  const compiled = fileURLToPath(new URL("./worker.js", import.meta.url));
+  if (existsSync(compiled)) return compiled;
+  // Running from source via tsx: tsx registers its loader for worker threads too.
+  const source = fileURLToPath(new URL("./worker.ts", import.meta.url));
+  if (existsSync(source)) return source;
+  throw new Error(`Engram MCP worker script not found next to ${import.meta.url}`);
 }
 
-main().catch((error) => {
-  console.error("Server error:", error);
-  process.exit(1);
-});
+/** True when this file is the process entry point (not imported by a worker or test). */
+function isDirectRun(): boolean {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  try {
+    return realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+async function main() {
+  const args = process.argv.slice(2);
+  const httpMode = args.includes("--http");
+  const portIdx = args.indexOf("--port");
+  const port = portIdx >= 0 ? parseInt(args[portIdx + 1], 10) : 9907;
+
+  if (httpMode) {
+    console.error(`Engram MCP server running via HTTP on port ${port}`);
+
+    // Tool calls run on a worker-thread pool (ENGRAM_HTTP_WORKERS, default 2)
+    // so a multi-second recall never blocks /health, the MCP handshake, or
+    // other clients. ENGRAM_HTTP_WORKERS=0 restores inline single-threaded
+    // dispatch on the main thread.
+    const workerCount = parseWorkerCount(process.env.ENGRAM_HTTP_WORKERS, 2);
+    const timeoutMs = parseTimeoutMs(process.env.ENGRAM_WORKER_TIMEOUT_MS, DEFAULT_WORKER_TIMEOUT_MS);
+    const dispatcher = createToolDispatcher({
+      workers: workerCount,
+      direct: handleToolCall,
+      spawn: () => new Worker(resolveWorkerPath()),
+      timeoutMs,
+    });
+
+    if (workerCount === 0) {
+      // Inline mode: warm the embedding model on this thread, as before.
+      warmUpEmbeddings()
+        .then(() => console.error("Embedding model warmed up"))
+        .catch((e) => console.error("Embedding pre-warm failed:", e));
+    } else {
+      dispatcher
+        .whenReady()
+        .then(() => console.error(`Embedding model warmed up in ${workerCount} worker(s)`))
+        .catch((e) => console.error("Worker pool readiness failed:", e));
+    }
+
+    const http = createEngramHttpServer({
+      port,
+      registerHandlers: (srv) => registerToolHandlers(srv, dispatcher.call),
+      health: () => {
+        const stats = dispatcher.stats();
+        return { workers: stats ?? { size: 0 } };
+      },
+    });
+
+    const shutdown = async (signal: string) => {
+      console.error(`Engram MCP HTTP server shutting down (${signal})`);
+      await Promise.allSettled([http.close(), dispatcher.close()]);
+      process.exit(0);
+    };
+    process.once("SIGTERM", () => void shutdown("SIGTERM"));
+    process.once("SIGINT", () => void shutdown("SIGINT"));
+
+    const address = await http.listen();
+    console.error(
+      `Engram MCP HTTP server listening on http://127.0.0.1:${address.port}/mcp (workers: ${workerCount}, timeout: ${timeoutMs}ms)`,
+    );
+  } else {
+    console.error("Engram MCP server running via stdio");
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+  }
+}
+
+// Only start a transport when this file is the process entry point on the
+// main thread. Worker threads (worker.ts) and tests import the tool handlers
+// from this module and must not open stdio or bind a port.
+if (isMainThread && isDirectRun()) {
+  main().catch((error) => {
+    console.error("Server error:", error);
+    process.exit(1);
+  });
+}

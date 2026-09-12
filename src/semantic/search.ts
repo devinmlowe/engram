@@ -16,7 +16,8 @@ import type {
 import type { MemoryType, Memory } from "./types.js";
 import { embedQuery } from "../_core/embeddings/index.js";
 import { rrfFuse, normalizeMinMaxFloored } from "../_core/search/rrf.js";
-import { computeRetrievalScore } from "./decay.js";
+import { computeRetrievalScore, computeConfidence } from "./decay.js";
+import { buildFtsMatchQuery } from "../_core/search/fts-query.js";
 
 // ─── Row Type Helpers ───────────────────────────────────────────
 
@@ -34,6 +35,8 @@ interface MemoryRow {
   source_exchanges: string | null;
   superseded_by: string | null;
   is_active: number;
+  scope: string | null;
+  stability: number | null;
 }
 
 function rowToMemory(row: MemoryRow): Memory {
@@ -53,6 +56,8 @@ function rowToMemory(row: MemoryRow): Memory {
       : [],
     supersededBy: row.superseded_by ?? undefined,
     isActive: Boolean(row.is_active),
+    scope: row.scope ?? "global",
+    stability: row.stability ?? undefined,
   };
 }
 
@@ -93,34 +98,57 @@ function vectorSearchMemories(
 // ─── FTS Search ─────────────────────────────────────────────────
 
 /**
+ * SQL for the memories full-text lookup. `clauses` must start with the
+ * `memories_fts MATCH ?` predicate; extra clauses filter the joined row.
+ *
+ * CROSS JOIN is deliberate: it pins memories_fts as the outer loop. With a
+ * plain JOIN, SQLite prefers idx_memories_active, drives from `memories`
+ * and evaluates the MATCH once per active row — 0.5s for a 3-term query
+ * and 9.5s (134s unbounded) for an 80-word one on a 17k-memory store.
+ * Driving from the FTS index costs single-digit milliseconds. Exported so
+ * a test can assert the query plan.
+ */
+export function buildMemoriesFtsSql(clauses: readonly string[]): string {
+  return `SELECT m.id, fts.rank
+         FROM memories_fts AS fts
+         CROSS JOIN memories AS m ON m.rowid = fts.rowid
+         WHERE ${clauses.join(" AND ")}
+         ORDER BY fts.rank
+         LIMIT ?`;
+}
+
+/**
  * Full-text search on memories_fts. Returns ranked items by BM25 rank.
  */
 function ftsSearchMemories(
   db: Database.Database,
   query: string,
   limit: number,
+  filters: { types?: string[]; scopes?: string[] } = {},
 ): RankedItem[] {
-  // Sanitize FTS query: escape special chars, wrap terms in quotes
-  const sanitized = query
-    .replace(/['"]/g, "")
-    .split(/\s+/)
-    .filter((t) => t.length > 0)
-    .map((t) => `"${t}"`)
-    .join(" OR ");
+  // Bounded, de-noised OR query (stop words dropped, term count capped) —
+  // see _core/search/fts-query.ts for why an unbounded OR is catastrophic.
+  const sanitized = buildFtsMatchQuery(query);
 
   if (!sanitized) return [];
 
+  // Filters live in SQL so the LIMIT counts matching rows, not raw hits
+  const clauses = ["memories_fts MATCH ?", "m.is_active = 1"];
+  const params: unknown[] = [sanitized];
+  if (filters.types && filters.types.length > 0) {
+    clauses.push(`m.type IN (${filters.types.map(() => "?").join(", ")})`);
+    params.push(...filters.types);
+  }
+  if (filters.scopes && filters.scopes.length > 0) {
+    clauses.push(`m.scope IN (${filters.scopes.map(() => "?").join(", ")})`);
+    params.push(...filters.scopes);
+  }
+  params.push(limit);
+
   try {
     const rows = db
-      .prepare(
-        `SELECT m.id, fts.rank
-         FROM memories_fts AS fts
-         JOIN memories AS m ON m.rowid = fts.rowid
-         WHERE memories_fts MATCH ?
-         ORDER BY fts.rank
-         LIMIT ?`,
-      )
-      .all(sanitized, limit) as Array<{ id: string; rank: number }>;
+      .prepare(buildMemoriesFtsSql(clauses))
+      .all(...params) as Array<{ id: string; rank: number }>;
 
     return rows.map((row, idx) => ({
       id: row.id,
@@ -154,51 +182,66 @@ export async function searchSemantic(
   db: Database.Database,
   options: SearchOptions,
 ): Promise<SearchResult[]> {
-  const { query, types, limit = 10 } = options;
+  const { query, types, scopes, limit = 10 } = options;
 
   if (!query || query.trim().length === 0) {
     return [];
   }
 
-  const fetchK = Math.max(limit, 20);
+  const hasFilter =
+    (types !== undefined && types.length > 0) ||
+    (scopes !== undefined && scopes.length > 0);
 
   // 1. Embed query
   const queryEmbedding = await embedQuery(query);
 
-  // 2. Vector search
-  const vectorResults = vectorSearchMemories(db, queryEmbedding, fetchK);
+  // Steps 2-5 run over a candidate window. The vector index can't filter by
+  // type/scope, so with a filter active the window escalates (×4) until it
+  // yields `limit` matches or covers every active memory — otherwise a tenant
+  // whose memories are a thin slice of the store gets < limit (often 0) hits
+  const activeCount = hasFilter
+    ? (db.prepare("SELECT COUNT(*) AS n FROM memories WHERE is_active = 1").get() as { n: number }).n
+    : 0;
+  const fetchRow = db.prepare("SELECT * FROM memories WHERE id = ? AND is_active = 1");
 
-  // 3. FTS search
-  const ftsResults = ftsSearchMemories(db, query, fetchK);
+  let fetchK = Math.max(limit, 20);
+  let memoriesWithScores: Array<{ memory: Memory; rrfScore: number }> = [];
 
-  // 4. RRF fusion
-  const fused = rrfFuse(vectorResults, ftsResults);
+  for (;;) {
+    // 2. Vector search
+    const vectorResults = vectorSearchMemories(db, queryEmbedding, fetchK);
 
-  if (fused.length === 0) {
-    return [];
-  }
+    // 3. FTS search (filters applied in SQL)
+    const ftsResults = ftsSearchMemories(db, query, fetchK, { types, scopes });
 
-  // 5. Fetch full Memory objects and filter
-  const memoriesWithScores: Array<{
-    memory: Memory;
-    rrfScore: number;
-  }> = [];
+    // 4. RRF fusion
+    const fused = rrfFuse(vectorResults, ftsResults);
 
-  for (const item of fused) {
-    const row = db
-      .prepare("SELECT * FROM memories WHERE id = ? AND is_active = 1")
-      .get(item.id) as MemoryRow | undefined;
+    // 5. Fetch full Memory objects and filter
+    memoriesWithScores = [];
+    for (const item of fused) {
+      const row = fetchRow.get(item.id) as MemoryRow | undefined;
+      if (!row) continue;
 
-    if (!row) continue;
+      const memory = rowToMemory(row);
 
-    const memory = rowToMemory(row);
+      // Apply optional type filter
+      if (types && types.length > 0 && !types.includes(memory.type)) {
+        continue;
+      }
 
-    // Apply optional type filter
-    if (types && types.length > 0 && !types.includes(memory.type)) {
-      continue;
+      // Apply optional tenant-scope filter (ADR-010)
+      if (scopes && scopes.length > 0 && !scopes.includes(memory.scope ?? "global")) {
+        continue;
+      }
+
+      memoriesWithScores.push({ memory, rrfScore: item.score });
     }
 
-    memoriesWithScores.push({ memory, rrfScore: item.score });
+    if (!hasFilter || memoriesWithScores.length >= limit || fetchK >= activeCount) {
+      break;
+    }
+    fetchK = Math.min(fetchK * 4, activeCount);
   }
 
   if (memoriesWithScores.length === 0) {
@@ -236,7 +279,10 @@ export async function searchSemantic(
       content: r.memory.content,
       metadata: {
         type: r.memory.type,
-        confidence: r.memory.confidence,
+        // Composite confidence (base × corroboration × retrievability), not
+        // the stored base — dream memories all share base 0.5, so reporting
+        // the raw value renders every result as a flat 50%
+        confidence: computeConfidence(r.memory),
         importance: r.memory.importance,
         context: r.memory.context,
         accessCount: r.memory.accessCount,

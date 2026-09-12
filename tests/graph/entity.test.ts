@@ -8,6 +8,7 @@ import {
   recordEntityMention,
   mergeEntities,
   findNearestEntities,
+  deleteEntityCascade,
   ftsSearchEntities,
 } from "../../src/graph/entity.js";
 import { insertRelationship } from "../../src/graph/relationship.js";
@@ -189,6 +190,45 @@ describe("Entity CRUD", () => {
     });
   });
 
+  describe("getEntityByName query plan", () => {
+    it("uses the NOCASE name index instead of scanning", () => {
+      insertEntity(t.db, createTestEntity({ id: "ent-plan", name: "Kubernetes" }), randomEmbedding());
+      expect(getEntityByName(t.db, "kubernetes")?.id).toBe("ent-plan");
+      expect(getEntityByName(t.db, "KUBERNETES")?.id).toBe("ent-plan");
+      const plan = t.db
+        .prepare("EXPLAIN QUERY PLAN SELECT * FROM entities WHERE name = ? COLLATE NOCASE")
+        .all("x") as Array<{ detail: string }>;
+      expect(plan.map((p) => p.detail).join(" ")).toMatch(/USING INDEX idx_entities_name_lower/);
+    });
+  });
+
+  describe("deleteEntityCascade", () => {
+    it("removes vec, FTS, relationship, and bridge rows along with the entity", () => {
+      const a = createTestEntity({ id: "ent-cas-a", name: "Cascade A", description: "alpha node" });
+      const b = createTestEntity({ id: "ent-cas-b", name: "Cascade B", description: "beta node" });
+      const embA = randomEmbedding();
+      insertEntity(t.db, a, embA);
+      insertEntity(t.db, b, randomEmbedding());
+      insertRelationship(t.db, createTestRelationship({ id: "rel-cas", sourceEntityId: "ent-cas-a", targetEntityId: "ent-cas-b" }));
+      t.db.prepare(
+        "INSERT INTO bridge_scores (entity_id, betweenness, community_span, bridge_score, generation) VALUES (?, 0.5, 2, 0.7, 1)",
+      ).run("ent-cas-a");
+
+      expect(deleteEntityCascade(t.db, "ent-cas-a")).toBe(true);
+      expect(deleteEntityCascade(t.db, "ent-cas-a")).toBe(false);
+
+      expect(getEntity(t.db, "ent-cas-a")).toBeNull();
+      expect(t.db.prepare("SELECT COUNT(*) AS n FROM relationships WHERE id = 'rel-cas'").get()).toEqual({ n: 0 });
+      expect(t.db.prepare("SELECT COUNT(*) AS n FROM bridge_scores WHERE entity_id = 'ent-cas-a'").get()).toEqual({ n: 0 });
+      // no ghost id in vector search
+      const near = findNearestEntities(t.db, embA, 5).map((r) => r.id);
+      expect(near).not.toContain("ent-cas-a");
+      // FTS no longer finds the deleted name; the survivor still indexes
+      expect(ftsSearchEntities(t.db, "alpha").map((e) => e.id)).toEqual([]);
+      expect(ftsSearchEntities(t.db, "beta").map((e) => e.id)).toEqual(["ent-cas-b"]);
+    });
+  });
+
   describe("mergeEntities", () => {
     it("transfers aliases, repoints relationships, deduplicates edges", () => {
       // Create two entities
@@ -352,6 +392,24 @@ describe("Entity CRUD", () => {
       expect(results.length).toBeGreaterThan(0);
       expect(results[0].id).toBe("ent-fts-2");
       expect(results[0].name).toBe("Kubernetes");
+    });
+
+    it("tolerates punctuation and FTS5 syntax characters in the query", () => {
+      const entity = createTestEntity({
+        id: "ent-fts-3",
+        name: "C++",
+        description: "Systems programming language",
+      });
+      insertEntity(t.db, entity, randomEmbedding());
+
+      // Each of these is an FTS5 syntax error when passed raw
+      expect(() => ftsSearchEntities(t.db, "what's the C++ build?")).not.toThrow();
+      expect(() => ftsSearchEntities(t.db, "foo-bar (memory)")).not.toThrow();
+      expect(() => ftsSearchEntities(t.db, '"unbalanced')).not.toThrow();
+      expect(ftsSearchEntities(t.db, "   ")).toEqual([]);
+
+      const results = ftsSearchEntities(t.db, "what's the systems language?");
+      expect(results.map((e) => e.id)).toContain("ent-fts-3");
     });
   });
 });
