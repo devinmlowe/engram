@@ -154,12 +154,12 @@ def test_on_memory_write_mirrors_into_graph(tmp_path):
         agent_context="primary", agent_identity="career",
     )
     provider.prefetch("warm up")  # ensure child running
-    provider.on_memory_write("add", "memory", "Devin prefers fish shell")
+    provider.on_memory_write("add", "memory", "The operator prefers fish shell")
     provider.flush_writes()
     lines = [json.loads(l) for l in log.read_text().splitlines() if l.strip()]
     remembers = [l for l in lines if l["tool"] == "remember"]
     assert len(remembers) == 1
-    assert remembers[0]["args"]["content"] == "Devin prefers fish shell"
+    assert remembers[0]["args"]["content"] == "The operator prefers fish shell"
     provider.shutdown()
 
 

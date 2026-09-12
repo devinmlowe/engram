@@ -3,7 +3,7 @@
 Engram as a [Hermes](https://github.com/NousResearch/hermes-agent) external
 memory provider: automatic recall from the shared knowledge graph before every
 turn, `engram_*` tools for deliberate recall/exploration, and profile-scoped
-curated writes. Design rationale: `../../decisions/hermes-memory-provider-integration.md` (ADR-010).
+curated writes. Design rationale: `../../decisions/adr-010-memory-provider-integration.md` (ADR-010).
 
 ## Install
 

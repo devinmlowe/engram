@@ -3,7 +3,7 @@
 ## Purpose
 
 Expose engram's knowledge graph to Hermes agents as an external `MemoryProvider`
-(ADR-010, `decisions/hermes-memory-provider-integration.md`), giving every
+(ADR-010, `decisions/adr-010-memory-provider-integration.md`), giving every
 profile automatic recall over the shared corpus plus curated, profile-scoped
 writes.
 

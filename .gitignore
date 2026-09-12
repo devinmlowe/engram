@@ -11,3 +11,8 @@ coverage/
 .claude/
 __pycache__/
 *.pyc
+
+# agent-session scratch (autoresearch loops) — local only
+autoresearch/
+# research scratch containing local absolute paths
+docs/research/promptkit/

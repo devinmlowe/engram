@@ -59,7 +59,7 @@ interfaces/hermes-plugin/deploy.sh
 
 Copies (not symlinks) `__init__.py`, `plugin.yaml`, and `README.md` into
 `~/.hermes/plugins/engram/` and
-`~/.hermes/profiles/{career,pmp,network,finance}/plugins/engram/` (profiles
+`~/.hermes/profiles/<profile>/plugins/engram/` for each profile in `PROFILES` (profiles
 that do not exist are skipped). Restart the gateways afterwards so running
 agents pick up the new code.
 

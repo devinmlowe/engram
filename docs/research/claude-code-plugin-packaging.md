@@ -338,7 +338,7 @@ Option 1 is cleaner because it keeps a single entry point and lets the CLI route
   "description": "Cognitive memory system -- episodic storage, semantic extraction, knowledge graph, and dream-state consolidation for Claude Code",
   "author": {
     "name": "Devin Lowe",
-    "url": "https://github.com/devinmlowe"
+    "url": "https://github.com/devinmlowe/engram"
   },
   "repository": "https://github.com/devinmlowe/engram",
   "license": "MIT",

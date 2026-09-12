@@ -334,7 +334,7 @@ engram-plugin/
   "description": "Cognitive memory system for Claude Code -- episodic, semantic, and graph-based memory layers",
   "author": {
     "name": "Devin Lowe",
-    "url": "https://github.com/devinmlowe"
+    "url": "https://github.com/devinmlowe/engram"
   },
   "repository": "https://github.com/devinmlowe/engram",
   "license": "MIT",

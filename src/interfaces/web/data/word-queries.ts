@@ -29,7 +29,7 @@ export const STOP_WORDS = new Set([
   "check","test","note","text","line","lines","run","start","end","src","http",
   "https","www","com","org","json","html","css","js","ts","md","yml","yaml",
   "png","jpg","txt","log","git","npm","node","usr","bin","etc","tmp","dev",
-  "user","users","devinmlowe","teammate-message","summary","content","based",
+  "user","users","teammate-message","summary","content","based",
   "should","current","don't","i'm","it's","that's","there's","what's","you're",
   "isn't","doesn't","didn't","won't","can't","couldn't","wouldn't","haven't",
   "hasn't","aren't","weren't","they're","we're","i've","you've","they've",
