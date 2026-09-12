@@ -50,7 +50,7 @@ For large file analysis, combine tools in this order:
 
 ## Web Visualization
 
-Port 3000 — Force graph (`/graph`), 3D depth view (`/graph/depth`), galaxy view (`/graph/galaxy`), word cloud (`/words`). Real-time SSE updates via WAL watching, dream pipeline control with live phase tracking.
+Port 3001 — Force graph (`/graph`), 3D depth view (`/graph/depth`), galaxy view (`/graph/galaxy`), word cloud (`/words`). Real-time SSE updates via WAL watching, dream pipeline control with live phase tracking.
 
 Terminal-optimized views at `/terminal/graph`, `/terminal/depth`, `/terminal/words`, `/terminal/communities` — SVG-based, pre-stabilized, high-contrast layouts for carbonyl or other terminal browsers.
 

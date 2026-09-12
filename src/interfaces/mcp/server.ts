@@ -1,12 +1,15 @@
 #!/usr/bin/env node
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { existsSync, readFileSync } from "node:fs";
+import { createServer } from "node:http";
+import { randomUUID } from "node:crypto";
 import { getDatabase } from "../../_core/db/index.js";
 import { loadConfig } from "../../_core/config/index.js";
 import { escapeXml } from "../../_core/search/index.js";
@@ -222,10 +225,13 @@ const server = new Server(
   { capabilities: { tools: {} } },
 );
 
-// ─── Tool Definitions ──────────────────────────────────────────
-
-server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: [
+/**
+ * Register all MCP tool handlers on a Server instance.
+ * Used by both the stdio server and the per-session HTTP server.
+ */
+function registerToolHandlers(srv: Server) {
+  srv.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: [
     {
       name: "recall",
       description:
@@ -808,9 +814,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
   ],
 }));
 
-// ─── Tool Handlers ─────────────────────────────────────────────
+  // ─── Tool Handlers ─────────────────────────────────────────────
 
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  srv.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     const { name, arguments: args } = request.params;
 
@@ -1247,6 +1253,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 });
 
+}  // end registerToolHandlers
+
+// Register handlers on the stdio server (used when --http is not passed)
+registerToolHandlers(server);
+
 // ─── Reflect Formatting ─────────────────────────────────────────
 
 function formatReflectXml(result: ReflectResult, mode: string): string {
@@ -1352,9 +1363,111 @@ function formatReflectXml(result: ReflectResult, mode: string): string {
 // ─── Main ──────────────────────────────────────────────────────
 
 async function main() {
-  console.error("Engram MCP server running via stdio");
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
+  const args = process.argv.slice(2);
+  const httpMode = args.includes("--http");
+  const portIdx = args.indexOf("--port");
+  const port = portIdx >= 0 ? parseInt(args[portIdx + 1], 10) : 9907;
+
+  if (httpMode) {
+    console.error(`Engram MCP server running via HTTP on port ${port}`);
+
+    // Pre-warm the embedding model with a dummy inference so the first
+    // real request doesn't pay the ONNX runtime initialization cost
+    // (which can exceed the 30s MCP tool-call timeout).
+    ensureEmbeddings().then(async () => {
+      const { embedQuery } = await import("../../_core/embeddings/index.js");
+      await embedQuery("warmup");
+      console.error("Embedding model warmed up");
+    }).catch((e) =>
+      console.error("Embedding pre-warm failed:", e),
+    );
+
+    // Per-session transport map. Each client gets its own transport
+    // instance because StreamableHTTPServerTransport has a per-instance
+    // _initialized flag. A shared transport rejects the second client's
+    // initialize with "Server already initialized."
+    //
+    // Route by Mcp-Session-Id header: initialize creates a new session,
+    // subsequent requests use the existing session's transport.
+    const sessions = new Map();  // sessionId → transport
+
+    const httpServer = createServer(async (req, res) => {
+      // Health check endpoint
+      if (req.url === "/health" || req.url === "/") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "ok" }));
+        return;
+      }
+
+      // MCP endpoint
+      if (req.url === "/mcp") {
+        const sessionId = req.headers["mcp-session-id"] as string | undefined;
+
+        // DELETE = session teardown
+        if (req.method === "DELETE" && sessionId) {
+          const t = sessions.get(sessionId);
+          if (t) {
+            await t.close();
+            sessions.delete(sessionId);
+          }
+          res.writeHead(200);
+          res.end();
+          return;
+        }
+
+        // Existing session — route to its transport
+        if (sessionId && sessions.has(sessionId)) {
+          try {
+            await sessions.get(sessionId).handleRequest(req, res);
+          } catch (err) {
+            console.error(`MCP error (session ${sessionId}):`, err);
+            if (!res.headersSent) {
+              res.writeHead(500, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ error: String(err) }));
+            }
+          }
+          return;
+        }
+
+        // New session (initialize or any request without a session ID)
+        // Create a new transport for this session. Don't consume the body
+        // stream — let handleRequest read it via the Hono request listener.
+        const newTransport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: () => randomUUID(),
+        });
+        const sessionServer = new Server(
+          { name: "engram", version: "0.1.0" },
+          { capabilities: { tools: {} } },
+        );
+        registerToolHandlers(sessionServer);
+        await sessionServer.connect(newTransport);
+        try {
+          await newTransport.handleRequest(req, res);
+          if (newTransport.sessionId) {
+            sessions.set(newTransport.sessionId, newTransport);
+          }
+        } catch (err) {
+          console.error("MCP initialize error:", err);
+          if (!res.headersSent) {
+            res.writeHead(500, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: String(err) }));
+          }
+        }
+        return;
+      }
+
+      res.writeHead(404);
+      res.end("Not found");
+    });
+
+    httpServer.listen(port, "127.0.0.1", () => {
+      console.error(`Engram MCP HTTP server listening on http://127.0.0.1:${port}/mcp`);
+    });
+  } else {
+    console.error("Engram MCP server running via stdio");
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+  }
 }
 
 main().catch((error) => {

@@ -408,7 +408,13 @@ export function findNearestMemories(
     db.prepare("SELECT COUNT(*) AS n FROM memories WHERE is_active = 1").get() as { n: number }
   ).n;
 
-  let k = limit * 2;
+  // sqlite-vec (vec0) has a hard limit of 4096 for the k parameter in
+  // kNN queries. Cap the escalation so we never exceed it — if 4096
+  // candidates still don't yield enough active+scope-filtered results,
+  // we return what we have.
+  const VEC_K_MAX = 4096;
+
+  let k = Math.min(limit * 2, VEC_K_MAX);
   let results: Array<{ id: string; distance: number }> = [];
 
   for (;;) {
@@ -427,8 +433,8 @@ export function findNearestMemories(
       results.push({ id: candidate.id, distance: candidate.distance });
     }
 
-    if (results.length >= limit || k >= activeCount) break;
-    k = Math.min(k * 4, activeCount);
+    if (results.length >= limit || k >= VEC_K_MAX) break;
+    k = Math.min(k * 4, VEC_K_MAX);
   }
 
   return results;
