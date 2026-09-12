@@ -16,6 +16,9 @@ export function initDatabase(config: EngramConfig): Database.Database {
   // Performance: WAL mode for concurrent reads + single writer
   db.pragma("journal_mode = WAL");
   db.pragma("synchronous = NORMAL");
+  // Several connections share this file (MCP main thread + worker threads,
+  // CLI, dream pipeline). Wait for a busy writer instead of failing instantly.
+  db.pragma("busy_timeout = 5000");
   db.pragma("foreign_keys = ON");
   db.pragma("mmap_size = 268435456"); // 256MB memory-mapped I/O
   db.pragma("cache_size = -64000"); // 64MB page cache
