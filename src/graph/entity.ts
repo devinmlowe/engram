@@ -591,8 +591,8 @@ export function ftsSearchEntities(
   try {
     const rows = db
       .prepare(`
-        SELECT e.* FROM entities e
-        JOIN entities_fts fts ON e.rowid = fts.rowid
+        SELECT e.* FROM entities_fts fts
+        CROSS JOIN entities e ON e.rowid = fts.rowid
         WHERE entities_fts MATCH ?
         ORDER BY fts.rank
         LIMIT ?
