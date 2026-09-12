@@ -1,16 +1,24 @@
 #!/usr/bin/env node
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { existsSync, readFileSync } from "node:fs";
-import { createServer } from "node:http";
-import { randomUUID } from "node:crypto";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { isMainThread, Worker } from "node:worker_threads";
 import { getDatabase } from "../../_core/db/index.js";
+import {
+  createToolDispatcher,
+  parseTimeoutMs,
+  parseWorkerCount,
+  DEFAULT_WORKER_TIMEOUT_MS,
+  type ToolHandler,
+  type ToolResult,
+} from "./dispatch.js";
+import { createEngramHttpServer } from "./http.js";
 import { loadConfig } from "../../_core/config/index.js";
 import { escapeXml } from "../../_core/search/index.js";
 import { initEmbeddings } from "../../_core/embeddings/index.js";
@@ -58,6 +66,17 @@ async function ensureEmbeddings(): Promise<void> {
   if (!config) config = loadConfig();
   await initEmbeddings(config);
   embeddingsReady = true;
+}
+
+/**
+ * Pre-warm the embedding model with a dummy inference so the first real
+ * request doesn't pay the ONNX runtime initialization cost (which can exceed
+ * the 30s MCP tool-call timeout). Used by the HTTP server and by each worker.
+ */
+export async function warmUpEmbeddings(): Promise<void> {
+  await ensureEmbeddings();
+  const { embedQuery } = await import("../../_core/embeddings/index.js");
+  await embedQuery("warmup");
 }
 
 // ─── Constants ──────────────────────────────────────────────────
@@ -228,8 +247,12 @@ const server = new Server(
 /**
  * Register all MCP tool handlers on a Server instance.
  * Used by both the stdio server and the per-session HTTP server.
+ *
+ * `callTool` decides where a tool executes: inline on this thread (stdio
+ * mode, the historical behaviour) or via the worker-pool dispatcher (HTTP
+ * mode). The list-tools handler always runs on the calling thread.
  */
-function registerToolHandlers(srv: Server) {
+function registerToolHandlers(srv: Server, callTool: ToolHandler = handleToolCall) {
   srv.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [
     {
@@ -817,9 +840,18 @@ function registerToolHandlers(srv: Server) {
   // ─── Tool Handlers ─────────────────────────────────────────────
 
   srv.setRequestHandler(CallToolRequestSchema, async (request) => {
-  try {
     const { name, arguments: args } = request.params;
+    return callTool(name, args);
+  });
+}  // end registerToolHandlers
 
+/**
+ * Execute one MCP tool call on the current thread and return its result.
+ * Never throws: every failure is reported as an `isError` result. This is
+ * the unit of work the worker pool ships to worker threads.
+ */
+export async function handleToolCall(name: string, args: unknown): Promise<ToolResult> {
+  try {
     if (name === "recall") {
       const params = RecallInputSchema.parse(args);
       await ensureEmbeddings();
@@ -1251,9 +1283,7 @@ function registerToolHandlers(srv: Server) {
       isError: true,
     };
   }
-});
-
-}  // end registerToolHandlers
+}  // end handleToolCall
 
 // Register handlers on the stdio server (used when --http is not passed)
 registerToolHandlers(server);
@@ -1362,6 +1392,27 @@ function formatReflectXml(result: ReflectResult, mode: string): string {
 
 // ─── Main ──────────────────────────────────────────────────────
 
+/** Path of the compiled worker script, resolved next to this module. */
+function resolveWorkerPath(): string {
+  const compiled = fileURLToPath(new URL("./worker.js", import.meta.url));
+  if (existsSync(compiled)) return compiled;
+  // Running from source via tsx: tsx registers its loader for worker threads too.
+  const source = fileURLToPath(new URL("./worker.ts", import.meta.url));
+  if (existsSync(source)) return source;
+  throw new Error(`Engram MCP worker script not found next to ${import.meta.url}`);
+}
+
+/** True when this file is the process entry point (not imported by a worker or test). */
+function isDirectRun(): boolean {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  try {
+    return realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const httpMode = args.includes("--http");
@@ -1371,98 +1422,52 @@ async function main() {
   if (httpMode) {
     console.error(`Engram MCP server running via HTTP on port ${port}`);
 
-    // Pre-warm the embedding model with a dummy inference so the first
-    // real request doesn't pay the ONNX runtime initialization cost
-    // (which can exceed the 30s MCP tool-call timeout).
-    ensureEmbeddings().then(async () => {
-      const { embedQuery } = await import("../../_core/embeddings/index.js");
-      await embedQuery("warmup");
-      console.error("Embedding model warmed up");
-    }).catch((e) =>
-      console.error("Embedding pre-warm failed:", e),
+    // Tool calls run on a worker-thread pool (ENGRAM_HTTP_WORKERS, default 2)
+    // so a multi-second recall never blocks /health, the MCP handshake, or
+    // other clients. ENGRAM_HTTP_WORKERS=0 restores inline single-threaded
+    // dispatch on the main thread.
+    const workerCount = parseWorkerCount(process.env.ENGRAM_HTTP_WORKERS, 2);
+    const timeoutMs = parseTimeoutMs(process.env.ENGRAM_WORKER_TIMEOUT_MS, DEFAULT_WORKER_TIMEOUT_MS);
+    const dispatcher = createToolDispatcher({
+      workers: workerCount,
+      direct: handleToolCall,
+      spawn: () => new Worker(resolveWorkerPath()),
+      timeoutMs,
+    });
+
+    if (workerCount === 0) {
+      // Inline mode: warm the embedding model on this thread, as before.
+      warmUpEmbeddings()
+        .then(() => console.error("Embedding model warmed up"))
+        .catch((e) => console.error("Embedding pre-warm failed:", e));
+    } else {
+      dispatcher
+        .whenReady()
+        .then(() => console.error(`Embedding model warmed up in ${workerCount} worker(s)`))
+        .catch((e) => console.error("Worker pool readiness failed:", e));
+    }
+
+    const http = createEngramHttpServer({
+      port,
+      registerHandlers: (srv) => registerToolHandlers(srv, dispatcher.call),
+      health: () => {
+        const stats = dispatcher.stats();
+        return { workers: stats ?? { size: 0 } };
+      },
+    });
+
+    const shutdown = async (signal: string) => {
+      console.error(`Engram MCP HTTP server shutting down (${signal})`);
+      await Promise.allSettled([http.close(), dispatcher.close()]);
+      process.exit(0);
+    };
+    process.once("SIGTERM", () => void shutdown("SIGTERM"));
+    process.once("SIGINT", () => void shutdown("SIGINT"));
+
+    const address = await http.listen();
+    console.error(
+      `Engram MCP HTTP server listening on http://127.0.0.1:${address.port}/mcp (workers: ${workerCount}, timeout: ${timeoutMs}ms)`,
     );
-
-    // Per-session transport map. Each client gets its own transport
-    // instance because StreamableHTTPServerTransport has a per-instance
-    // _initialized flag. A shared transport rejects the second client's
-    // initialize with "Server already initialized."
-    //
-    // Route by Mcp-Session-Id header: initialize creates a new session,
-    // subsequent requests use the existing session's transport.
-    const sessions = new Map();  // sessionId → transport
-
-    const httpServer = createServer(async (req, res) => {
-      // Health check endpoint
-      if (req.url === "/health" || req.url === "/") {
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ status: "ok" }));
-        return;
-      }
-
-      // MCP endpoint
-      if (req.url === "/mcp") {
-        const sessionId = req.headers["mcp-session-id"] as string | undefined;
-
-        // DELETE = session teardown
-        if (req.method === "DELETE" && sessionId) {
-          const t = sessions.get(sessionId);
-          if (t) {
-            await t.close();
-            sessions.delete(sessionId);
-          }
-          res.writeHead(200);
-          res.end();
-          return;
-        }
-
-        // Existing session — route to its transport
-        if (sessionId && sessions.has(sessionId)) {
-          try {
-            await sessions.get(sessionId).handleRequest(req, res);
-          } catch (err) {
-            console.error(`MCP error (session ${sessionId}):`, err);
-            if (!res.headersSent) {
-              res.writeHead(500, { "Content-Type": "application/json" });
-              res.end(JSON.stringify({ error: String(err) }));
-            }
-          }
-          return;
-        }
-
-        // New session (initialize or any request without a session ID)
-        // Create a new transport for this session. Don't consume the body
-        // stream — let handleRequest read it via the Hono request listener.
-        const newTransport = new StreamableHTTPServerTransport({
-          sessionIdGenerator: () => randomUUID(),
-        });
-        const sessionServer = new Server(
-          { name: "engram", version: "0.1.0" },
-          { capabilities: { tools: {} } },
-        );
-        registerToolHandlers(sessionServer);
-        await sessionServer.connect(newTransport);
-        try {
-          await newTransport.handleRequest(req, res);
-          if (newTransport.sessionId) {
-            sessions.set(newTransport.sessionId, newTransport);
-          }
-        } catch (err) {
-          console.error("MCP initialize error:", err);
-          if (!res.headersSent) {
-            res.writeHead(500, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ error: String(err) }));
-          }
-        }
-        return;
-      }
-
-      res.writeHead(404);
-      res.end("Not found");
-    });
-
-    httpServer.listen(port, "127.0.0.1", () => {
-      console.error(`Engram MCP HTTP server listening on http://127.0.0.1:${port}/mcp`);
-    });
   } else {
     console.error("Engram MCP server running via stdio");
     const transport = new StdioServerTransport();
@@ -1470,7 +1475,12 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error("Server error:", error);
-  process.exit(1);
-});
+// Only start a transport when this file is the process entry point on the
+// main thread. Worker threads (worker.ts) and tests import the tool handlers
+// from this module and must not open stdio or bind a port.
+if (isMainThread && isDirectRun()) {
+  main().catch((error) => {
+    console.error("Server error:", error);
+    process.exit(1);
+  });
+}

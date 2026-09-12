@@ -1,3 +1,4 @@
 # autoresearch scout-block overrides (loop-260828-build)
 # The Hermes-plugin e2e must launch the BUILT MCP server — allow just that path.
 !dist/interfaces/mcp/server.js
+!dist/interfaces/mcp/worker.js
