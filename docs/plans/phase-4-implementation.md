@@ -1339,8 +1339,8 @@ npm run dev -- stats
 ---
 
 ### Critical Files for Implementation
-- `/Users/USER/Documents/git/engram/.claude/worktrees/phase-4/src/semantic/memory.ts` - Pattern to follow: transactional FTS5/vec0 sync, row-to-domain type conversions, CRUD structure
-- `/Users/USER/Documents/git/engram/.claude/worktrees/phase-4/src/semantic/extractor.ts` - Pattern to follow: LLM tool_use structured output, three-tier routing, prompt template loading, response parsing
-- `/Users/USER/Documents/git/engram/.claude/worktrees/phase-4/src/core/db.ts` - Schema to modify: add entities_fts, unique constraint, composite indexes
-- `/Users/USER/Documents/git/engram/.claude/worktrees/phase-4/src/episodic/search.ts` - Integration point: extend searchMultiSource() with graph source, add formatGraphXml()
-- `/Users/USER/Documents/git/engram/.claude/worktrees/phase-4/src/mcp/server.ts` - Integration point: add explore tool, update recall sources to include graph
+- `<repo>/.claude/worktrees/phase-4/src/semantic/memory.ts` - Pattern to follow: transactional FTS5/vec0 sync, row-to-domain type conversions, CRUD structure
+- `<repo>/.claude/worktrees/phase-4/src/semantic/extractor.ts` - Pattern to follow: LLM tool_use structured output, three-tier routing, prompt template loading, response parsing
+- `<repo>/.claude/worktrees/phase-4/src/core/db.ts` - Schema to modify: add entities_fts, unique constraint, composite indexes
+- `<repo>/.claude/worktrees/phase-4/src/episodic/search.ts` - Integration point: extend searchMultiSource() with graph source, add formatGraphXml()
+- `<repo>/.claude/worktrees/phase-4/src/mcp/server.ts` - Integration point: add explore tool, update recall sources to include graph

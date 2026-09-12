@@ -56,27 +56,15 @@ install_service() {
     NODE_BIN="$(resolve_node)"
     echo "Using node: $NODE_BIN ($($NODE_BIN --version))"
 
-    # Resolve tsx path relative to node
-    TSX_BIN="$(dirname "$NODE_BIN")/../lib/node_modules/tsx/dist/esm/index.mjs"
-    if [ ! -f "$TSX_BIN" ]; then
-        # Try npx-resolved path
-        TSX_BIN="${ENGRAM_DIR}/node_modules/tsx/dist/esm/index.mjs"
-    fi
-
-    if [ ! -f "$TSX_BIN" ]; then
-        echo "Error: tsx not found. Run 'npm install' in $ENGRAM_DIR first."
-        exit 1
-    fi
-    echo "Using tsx: $TSX_BIN"
+    # Build the project first
+    echo "Building engram..."
+    (cd "$ENGRAM_DIR" && npm run build)
 
     # Generate plist with correct paths
     sed -e "s|/usr/local/lib/engram|${ENGRAM_DIR}|g" \
         -e "s|/Users/USER|${HOME}|g" \
         -e "s|/usr/local/bin/node|${NODE_BIN}|g" \
         "$PLIST_SRC" > "$PLIST_DST"
-
-    # Update tsx import path
-    /usr/libexec/PlistBuddy -c "Set :ProgramArguments:2 ${TSX_BIN}" "$PLIST_DST"
 
     # Load the agent
     launchctl unload "$PLIST_DST" 2>/dev/null || true

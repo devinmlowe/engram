@@ -13,6 +13,11 @@ describe("visualizer bind host", () => {
     expect(getBindHost({ HOST: "0.0.0.0" })).toBe("0.0.0.0");
   });
 
+  it("honors ENGRAM_BIND and prefers it over HOST", () => {
+    expect(getBindHost({ ENGRAM_BIND: "0.0.0.0" })).toBe("0.0.0.0");
+    expect(getBindHost({ ENGRAM_BIND: "10.0.0.5", HOST: "0.0.0.0" })).toBe("10.0.0.5");
+  });
+
   it("treats an empty HOST as unset", () => {
     expect(getBindHost({ HOST: "  " })).toBe("127.0.0.1");
   });

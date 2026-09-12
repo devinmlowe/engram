@@ -7,10 +7,8 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/USER/.local/share/fnm/aliases/default/bin/node</string>
-        <string>--import</string>
-        <string>/Users/USER/git/engram/node_modules/tsx/dist/esm/index.mjs</string>
-        <string>src/interfaces/web/server.ts</string>
+        <string>/usr/local/bin/node</string>
+        <string>dist/interfaces/web/server.js</string>
     </array>
 
     <key>WorkingDirectory</key>

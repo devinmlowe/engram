@@ -9,3 +9,5 @@ dist/
 coverage/
 .playwright-mcp/
 .claude/
+__pycache__/
+*.pyc

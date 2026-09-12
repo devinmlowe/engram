@@ -58,12 +58,12 @@ Compared episodic-only recall vs full multi-source recall (episodic + semantic +
 | Episodic only | 3 snippets | Fish config sourcing, config inquiry, FreeCAD/zsh issue |
 | Full recall | 7 results | Semantic (work-log tmux config) + same episodic + graph (tmux-default-session-init.sh, chatterbox repo) |
 
-### Query: "[redacted query]"
+### Query: "[redacted personal query]"
 
 | Source | Results | Top Hits |
 |--------|---------|----------|
 | Episodic only | 3 snippets | [redacted personal result] |
-| Full recall | 6 results | Semantic (work-log config, keyboard project) + same episodic |
+| Full recall | 6 results | [redacted personal result] |
 
 ### Assessment
 

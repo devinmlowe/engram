@@ -472,7 +472,7 @@ Or via JSON:
   "mcpServers": {
     "engram": {
       "command": "node",
-      "args": ["/Users/USER/Documents/git/engram/dist/mcp/server.js"],
+      "args": ["<repo>/dist/mcp/server.js"],
       "env": {}
     }
   }
@@ -544,7 +544,7 @@ For `~/.claude.json`:
       "command": "npx",
       "args": ["-y", "engram", "mcp"],
       "env": {
-        "ENGRAM_DATA_DIR": "/Users/USER/.local/share/engram"
+        "ENGRAM_DATA_DIR": "~/.local/share/engram"
       }
     }
   }

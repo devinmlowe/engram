@@ -10,6 +10,59 @@ Local-first cognitive memory system that transforms raw LLM conversation history
 
 Designed as an MCP server for Claude Code and other LLM agents, with CLI and web visualization interfaces.
 
+## Install & first run
+
+**Prerequisites**
+
+- Node.js 22 or newer (`node --version`)
+- macOS or Linux (the optional launchd daemon is macOS-only; everything else is portable)
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) if you want `engram sync` to ingest your conversation history from `~/.claude/projects`
+- At least one LLM provider for extraction and dream consolidation (see [Configuration](#configuration)). Search, `remember`, and the web visualizer work without one.
+
+```bash
+git clone https://github.com/devinmlowe/engram.git
+cd engram
+npm install          # also runs the TypeScript build via the "prepare" script
+npm link             # puts `engram` on your PATH (or run `node dist/interfaces/cli/index.js` directly)
+
+engram init          # creates ~/.local/share/engram/engram.db and downloads the embedding model
+engram sync          # index conversations from ~/.claude/projects (optional)
+engram search "what did I decide about caching"
+```
+
+> **Heads up: first run downloads models.** `engram init`, the first search, and the test
+> suite pull `nomic-ai/nomic-embed-text-v1.5` (embeddings) and `Xenova/bge-reranker-base`
+> (reranker) from Hugging Face — several hundred MB in total — into the
+> `@xenova/transformers` cache under `node_modules/`. This happens once; later runs are offline.
+> Set `ENGRAM_RERANK_ENABLED=false` to skip the reranker model.
+
+**Use it from Claude Code (MCP)**
+
+Add the server to your Claude Code MCP config (`~/.claude.json`, or a project-level `.mcp.json`),
+pointing at the compiled server with an absolute path:
+
+```json
+{
+  "mcpServers": {
+    "engram": {
+      "command": "node",
+      "args": ["/absolute/path/to/engram/dist/interfaces/mcp/server.js"],
+      "env": {}
+    }
+  }
+}
+```
+
+The `.mcp.json` shipped in this repo does the same thing with a repo-relative path and is picked
+up automatically when you open the engram checkout itself in Claude Code.
+
+**Optional: background consolidation (macOS)**
+
+```bash
+./scripts/install-daemon.sh install      # nightly `engram dream` at 02:00 via launchd
+./scripts/install-visualizer.sh install  # keep the web visualizer running on http://127.0.0.1:3001
+```
+
 ## Core Principles
 
 ### Memory is Not Search
@@ -192,12 +245,30 @@ npm run lint         # Type-check without emit
 
 ## Configuration
 
+All settings are environment variables; nothing is read from a config file.
+
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `ENGRAM_DB_PATH` | `~/.local/share/engram/engram.db` | Database location |
+| `ANTHROPIC_API_KEY` | — | Enables the Anthropic provider (final tier of the LLM cascade) |
+| `OPENROUTER_API_KEY` | — | Enables the OpenRouter provider (middle tier) |
+| `OLLAMA_HOST` | `http://localhost:11434` | Ollama endpoint; used first if reachable |
+| `ENGRAM_LOCAL_MODEL` | `qwen2.5:7b` | Ollama model name |
+| `ENGRAM_OPENROUTER_MODEL` | `google/gemini-2.5-flash-lite` | OpenRouter model name |
+| `ENGRAM_DATA_DIR` | `~/.local/share/engram` | Root for database, archive, and logs |
+| `ENGRAM_DB_PATH` | `$ENGRAM_DATA_DIR/engram.db` | SQLite database location |
+| `ENGRAM_ARCHIVE_DIR` | `$ENGRAM_DATA_DIR/archive` | Conversation archive directory |
+| `ENGRAM_LOGS_DIR` | `$ENGRAM_DATA_DIR/logs` | Log directory |
+| `ENGRAM_CLAUDE_PROJECTS_DIR` | `~/.claude/projects` | Where `engram sync` looks for Claude Code conversations |
+| `ENGRAM_EMBEDDING_DIMS` | `256` | Matryoshka embedding dimensions (must match the existing DB) |
+| `ENGRAM_RERANK_ENABLED` | `true` | Set to `false` or `0` to disable the cross-encoder reranker |
 | `ENGRAM_CHUNKING_STRATEGY` | `fixed` | `fixed` or `adaptive` (content-aware boundaries) |
-| `ENGRAM_LLM_PROVIDER` | auto-detect | `anthropic`, `openrouter`, or `ollama` |
-| `ENGRAM_LLM_MODEL` | provider default | LLM model for extraction operations |
+| `ENGRAM_BIND` | `127.0.0.1` | Web visualizer bind address (`0.0.0.0` to expose on the network) |
+| `PORT` | `3001` | Web visualizer port |
+
+**LLM providers.** Extraction and the dream pipeline try Ollama first (if `OLLAMA_HOST` answers),
+then OpenRouter (if `OPENROUTER_API_KEY` is set), then Anthropic (if `ANTHROPIC_API_KEY` is set).
+At least one must be configured for `engram extract` and `engram dream`; search, `remember`,
+`remember_batch`, and the web visualizer do not need an LLM.
 
 ## References
 
