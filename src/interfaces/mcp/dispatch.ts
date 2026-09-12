@@ -144,6 +144,18 @@ function errorResult(message: string): ToolResult {
   return { content: [{ type: "text", text: `Error: ${message}` }], isError: true };
 }
 
+/** Short, single-line, size-capped rendering of tool args for log lines. */
+export function argsDigest(args: unknown, max = 160): string {
+  let text: string;
+  try {
+    text = JSON.stringify(args) ?? String(args);
+  } catch {
+    text = String(args);
+  }
+  text = text.replace(/\s+/g, " ");
+  return text.length > max ? `${text.slice(0, max)}…(${text.length} chars)` : text;
+}
+
 // ─── Factory ────────────────────────────────────────────────────
 
 export function createToolDispatcher(options: DispatcherOptions): ToolDispatcher {
@@ -188,6 +200,7 @@ export function createToolDispatcher(options: DispatcherOptions): ToolDispatcher
     }
     const sid = SESSION_TOOLS.has(name) ? sessionIdOf(args) : undefined;
     const pinned = sid !== undefined ? affinity.get(sid) : undefined;
+    const started = performance.now();
     try {
       const { result, slot } = await pool.runWithSlot<ToolResult>(name, args, {
         timeoutMs: toolTimeoutMs(name, args, timeoutMs),
@@ -200,7 +213,8 @@ export function createToolDispatcher(options: DispatcherOptions): ToolDispatcher
       return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      log(`[engram] tool "${name}" failed in worker: ${message}`);
+      const ms = Math.round(performance.now() - started);
+      log(`[engram] ${new Date().toISOString()} tool "${name}" failed in worker after ${ms}ms: ${message} args=${argsDigest(args)}`);
       return errorResult(message);
     }
   };
