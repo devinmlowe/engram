@@ -17,6 +17,7 @@ import type { MemoryType, Memory } from "./types.js";
 import { embedQuery } from "../_core/embeddings/index.js";
 import { rrfFuse, normalizeMinMaxFloored } from "../_core/search/rrf.js";
 import { computeRetrievalScore, computeConfidence } from "./decay.js";
+import { buildFtsMatchQuery } from "../_core/search/fts-query.js";
 
 // ─── Row Type Helpers ───────────────────────────────────────────
 
@@ -97,6 +98,26 @@ function vectorSearchMemories(
 // ─── FTS Search ─────────────────────────────────────────────────
 
 /**
+ * SQL for the memories full-text lookup. `clauses` must start with the
+ * `memories_fts MATCH ?` predicate; extra clauses filter the joined row.
+ *
+ * CROSS JOIN is deliberate: it pins memories_fts as the outer loop. With a
+ * plain JOIN, SQLite prefers idx_memories_active, drives from `memories`
+ * and evaluates the MATCH once per active row — 0.5s for a 3-term query
+ * and 9.5s (134s unbounded) for an 80-word one on a 17k-memory store.
+ * Driving from the FTS index costs single-digit milliseconds. Exported so
+ * a test can assert the query plan.
+ */
+export function buildMemoriesFtsSql(clauses: readonly string[]): string {
+  return `SELECT m.id, fts.rank
+         FROM memories_fts AS fts
+         CROSS JOIN memories AS m ON m.rowid = fts.rowid
+         WHERE ${clauses.join(" AND ")}
+         ORDER BY fts.rank
+         LIMIT ?`;
+}
+
+/**
  * Full-text search on memories_fts. Returns ranked items by BM25 rank.
  */
 function ftsSearchMemories(
@@ -105,13 +126,9 @@ function ftsSearchMemories(
   limit: number,
   filters: { types?: string[]; scopes?: string[] } = {},
 ): RankedItem[] {
-  // Sanitize FTS query: escape special chars, wrap terms in quotes
-  const sanitized = query
-    .replace(/['"]/g, "")
-    .split(/\s+/)
-    .filter((t) => t.length > 0)
-    .map((t) => `"${t}"`)
-    .join(" OR ");
+  // Bounded, de-noised OR query (stop words dropped, term count capped) —
+  // see _core/search/fts-query.ts for why an unbounded OR is catastrophic.
+  const sanitized = buildFtsMatchQuery(query);
 
   if (!sanitized) return [];
 
@@ -130,14 +147,7 @@ function ftsSearchMemories(
 
   try {
     const rows = db
-      .prepare(
-        `SELECT m.id, fts.rank
-         FROM memories_fts AS fts
-         JOIN memories AS m ON m.rowid = fts.rowid
-         WHERE ${clauses.join(" AND ")}
-         ORDER BY fts.rank
-         LIMIT ?`,
-      )
+      .prepare(buildMemoriesFtsSql(clauses))
       .all(...params) as Array<{ id: string; rank: number }>;
 
     return rows.map((row, idx) => ({
