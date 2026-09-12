@@ -1,0 +1,3 @@
+name: engram
+version: 1.0.0
+description: "Engram — automatic recall from consolidated conversation memory (HTTP MCP server on :9907) plus a single engram_memory_save tool."
