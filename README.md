@@ -1,5 +1,7 @@
 # Engram
 
+[![CI](https://github.com/devinmlowe/engram/actions/workflows/ci.yml/badge.svg)](https://github.com/devinmlowe/engram/actions/workflows/ci.yml)
+
 > *An engram is the hypothetical physical trace of memory in neural tissue — the biochemical change that encodes what we've learned.*
 
 <p align="center">
