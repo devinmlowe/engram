@@ -28,6 +28,10 @@ export {
   normalizeScores,
   blendScores,
   resetReranker,
+  createCrossEncoder,
+  logitsToScores,
+  setCrossEncoderForTesting,
+  type CrossEncoder,
 } from "./reranker.js";
 
 // Multi-source orchestration

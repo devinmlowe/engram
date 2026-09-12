@@ -120,7 +120,10 @@ describe("rerankResults", () => {
   it("returns top K results when reranker is unavailable (graceful degradation)", async () => {
     // Mock the dynamic import to simulate model load failure
     vi.doMock("@xenova/transformers", () => ({
-      pipeline: vi.fn().mockRejectedValue(new Error("Model not found")),
+      AutoTokenizer: { from_pretrained: vi.fn().mockRejectedValue(new Error("Model not found")) },
+      AutoModelForSequenceClassification: {
+        from_pretrained: vi.fn().mockRejectedValue(new Error("Model not found")),
+      },
     }));
 
     const candidates = [

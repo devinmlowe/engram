@@ -12,15 +12,62 @@ import type { SearchResult, RerankerConfig } from "../types/index.js";
 
 // ─── Types ──────────────────────────────────────────────────────
 
-interface RerankerPipeline {
-  (inputs: { text: string; text_pair: string }[], options?: Record<string, unknown>): Promise<
-    { label: string; score: number }[][]
-  >;
+/**
+ * A loaded cross-encoder: scores (query, passage) pairs with one relevance
+ * logit per pair. Built from a tokenizer + sequence-classification model
+ * rather than the `text-classification` pipeline: in @xenova/transformers
+ * v2 that pipeline only accepts plain strings, so feeding it
+ * `{text, text_pair}` objects throws `text.split is not a function`, and
+ * even a plain-string call collapses the single logit to a constant 1.0
+ * through softmax. Pairs must go through the tokenizer's `text_pair` option.
+ */
+export interface CrossEncoder {
+  /** Relevance logits for pairs (queries[i], passages[i]). Higher = more relevant. */
+  score(queries: string[], passages: string[]): Promise<number[]>;
+}
+
+interface TokenizerLike {
+  (text: string[], options: Record<string, unknown>): Record<string, unknown>;
+}
+interface SeqClsModelLike {
+  (inputs: Record<string, unknown>): Promise<{ logits: { dims: number[]; data: ArrayLike<number> } }>;
+}
+
+/** Read one relevance logit per row from a [rows, labels] logits tensor. */
+export function logitsToScores(logits: { dims: number[]; data: ArrayLike<number> }): number[] {
+  const rows = logits.dims[0] ?? 0;
+  const cols = logits.dims[1] ?? 1;
+  const scores: number[] = [];
+  for (let i = 0; i < rows; i++) {
+    // Single-label rerankers (bge-reranker) have one column; for multi-label
+    // heads the last column is the "relevant" class by convention.
+    scores.push(Number(logits.data[i * cols + (cols - 1)]));
+  }
+  return scores;
+}
+
+/** Wrap a transformers.js tokenizer + AutoModelForSequenceClassification. */
+export function createCrossEncoder(tokenizer: TokenizerLike, model: SeqClsModelLike): CrossEncoder {
+  return {
+    async score(queries, passages) {
+      if (queries.length !== passages.length) {
+        throw new Error(`cross-encoder: ${queries.length} queries vs ${passages.length} passages`);
+      }
+      if (queries.length === 0) return [];
+      const inputs = tokenizer(queries, { text_pair: passages, padding: true, truncation: true });
+      const { logits } = await model(inputs);
+      const scores = logitsToScores(logits);
+      if (scores.length !== queries.length) {
+        throw new Error(`cross-encoder: expected ${queries.length} scores, got ${scores.length}`);
+      }
+      return scores;
+    },
+  };
 }
 
 // ─── Singleton State ────────────────────────────────────────────
 
-let rerankerPipeline: RerankerPipeline | null = null;
+let rerankerPipeline: CrossEncoder | null = null;
 let loadAttempted = false;
 let loadError: Error | null = null;
 
@@ -40,11 +87,15 @@ export async function initReranker(
 
   try {
     // Dynamic import to avoid pulling in transformers when reranking is disabled
-    const { pipeline } = await import("@xenova/transformers");
-    rerankerPipeline = (await pipeline(
-      "text-classification",
-      model,
-    )) as unknown as RerankerPipeline;
+    const { AutoTokenizer, AutoModelForSequenceClassification } = await import("@xenova/transformers");
+    const [tokenizer, seqCls] = await Promise.all([
+      AutoTokenizer.from_pretrained(model),
+      AutoModelForSequenceClassification.from_pretrained(model),
+    ]);
+    rerankerPipeline = createCrossEncoder(
+      tokenizer as unknown as TokenizerLike,
+      seqCls as unknown as SeqClsModelLike,
+    );
   } catch (err) {
     loadError = err instanceof Error ? err : new Error(String(err));
     console.warn(
@@ -133,26 +184,14 @@ export async function rerankResults(
 
   if (candidates.length === 0) return [];
 
-  // Build query-candidate pairs for batch inference
-  const pairs = candidates.map((c) => ({
-    text: query,
-    text_pair: c.content,
-  }));
+  // Parallel arrays: pair i = (query, candidates[i].content). The query is
+  // passed verbatim (may be long / multi-line — the tokenizer truncates).
+  const queries = candidates.map(() => query);
+  const passages = candidates.map((c) => c.content);
 
   try {
-    // Batch inference: all pairs in one forward pass
-    const outputs = await rerankerPipeline(pairs);
-
-    // Extract raw scores from model output
-    // BGE reranker outputs classification logits; we use the score directly
-    const rawScores = outputs.map((output) => {
-      // Output is array of {label, score} per pair
-      // For rerankers, we want the relevance score
-      if (Array.isArray(output) && output.length > 0) {
-        return output[0].score;
-      }
-      return 0;
-    });
+    // Batch inference: all pairs in one forward pass; one raw logit per pair
+    const rawScores = await rerankerPipeline.score(queries, passages);
 
     // Normalize to [0, 1]
     const normalizedScores = normalizeScores(rawScores);
@@ -192,5 +231,14 @@ export async function rerankResults(
 export function resetReranker(): void {
   rerankerPipeline = null;
   loadAttempted = false;
+  loadError = null;
+}
+
+/**
+ * Install a pre-built cross-encoder (for testing without model files).
+ */
+export function setCrossEncoderForTesting(encoder: CrossEncoder | null): void {
+  rerankerPipeline = encoder;
+  loadAttempted = encoder !== null;
   loadError = null;
 }
