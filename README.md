@@ -112,6 +112,38 @@ Four domains with shared core infrastructure:
 | `index_file_structure` | Parse file structure into graph entities (multi-language) |
 | `scan_file` | Regex-based file scanning with function context detection |
 
+### Transports: stdio (default) and HTTP
+
+`dist/interfaces/mcp/server.js` speaks **stdio** by default, which is what the
+`.mcp.json` example in "Install & first run" uses. Start it with `--http` to
+serve **Streamable HTTP** instead:
+
+```bash
+node dist/interfaces/mcp/server.js --http            # http://127.0.0.1:9907/mcp
+node dist/interfaces/mcp/server.js --http --port 9910
+```
+
+HTTP mode exposes `POST /mcp` (one MCP session per client, routed by the
+`Mcp-Session-Id` header) plus `GET /health`, which returns JSON. It binds to
+127.0.0.1 only. Point any Streamable-HTTP-capable client at it:
+
+```json
+{ "mcpServers": { "engram": { "type": "http", "url": "http://127.0.0.1:9907/mcp" } } }
+```
+
+In HTTP mode every tool call runs on a `node:worker_threads` pool, so a
+multi-second `recall` never blocks `/health`, the handshake, or other clients.
+Each worker owns its own SQLite connection and embedding model. Stdio mode
+never spawns workers.
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `ENGRAM_HTTP_WORKERS` | `2` | Worker count in HTTP mode (`0` = run tool calls inline on the main thread) |
+| `ENGRAM_WORKER_TIMEOUT_MS` | `8000` | Per-call timeout; `remember`, `remember_batch`, `index_file_structure` and `reflect --refresh` use higher floors. A worker still silent at 2x the timeout is killed and respawned |
+
+See the "MCP Server Transports" section of [CLAUDE.md](CLAUDE.md) for the
+worker-pool internals (`worker-pool.ts`, `dispatch.ts`, `worker.ts`).
+
 ## CLI
 
 ```
