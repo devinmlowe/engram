@@ -77,6 +77,15 @@ export async function warmUpEmbeddings(): Promise<void> {
   await ensureEmbeddings();
   const { embedQuery } = await import("../../_core/embeddings/index.js");
   await embedQuery("warmup");
+  // The cross-encoder reranker is otherwise loaded lazily by the first recall
+  // that reranks — inside that call's timeout window. Load it up front so a
+  // fresh worker's first recall pays no model start-up cost. Failure is
+  // non-fatal: recall degrades to the original ranking.
+  if (!config) config = loadConfig();
+  if (config.search.rerankEnabled && config.search.reranker.enabled) {
+    const { initReranker } = await import("../../_core/search/index.js");
+    await initReranker(config.search.reranker.model);
+  }
 }
 
 // ─── Constants ──────────────────────────────────────────────────

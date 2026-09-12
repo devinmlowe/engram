@@ -135,6 +135,11 @@ interface Slot {
 }
 
 const DEFAULT_TIMEOUT_MS = 8_000;
+
+/** Prefix for pool log lines: ISO timestamp so log-only incidents can be placed in time. */
+function stamp(): string {
+  return `[engram] ${new Date().toISOString()}`;
+}
 const DEFAULT_HANG_MULTIPLIER = 2;
 const DEFAULT_READY_TIMEOUT_MS = 120_000;
 
@@ -304,13 +309,13 @@ export class WorkerPool {
   private onTimeout(slot: Slot, inflight: Inflight, timeoutMs: number): void {
     if (slot.inflight !== inflight || inflight.settled) return;
     inflight.settled = true;
-    this.log(`[engram] worker ${slot.index}: tool "${inflight.tool}" exceeded ${timeoutMs}ms; rejecting call (worker kept alive)`);
+    this.log(`${stamp()} worker ${slot.index}: tool "${inflight.tool}" exceeded ${timeoutMs}ms; rejecting call (worker kept alive)`);
     inflight.reject(new WorkerTimeoutError(inflight.tool, timeoutMs));
   }
 
   private onHang(slot: Slot, inflight: Inflight, timeoutMs: number): void {
     if (slot.inflight !== inflight) return;
-    this.log(`[engram] worker ${slot.index}: tool "${inflight.tool}" still unanswered after ${timeoutMs * this.hangMultiplier}ms; killing and respawning worker`);
+    this.log(`${stamp()} worker ${slot.index}: tool "${inflight.tool}" still unanswered after ${timeoutMs * this.hangMultiplier}ms; killing and respawning worker`);
     this.finishInflight(slot, inflight);
     slot.inflight = null;
     if (!inflight.settled) {
@@ -338,7 +343,7 @@ export class WorkerPool {
     try {
       worker = this.spawnWorker();
     } catch (error) {
-      this.log(`[engram] worker ${slot.index}: spawn failed: ${error instanceof Error ? error.message : String(error)}`);
+      this.log(`${stamp()} worker ${slot.index}: spawn failed: ${error instanceof Error ? error.message : String(error)}`);
       slot.worker = null;
       // Retry later rather than tight-looping.
       setTimeout(() => {
@@ -350,7 +355,7 @@ export class WorkerPool {
 
     slot.readyTimer = setTimeout(() => {
       if (slot.generation !== generation || slot.ready) return;
-      this.log(`[engram] worker ${slot.index}: not ready after ${this.readyTimeoutMs}ms; respawning`);
+      this.log(`${stamp()} worker ${slot.index}: not ready after ${this.readyTimeoutMs}ms; respawning`);
       this.respawn(slot, "ready-timeout");
     }, this.readyTimeoutMs);
     slot.readyTimer.unref?.();
@@ -361,12 +366,12 @@ export class WorkerPool {
     });
     worker.on("error", (error: Error) => {
       if (slot.generation !== generation) return;
-      this.log(`[engram] worker ${slot.index}: error: ${error?.message ?? String(error)}`);
+      this.log(`${stamp()} worker ${slot.index}: error: ${error?.message ?? String(error)}`);
     });
     worker.on("exit", (code: number) => {
       if (slot.generation !== generation) return;
       if (this.closed) return;
-      this.log(`[engram] worker ${slot.index}: exited with code ${code}; respawning`);
+      this.log(`${stamp()} worker ${slot.index}: exited with code ${code}; respawning`);
       const inflight = slot.inflight;
       if (inflight) {
         this.finishInflight(slot, inflight);

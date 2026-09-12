@@ -7,6 +7,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { EventEmitter } from "node:events";
 import {
+  argsDigest,
   createToolDispatcher,
   extractSessionId,
   parseWorkerCount,
@@ -203,5 +204,14 @@ describe("timeouts and env parsing", () => {
   it("extracts the session id from a recall_session result", () => {
     expect(extractSessionId({ content: [{ type: "text", text: '<session id="abc-123" budget_remaining="9" />' }] })).toBe("abc-123");
     expect(extractSessionId({ content: [{ type: "text", text: "<engram_memory/>" }] })).toBeUndefined();
+  });
+
+  it("argsDigest renders args on one line and caps the length", () => {
+    // JSON escapes the newline; runs of literal whitespace collapse to one space
+    expect(argsDigest({ query: "a\nb   c" })).toBe('{"query":"a\\nb c"}');
+    const long = argsDigest({ query: "x".repeat(500) }, 40);
+    expect(long.length).toBeLessThan(80);
+    expect(long).toMatch(/…\(\d+ chars\)$/);
+    expect(argsDigest(undefined)).toBe("undefined");
   });
 });
