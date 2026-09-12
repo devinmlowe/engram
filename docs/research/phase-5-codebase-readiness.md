@@ -371,8 +371,8 @@ This composition does not exist anywhere yet. The daemon must build it.
 {
   "type": "module",
   "engines": { "node": ">=22.0.0" },
-  "main": "dist/cli/index.js",
-  "bin": { "engram": "dist/cli/index.js" }
+  "main": "dist/interfaces/cli/index.js",
+  "bin": { "engram": "dist/interfaces/cli/index.js" }
 }
 ```
 

@@ -334,9 +334,9 @@ engram-plugin/
   "description": "Cognitive memory system for Claude Code -- episodic, semantic, and graph-based memory layers",
   "author": {
     "name": "Devin Lowe",
-    "url": "https://github.com/dml089"
+    "url": "https://github.com/devinmlowe"
   },
-  "repository": "https://github.com/dml089/engram",
+  "repository": "https://github.com/devinmlowe/engram",
   "license": "MIT",
   "keywords": [
     "memory",
@@ -377,7 +377,7 @@ Alternative for compiled distribution:
   "mcpServers": {
     "engram": {
       "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/dist/mcp/server.js"],
+      "args": ["${CLAUDE_PLUGIN_ROOT}/dist/interfaces/mcp/server.js"],
       "env": {
         "ENGRAM_DATA_DIR": "~/.local/share/engram"
       }

@@ -316,7 +316,7 @@ No separate test file needed — the CLI is tested through the daemon tests and 
 **`launchd/com.engram.dreamstate.plist`**:
 - Launch Agent (user-level, not system daemon)
 - `StartCalendarInterval`: Hour=2, Minute=0 (2 AM daily)
-- `ProgramArguments`: `/usr/local/bin/node`, `dist/cli/index.js`, `dream`
+- `ProgramArguments`: `/usr/local/bin/node`, `dist/interfaces/cli/index.js`, `dream`
 - `EnvironmentVariables`: `ANTHROPIC_API_KEY`, `ENGRAM_LOCAL_MODEL`, `NODE_ENV=production`
 - `StandardOutPath`: `~/.local/share/engram/logs/dream.log`
 - `StandardErrorPath`: `~/.local/share/engram/logs/dream-error.log`

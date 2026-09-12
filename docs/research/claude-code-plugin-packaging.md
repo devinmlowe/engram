@@ -138,7 +138,7 @@ Or using a local build:
   "mcpServers": {
     "engram": {
       "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/dist/mcp/server.js"],
+      "args": ["${CLAUDE_PLUGIN_ROOT}/dist/interfaces/mcp/server.js"],
       "env": {}
     }
   }
@@ -254,17 +254,17 @@ Based on the official `@modelcontextprotocol/server-filesystem` pattern:
   "license": "MIT",
 
   "bin": {
-    "engram": "dist/cli/index.js"
+    "engram": "dist/interfaces/cli/index.js"
   },
 
-  "main": "dist/cli/index.js",
+  "main": "dist/interfaces/cli/index.js",
 
   "files": [
     "dist"
   ],
 
   "scripts": {
-    "build": "tsc && shx chmod +x dist/cli/index.js dist/mcp/server.js",
+    "build": "tsc && shx chmod +x dist/interfaces/cli/index.js dist/interfaces/mcp/server.js",
     "prepare": "npm run build",
     "dev": "tsx src/cli/index.ts",
     "test": "vitest",
@@ -289,7 +289,7 @@ Based on the official `@modelcontextprotocol/server-filesystem` pattern:
 
 ### Shebang requirement
 
-Both entry points (`dist/cli/index.js` and `dist/mcp/server.js`) must start with:
+Both entry points (`dist/interfaces/cli/index.js` and `dist/interfaces/mcp/server.js`) must start with:
 
 ```
 #!/usr/bin/env node
@@ -317,8 +317,8 @@ npx engram dream   # Runs dream
 ```json
 {
   "bin": {
-    "engram": "dist/cli/index.js",
-    "engram-mcp": "dist/mcp/server.js"
+    "engram": "dist/interfaces/cli/index.js",
+    "engram-mcp": "dist/interfaces/mcp/server.js"
   }
 }
 ```
@@ -338,9 +338,9 @@ Option 1 is cleaner because it keeps a single entry point and lets the CLI route
   "description": "Cognitive memory system -- episodic storage, semantic extraction, knowledge graph, and dream-state consolidation for Claude Code",
   "author": {
     "name": "Devin Lowe",
-    "url": "https://github.com/dml089"
+    "url": "https://github.com/devinmlowe"
   },
-  "repository": "https://github.com/dml089/engram",
+  "repository": "https://github.com/devinmlowe/engram",
   "license": "MIT",
   "keywords": ["memory", "episodic", "semantic", "knowledge-graph", "mcp", "rag"],
   "mcpServers": "./mcp-config.json"
@@ -462,7 +462,7 @@ Add to `~/.claude.json`:
 ### Method 3: Local development (from source)
 
 ```bash
-claude mcp add --transport stdio --scope local engram -- node /path/to/engram/dist/mcp/server.js
+claude mcp add --transport stdio --scope local engram -- node /path/to/engram/dist/interfaces/mcp/server.js
 ```
 
 Or via JSON:
@@ -472,7 +472,7 @@ Or via JSON:
   "mcpServers": {
     "engram": {
       "command": "node",
-      "args": ["<repo>/dist/mcp/server.js"],
+      "args": ["<repo>/dist/interfaces/mcp/server.js"],
       "env": {}
     }
   }
@@ -558,7 +558,7 @@ For `~/.claude.json`:
   "mcpServers": {
     "engram": {
       "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/dist/mcp/server.js"],
+      "args": ["${CLAUDE_PLUGIN_ROOT}/dist/interfaces/mcp/server.js"],
       "env": {}
     }
   }
@@ -634,7 +634,7 @@ Or wrapping via npx:
 
 2. **Update `package.json`**:
    - Add `"files": ["dist"]`.
-   - Update build script: `"build": "tsc && chmod +x dist/cli/index.js dist/mcp/server.js"`.
+   - Update build script: `"build": "tsc && chmod +x dist/interfaces/cli/index.js dist/interfaces/mcp/server.js"`.
    - Add `"prepare": "npm run build"`.
    - Consider adding `shx` for cross-platform chmod.
 

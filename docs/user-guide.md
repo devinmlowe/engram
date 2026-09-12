@@ -16,13 +16,13 @@ For the full vision and technical specification, see [SPEC.md](../SPEC.md).
 ### From Source
 
 ```bash
-git clone git@github.com:dml089/engram.git
+git clone https://github.com/devinmlowe/engram.git
 cd engram
 npm install
 npm run build
 ```
 
-The built CLI is at `dist/cli/index.js`. You can symlink it for convenience:
+The built CLI is at `dist/interfaces/cli/index.js`. You can symlink it for convenience:
 
 ```bash
 npm link
@@ -89,7 +89,7 @@ Register Engram as an MCP server so Claude Code can use its memory tools automat
 
 ```bash
 claude mcp add --transport stdio --scope user engram -- \
-  node /path/to/engram/dist/mcp/server.js
+  node /path/to/engram/dist/interfaces/mcp/server.js
 ```
 
 Replace `/path/to/engram` with the actual path to your clone.
@@ -103,7 +103,7 @@ Add to `~/.claude.json`:
   "mcpServers": {
     "engram": {
       "command": "node",
-      "args": ["/path/to/engram/dist/mcp/server.js"],
+      "args": ["/path/to/engram/dist/interfaces/mcp/server.js"],
       "env": {}
     }
   }
@@ -282,9 +282,9 @@ The extract and reflect phases use the Claude API for LLM inference. Set `ANTHRO
 
 ### MCP tools not appearing in Claude Code
 
-1. Verify the MCP server starts: `node dist/mcp/server.js` (should print to stderr and wait)
+1. Verify the MCP server starts: `node dist/interfaces/mcp/server.js` (should print to stderr and wait)
 2. Check Claude Code MCP configuration: `claude mcp list`
-3. Ensure the path in your config points to the built `dist/mcp/server.js`, not the TypeScript source
+3. Ensure the path in your config points to the built `dist/interfaces/mcp/server.js`, not the TypeScript source
 
 ### Database is locked
 

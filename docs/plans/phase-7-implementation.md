@@ -170,7 +170,7 @@
    - Add `"files": ["dist", "prompts", "launchd", ".claude-plugin", ".mcp.json"]`
    - Add `"prepare": "npm run build"`
    - Update build: `"build": "tsc"`
-   - Verify `"bin": { "engram": "dist/cli/index.js" }`
+   - Verify `"bin": { "engram": "dist/interfaces/cli/index.js" }`
 
 3. Create `.mcp.json` at project root:
    ```json
@@ -178,7 +178,7 @@
      "mcpServers": {
        "engram": {
          "command": "node",
-         "args": ["${CLAUDE_PLUGIN_ROOT}/dist/mcp/server.js"],
+         "args": ["${CLAUDE_PLUGIN_ROOT}/dist/interfaces/mcp/server.js"],
          "env": {}
        }
      }
@@ -201,7 +201,7 @@
    - `src/cli/index.ts` line 1: `#!/usr/bin/env node` ✓
    - `src/mcp/server.ts` line 1: `#!/usr/bin/env node` ✓
 
-6. Test: build and verify `node dist/cli/index.js mcp` starts the MCP server
+6. Test: build and verify `node dist/interfaces/cli/index.js mcp` starts the MCP server
 
 **Dependencies:** Task 1
 **Estimated time:** 2 hours
@@ -301,7 +301,7 @@
 3. Register MCP server with Claude Code:
    ```bash
    claude mcp add --transport stdio --scope user engram -- \
-     node <repo>/dist/mcp/server.js
+     node <repo>/dist/interfaces/mcp/server.js
    ```
 4. Verify tools appear: start Claude Code, check `/mcp`
 5. Test recall tool with a real query
@@ -374,11 +374,11 @@ npx vitest run
 npm run build
 
 # 4. MCP server starts
-node dist/cli/index.js mcp &
+node dist/interfaces/cli/index.js mcp &
 # (verify it doesn't crash)
 
 # 5. CLI works
-node dist/cli/index.js stats
+node dist/interfaces/cli/index.js stats
 
 # 6. Plugin is registered
 claude mcp list | grep engram
