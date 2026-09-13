@@ -79,6 +79,15 @@ interface RankedItem {
 
 // ─── Vector Search ──────────────────────────────────────────────
 
+/**
+ * sqlite-vec rejects KNN queries with k > 4096 ("k value in knn query too
+ * large"). The filter-escalation loop below can ask for far more than that
+ * on a thin window (a date range or anniversary over a 16k-row store), so
+ * the vector path is capped here; the FTS path has no such limit and keeps
+ * growing with fetchK.
+ */
+export const VEC_MAX_K = 4096;
+
 /** Temporal predicate shared by both candidate paths. */
 interface DateScope {
   /** SQL expression for the basis timestamp, aliased on `m`. */
@@ -108,7 +117,7 @@ function vectorSearchMemories(
        WHERE embedding MATCH ? AND k = ?
        ORDER BY distance ASC`,
     )
-    .all(embeddingBuf, limit) as Array<{ id: string; distance: number }>;
+    .all(embeddingBuf, Math.min(limit, VEC_MAX_K)) as Array<{ id: string; distance: number }>;
 
   let filtered = rows;
   if (dateScope && rows.length > 0) {

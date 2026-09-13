@@ -352,3 +352,40 @@ describe("unifiedSearch dateHint", () => {
     expect(formatRecallXml(res)).not.toContain("<date_filter");
   });
 });
+
+// ─── sqlite-vec k cap (regression: "k value in knn query too large") ──
+
+describe("candidate-window escalation on a large store", () => {
+  it("never asks vec0 for k > 4096 and still finds a thin-window match", async () => {
+    // 4,200 active rows: escalation (20 → 80 → 320 → 1280 → 5120) used to
+    // throw once fetchK passed sqlite-vec's 4096 limit on the KNN k value
+    const insertMem = t.db.prepare(
+      `INSERT INTO memories (id, type, content, created_at, source_exchanges, is_active)
+       VALUES (?, 'fact', ?, ?, '[]', 1)`,
+    );
+    const insertVec = t.db.prepare("INSERT INTO vec_memories (id, embedding) VALUES (?, ?)");
+    t.db.transaction(() => {
+      for (let i = 0; i < 4200; i++) {
+        insertMem.run(`bulk-${i}`, `bulk row ${i} unrelated text`, epoch("2027-01-15T00:00:00Z"));
+        insertVec.run(`bulk-${i}`, Buffer.from(new Float32Array(seededEmbedding(5000 + i)).buffer));
+      }
+    })();
+    insertMemory(t.db, mem("mem-thin", "2025-06-01T00:00:00Z", [], "thin window launchd daemon plist notes"), seededEmbedding(999));
+    mockedEmbedQuery.mockResolvedValue(seededEmbedding(1));
+
+    const rs = await searchSemantic(t.db, {
+      query: "launchd daemon plist",
+      after: "2025-01-01",
+      before: "2026-01-01",
+      limit: 5,
+    });
+    expect(ids(rs)).toEqual(["mem-thin"]);
+
+    // Anniversary over the same store: also a thin window, must not throw
+    const ann = await searchSemantic(t.db, {
+      query: "launchd daemon plist",
+      anniversary: { month: 6, day: 1 },
+    });
+    expect(ids(ann)).toEqual(["mem-thin"]);
+  });
+});
