@@ -63,8 +63,8 @@ Start: `npx tsx src/interfaces/web/server.ts`
 `dist/interfaces/mcp/server.js` speaks stdio by default. With `--http [--port N]`
 (default port 9907) it serves Streamable HTTP at `/mcp` (one MCP session per
 client, routed by `Mcp-Session-Id`) plus a `/health` JSON endpoint, bound to
-127.0.0.1. The Hermes fleet runs it this way via the `ai.hermes.engram-mcp`
-LaunchAgent.
+127.0.0.1. A long-running deployment runs it this way via a launchd/systemd
+service (KeepAlive, `--http --port 9907`).
 
 In HTTP mode every tool call is dispatched to a `node:worker_threads` pool
 (`src/interfaces/mcp/worker-pool.ts`, `dispatch.ts`, `worker.ts`) so a
