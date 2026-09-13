@@ -104,6 +104,35 @@ export interface ConversationExchange {
   index: number;
   userMessage: string;
   assistantMessage: string;
+  /**
+   * Stored exchange id. When present, extracted facts' source references
+   * (which the model emits as `[Exchange N]` indexes) are resolved to real
+   * ids so memories.source_exchanges can be joined back to exchanges.
+   */
+  id?: string;
+}
+
+/**
+ * Map model-emitted exchange indexes to stored exchange ids. References that
+ * are already ids pass through; references that resolve to nothing are
+ * dropped (a hallucinated index must not masquerade as an id).
+ */
+export function resolveSourceExchangeIds(
+  refs: readonly string[],
+  idByIndex: ReadonlyMap<number, string>,
+): string[] {
+  const known = new Set(idByIndex.values());
+  const out: string[] = [];
+  for (const ref of refs) {
+    if (known.has(ref)) {
+      if (!out.includes(ref)) out.push(ref);
+      continue;
+    }
+    const idx = /^\d+$/.test(ref) ? Number(ref) : NaN;
+    const id = idByIndex.get(idx);
+    if (id !== undefined && !out.includes(id)) out.push(id);
+  }
+  return out;
 }
 
 export interface ConversationMetadata {
@@ -549,6 +578,19 @@ export async function extractFromConversation(
   }
 
   // Optional reflexion pass
+  // Resolve `[Exchange N]` references to stored exchange ids when the caller
+  // supplied them, so source_exchanges is joinable (event-time recall).
+  const idByIndex = new Map<number, string>();
+  for (const ex of exchanges) {
+    if (ex.id) idByIndex.set(ex.index, ex.id);
+  }
+  if (idByIndex.size > 0) {
+    allFacts = allFacts.map((f) => ({
+      ...f,
+      sourceExchangeIds: resolveSourceExchangeIds(f.sourceExchangeIds, idByIndex),
+    }));
+  }
+
   if (cfg.reflexionEnabled && allFacts.length > 0) {
     const fullPrompt = buildExtractionPrompt(exchanges, metadata);
     const additional = await reflexionPass(fullPrompt, allFacts, usedModel);

@@ -338,6 +338,21 @@ function createSchema(db: Database.Database, config: EngramConfig): void {
   // ADR-010 upgrade: persist FSRS stability (NULL = derive from type constant)
   idempotentAlter(db, "memories", "stability", "ALTER TABLE memories ADD COLUMN stability REAL");
 
+  // Temporal recall: "filed" basis filters need created_at indexed; the
+  // "event" basis reads the denormalized earliest-source-exchange timestamp
+  // (NULL = unresolvable → falls back to created_at at query time).
+  db.exec("CREATE INDEX IF NOT EXISTS idx_memories_created_at ON memories(created_at)");
+  const addedEventTs = idempotentAlter(
+    db, "memories", "event_ts", "ALTER TABLE memories ADD COLUMN event_ts INTEGER",
+  );
+  db.exec("CREATE INDEX IF NOT EXISTS idx_memories_event_ts ON memories(event_ts)");
+  if (addedEventTs) {
+    // One-time backfill on the open that introduced the column. Idempotent
+    // (only NULL rows are touched) and content-neutral; re-runnable via
+    // backfillEventTs() for rows that gain resolvable sources later.
+    backfillEventTs(db);
+  }
+
   // FTS5 virtual tables (created separately — can't use IF NOT EXISTS)
   createFtsIfNeeded(db, "exchanges_fts", `
     CREATE VIRTUAL TABLE exchanges_fts USING fts5(
@@ -517,18 +532,57 @@ function createFtsIfNeeded(
 /**
  * Idempotent ALTER TABLE — adds a column only if it doesn't already exist.
  * Uses PRAGMA table_info to check for the column's presence.
+ * Returns true when the column was added by this call.
  */
 function idempotentAlter(
   db: Database.Database,
   table: string,
   column: string,
   alterSql: string,
-): void {
+): boolean {
   const columns = db.pragma(`table_info(${table})`) as Array<{ name: string }>;
   const exists = columns.some((c) => c.name === column);
   if (!exists) {
     db.exec(alterSql);
+    return true;
   }
+  return false;
+}
+
+/**
+ * SQL that resolves a memory's event timestamp: the earliest `exchanges.timestamp`
+ * among its `source_exchanges` ids, as unix seconds. NULL when nothing resolves.
+ * Uses json_each over the stored JSON array; `memories` must be in scope.
+ */
+export const EVENT_TS_SUBQUERY = `(
+  SELECT MIN(unixepoch(e.timestamp))
+  FROM json_each(memories.source_exchanges) AS j
+  JOIN exchanges AS e ON e.id = j.value
+)`;
+
+/**
+ * Populate memories.event_ts from source exchanges where it is still NULL.
+ *
+ * Transactional, idempotent (rows already populated are never rewritten) and
+ * content-neutral (only event_ts changes). Rows whose source_exchanges do
+ * not resolve to real exchange ids stay NULL and fall back to created_at at
+ * query time. Returns the number of rows updated.
+ */
+export function backfillEventTs(db: Database.Database): number {
+  const run = db.transaction(() => {
+    const result = db
+      .prepare(
+        `UPDATE memories SET event_ts = ${EVENT_TS_SUBQUERY}
+         WHERE event_ts IS NULL
+           AND source_exchanges IS NOT NULL
+           AND json_valid(source_exchanges)
+           AND json_type(source_exchanges) = 'array'
+           AND ${EVENT_TS_SUBQUERY} IS NOT NULL`,
+      )
+      .run();
+    return result.changes;
+  });
+  return run();
 }
 
 function createVecIfNeeded(

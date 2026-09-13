@@ -38,6 +38,7 @@ interface MemoryRow {
   source: string | null;
   scope: string | null;
   stability: number | null;
+  event_ts?: number | null;
 }
 
 interface ConflictRow {
@@ -70,6 +71,7 @@ function rowToMemory(row: MemoryRow): Memory {
     source: (row.source as MemorySource) ?? "user",
     scope: row.scope ?? "global",
     stability: row.stability ?? undefined,
+    eventTs: row.event_ts ?? undefined,
   };
 }
 
@@ -88,8 +90,30 @@ function rowToConflict(row: ConflictRow): Conflict {
 // ─── Memory CRUD ────────────────────────────────────────────────
 
 /**
+ * Resolve a memory's event timestamp from its source exchanges: the earliest
+ * `exchanges.timestamp` among the given ids, as unix seconds. Returns null
+ * when no id resolves (legacy index-style references, remembered facts with
+ * no sources) so the query layer falls back to created_at.
+ */
+export function resolveEventTs(
+  db: Database.Database,
+  sourceExchangeIds: readonly string[] | undefined,
+): number | null {
+  if (!sourceExchangeIds || sourceExchangeIds.length === 0) return null;
+  const ids = sourceExchangeIds.slice(0, 500);
+  const placeholders = ids.map(() => "?").join(",");
+  const row = db
+    .prepare(
+      `SELECT MIN(unixepoch(timestamp)) AS t FROM exchanges WHERE id IN (${placeholders})`,
+    )
+    .get(...ids) as { t: number | null } | undefined;
+  return row?.t ?? null;
+}
+
+/**
  * Insert a memory with its embedding, syncing memories, memories_fts,
- * and vec_memories tables atomically.
+ * and vec_memories tables atomically. event_ts is derived from the source
+ * exchanges unless the caller supplies it.
  */
 export function insertMemory(
   db: Database.Database,
@@ -101,8 +125,9 @@ export function insertMemory(
     db.prepare(`
       INSERT INTO memories
         (id, type, content, context, confidence, importance, access_count,
-         last_accessed, created_at, updated_at, source_exchanges, superseded_by, is_active, source, scope)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         last_accessed, created_at, updated_at, source_exchanges, superseded_by, is_active, source, scope,
+         event_ts)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       memory.id,
       memory.type,
@@ -119,6 +144,7 @@ export function insertMemory(
       memory.isActive ? 1 : 0,
       memory.source ?? "user",
       memory.scope ?? "global",
+      memory.eventTs ?? resolveEventTs(db, memory.sourceExchanges),
     );
 
     // 2. Get rowid and insert into FTS5
@@ -207,6 +233,12 @@ export function updateMemory(
     if (updates.sourceExchanges !== undefined) {
       setClauses.push("source_exchanges = ?");
       values.push(JSON.stringify(updates.sourceExchanges));
+      // Keep the denormalized event time in step with its sources
+      setClauses.push("event_ts = ?");
+      values.push(updates.eventTs ?? resolveEventTs(db, updates.sourceExchanges));
+    } else if (updates.eventTs !== undefined) {
+      setClauses.push("event_ts = ?");
+      values.push(updates.eventTs);
     }
 
     // Always update updated_at

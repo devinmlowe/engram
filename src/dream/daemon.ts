@@ -691,6 +691,7 @@ async function processConversation(
   }
 
   const exchanges = rows.map((row) => ({
+    id: row.id as string,
     index: row.exchange_index as number,
     userMessage: (row.user_message as string) || "",
     assistantMessage: (row.assistant_message as string) || "",
