@@ -32,6 +32,11 @@ export interface Memory {
   scope?: string;
   /** Persisted FSRS stability in days; undefined = type's initial stability. */
   stability?: number;
+  /**
+   * Event time (unix seconds): earliest source exchange timestamp. Undefined
+   * when no source exchange resolves — query-time falls back to createdAt.
+   */
+  eventTs?: number;
 }
 
 export interface Conflict {

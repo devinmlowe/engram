@@ -23,6 +23,7 @@ Multi-source search orchestration — combines episodic, semantic, and graph sea
 - `reranker.ts` — Cross-encoder reranking with BGE-reranker-base
 - `budget.ts` — Token budget tracking and enforcement
 - `format.ts` — Search result formatting for MCP/CLI output
+- `dates.ts` — Temporal recall: natural-language `dateHint` parser (deterministic, UTC), filed/event date basis, shared after/before/anniversary SQL filters used by both stores
 - `text.ts` — Full-text search utilities
 - `session.ts` — Stateful recall session management (Phase 6B)
 - `drill.ts` — Deep drill into search results (Phase 6B)

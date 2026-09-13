@@ -22,7 +22,7 @@ Extracts, consolidates, and retrieves structured knowledge from conversations �
 - `extractor` — LLM-powered fact extraction with prompt templates
 - `consolidator` — Deduplication, merge, and conflict detection
 - `memory` — Memory CRUD, similarity search, access tracking
-- `search` — Hybrid vector + FTS5 search with RRF fusion
+- `search` — Hybrid vector + FTS5 search with RRF fusion; honors after/before on both candidate paths under a `filed` (created_at) or `event` (event_ts → earliest source exchange) basis
 - `nli` — NLI contradiction detection via DeBERTa
 - `decay` — FSRS-inspired retrievability decay and pruning
 - `adaptive-chunker` — Content-aware chunk sizing (Phase 6A)

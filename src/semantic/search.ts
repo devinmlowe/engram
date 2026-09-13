@@ -18,6 +18,13 @@ import { embedQuery } from "../_core/embeddings/index.js";
 import { rrfFuse, normalizeMinMaxFloored } from "../_core/search/rrf.js";
 import { computeRetrievalScore, computeConfidence } from "./decay.js";
 import { buildFtsMatchQuery } from "../_core/search/fts-query.js";
+import {
+  buildEpochDateFilter,
+  hasDateFilter,
+  memoryBasisExpr,
+  toIsoDay,
+  type DateFilterInput,
+} from "../_core/search/dates.js";
 
 // ─── Row Type Helpers ───────────────────────────────────────────
 
@@ -37,6 +44,7 @@ interface MemoryRow {
   is_active: number;
   scope: string | null;
   stability: number | null;
+  event_ts?: number | null;
 }
 
 function rowToMemory(row: MemoryRow): Memory {
@@ -58,6 +66,7 @@ function rowToMemory(row: MemoryRow): Memory {
     isActive: Boolean(row.is_active),
     scope: row.scope ?? "global",
     stability: row.stability ?? undefined,
+    eventTs: row.event_ts ?? undefined,
   };
 }
 
@@ -70,13 +79,25 @@ interface RankedItem {
 
 // ─── Vector Search ──────────────────────────────────────────────
 
+/** Temporal predicate shared by both candidate paths. */
+interface DateScope {
+  /** SQL expression for the basis timestamp, aliased on `m`. */
+  basisExpr: string;
+  filter: DateFilterInput;
+}
+
 /**
  * Vector search on vec_memories. Returns ranked items by distance (ascending).
+ *
+ * vec0 cannot filter, so with a date scope the nearest-neighbour window is
+ * post-filtered against `memories` before fusion — the same shape the
+ * episodic store uses, so both stores agree on edge semantics.
  */
 function vectorSearchMemories(
   db: Database.Database,
   queryEmbedding: number[],
   limit: number,
+  dateScope?: DateScope,
 ): RankedItem[] {
   const embeddingBuf = Buffer.from(new Float32Array(queryEmbedding).buffer);
 
@@ -89,7 +110,19 @@ function vectorSearchMemories(
     )
     .all(embeddingBuf, limit) as Array<{ id: string; distance: number }>;
 
-  return rows.map((row, idx) => ({
+  let filtered = rows;
+  if (dateScope && rows.length > 0) {
+    const ids = rows.map((r) => r.id);
+    const placeholders = ids.map(() => "?").join(",");
+    const { clause, params } = buildEpochDateFilter(dateScope.basisExpr, dateScope.filter);
+    const kept = db
+      .prepare(`SELECT m.id FROM memories AS m WHERE m.id IN (${placeholders}) ${clause}`)
+      .all(...ids, ...params) as Array<{ id: string }>;
+    const keep = new Set(kept.map((r) => r.id));
+    filtered = rows.filter((r) => keep.has(r.id));
+  }
+
+  return filtered.map((row, idx) => ({
     id: row.id,
     rank: idx + 1,
   }));
@@ -124,7 +157,7 @@ function ftsSearchMemories(
   db: Database.Database,
   query: string,
   limit: number,
-  filters: { types?: string[]; scopes?: string[] } = {},
+  filters: { types?: string[]; scopes?: string[]; dateScope?: DateScope } = {},
 ): RankedItem[] {
   // Bounded, de-noised OR query (stop words dropped, term count capped) —
   // see _core/search/fts-query.ts for why an unbounded OR is catastrophic.
@@ -142,6 +175,17 @@ function ftsSearchMemories(
   if (filters.scopes && filters.scopes.length > 0) {
     clauses.push(`m.scope IN (${filters.scopes.map(() => "?").join(", ")})`);
     params.push(...filters.scopes);
+  }
+  if (filters.dateScope) {
+    const { clause, params: dateParams } = buildEpochDateFilter(
+      filters.dateScope.basisExpr,
+      filters.dateScope.filter,
+    );
+    if (clause) {
+      // clause is "AND a AND b" — strip the leading AND for the clause list
+      clauses.push(clause.replace(/^AND /, ""));
+      params.push(...dateParams);
+    }
   }
   params.push(limit);
 
@@ -182,15 +226,33 @@ export async function searchSemantic(
   db: Database.Database,
   options: SearchOptions,
 ): Promise<SearchResult[]> {
-  const { query, types, scopes, limit = 10 } = options;
+  const {
+    query,
+    types,
+    scopes,
+    limit = 10,
+    after,
+    before,
+    anniversary,
+    dateBasis = "filed",
+  } = options;
 
   if (!query || query.trim().length === 0) {
     return [];
   }
 
+  // Temporal scope: applied identically to both candidate paths so RRF
+  // fusion stays balanced. "filed" = created_at; "event" = earliest source
+  // exchange (event_ts) with created_at as the fallback.
+  const dateFilter: DateFilterInput = { after, before, anniversary };
+  const dateScope: DateScope | undefined = hasDateFilter(dateFilter)
+    ? { basisExpr: memoryBasisExpr(dateBasis, "m"), filter: dateFilter }
+    : undefined;
+
   const hasFilter =
     (types !== undefined && types.length > 0) ||
-    (scopes !== undefined && scopes.length > 0);
+    (scopes !== undefined && scopes.length > 0) ||
+    dateScope !== undefined;
 
   // 1. Embed query
   const queryEmbedding = await embedQuery(query);
@@ -208,11 +270,11 @@ export async function searchSemantic(
   let memoriesWithScores: Array<{ memory: Memory; rrfScore: number }> = [];
 
   for (;;) {
-    // 2. Vector search
-    const vectorResults = vectorSearchMemories(db, queryEmbedding, fetchK);
+    // 2. Vector search (date scope post-filtered against memories)
+    const vectorResults = vectorSearchMemories(db, queryEmbedding, fetchK, dateScope);
 
     // 3. FTS search (filters applied in SQL)
-    const ftsResults = ftsSearchMemories(db, query, fetchK, { types, scopes });
+    const ftsResults = ftsSearchMemories(db, query, fetchK, { types, scopes, dateScope });
 
     // 4. RRF fusion
     const fused = rrfFuse(vectorResults, ftsResults);
@@ -286,6 +348,17 @@ export async function searchSemantic(
         importance: r.memory.importance,
         context: r.memory.context,
         accessCount: r.memory.accessCount,
+        // Temporal transparency: the day this result was filtered on under
+        // the active basis, plus the raw timestamps for callers that need them
+        date: toIsoDay(
+          new Date(
+            (dateBasis === "event"
+              ? (r.memory.eventTs ?? r.memory.createdAt)
+              : r.memory.createdAt) * 1000,
+          ),
+        ),
+        createdAt: r.memory.createdAt,
+        eventTs: r.memory.eventTs,
       },
       tokenEstimate: Math.ceil(r.memory.content.length / 4) + 10,
     }));

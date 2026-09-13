@@ -13,6 +13,7 @@ import {
 import { budgetResults } from "../_core/search/orchestrator.js";
 import { allocateBudget } from "../_core/search/budget.js";
 import { buildFtsMatchQuery } from "../_core/search/fts-query.js";
+import { buildIsoDateFilter, hasDateFilter, type DateFilterInput } from "../_core/search/dates.js";
 
 // ─── Re-exports ─────────────────────────────────────────────────
 // Preserve backward compatibility for existing imports from episodic/search.
@@ -23,28 +24,13 @@ export { budgetResults, searchMultiSource } from "../_core/search/orchestrator.j
 // ─── Hybrid Search ─────────────────────────────────────────────
 
 /**
- * Build a date filter clause and params for use in SQL.
+ * Date filter over exchanges.timestamp (ISO text). Edge semantics live in
+ * _core/search/dates.ts and are shared with the semantic store. The
+ * exchange timestamp is both the filed and the event time, so `dateBasis`
+ * does not change episodic behaviour.
  */
-function buildDateFilter(
-  after?: string,
-  before?: string,
-): { clause: string; params: unknown[] } {
-  const conditions: string[] = [];
-  const params: unknown[] = [];
-
-  if (after) {
-    conditions.push("e.timestamp >= ?");
-    params.push(after);
-  }
-  if (before) {
-    conditions.push("e.timestamp <= ?");
-    params.push(before);
-  }
-
-  return {
-    clause: conditions.length > 0 ? `AND ${conditions.join(" AND ")}` : "",
-    params,
-  };
+function buildDateFilter(filter: DateFilterInput): { clause: string; params: unknown[] } {
+  return buildIsoDateFilter("e.timestamp", filter);
 }
 
 /**
@@ -54,8 +40,7 @@ function vectorSearch(
   db: Database.Database,
   queryEmbedding: number[],
   limit: number,
-  after?: string,
-  before?: string,
+  dateFilter: DateFilterInput = {},
 ): RankedItem[] {
   const embeddingBuf = Buffer.from(new Float32Array(queryEmbedding).buffer);
 
@@ -74,12 +59,12 @@ function vectorSearch(
 
   // Post-filter by date if needed
   let filtered = rows;
-  if (after || before) {
+  if (hasDateFilter(dateFilter)) {
     const ids = rows.map((r) => r.id);
     if (ids.length === 0) return [];
 
     const placeholders = ids.map(() => "?").join(",");
-    const { clause, params } = buildDateFilter(after, before);
+    const { clause, params } = buildDateFilter(dateFilter);
 
     const dateFiltered = db
       .prepare(
@@ -105,8 +90,7 @@ function ftsSearch(
   db: Database.Database,
   query: string,
   limit: number,
-  after?: string,
-  before?: string,
+  dateFilter: DateFilterInput = {},
 ): RankedItem[] {
   // Bounded, de-noised OR query (stop words dropped, term count capped) —
   // see _core/search/fts-query.ts for why an unbounded OR is catastrophic.
@@ -114,7 +98,7 @@ function ftsSearch(
 
   if (!sanitized) return [];
 
-  const { clause, params } = buildDateFilter(after, before);
+  const { clause, params } = buildDateFilter(dateFilter);
 
   try {
     const rows = db
@@ -204,7 +188,9 @@ export async function searchEpisodic(
     budget = 1500,
     after,
     before,
+    anniversary,
   } = options;
+  const dateFilter: DateFilterInput = { after, before, anniversary };
 
   const fetchK = Math.max(limit, 20);
   let vectorResults: RankedItem[] = [];
@@ -213,12 +199,12 @@ export async function searchEpisodic(
   // 1. Vector search
   if (mode === "vector" || mode === "hybrid") {
     const queryEmbedding = await embedQuery(query);
-    vectorResults = vectorSearch(db, queryEmbedding, fetchK, after, before);
+    vectorResults = vectorSearch(db, queryEmbedding, fetchK, dateFilter);
   }
 
   // 2. FTS search
   if (mode === "text" || mode === "hybrid") {
-    ftsResults = ftsSearch(db, query, fetchK, after, before);
+    ftsResults = ftsSearch(db, query, fetchK, dateFilter);
   }
 
   // 3. Fuse results

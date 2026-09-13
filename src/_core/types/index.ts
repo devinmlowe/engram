@@ -29,12 +29,39 @@ export interface SearchOptions {
   mode?: SearchMode;
   limit?: number;
   budget?: number; // max tokens in response
-  after?: string; // ISO date
-  before?: string; // ISO date
+  after?: string; // ISO date (YYYY-MM-DD), inclusive of that day's start
+  before?: string; // ISO date (YYYY-MM-DD), start-of-day bound (that day excluded)
   types?: MemoryType[];
   depth?: "shallow" | "deep";
   /** Restrict semantic results to these tenant scopes; omit for all (ADR-010). */
   scopes?: string[];
+  /**
+   * Which timestamp after/before/anniversary apply to. "filed" (default) =
+   * when the memory was recorded; "event" = when the described events
+   * happened (semantic: earliest source exchange, falling back to created_at;
+   * episodic: identical to "filed" since the exchange timestamp is the event).
+   */
+  dateBasis?: DateBasis;
+  /** Match rows whose basis timestamp falls on this month/day in any year. */
+  anniversary?: Anniversary;
+}
+
+export type DateBasis = "filed" | "event";
+
+export interface Anniversary {
+  month: number; // 1-12
+  day: number; // 1-31
+}
+
+/** Temporal filter that was actually applied to a recall (transparency). */
+export interface DateFilterMeta {
+  basis: DateBasis;
+  after?: string;
+  before?: string;
+  anniversary?: Anniversary;
+  hint?: string;
+  note?: string;
+  overridden?: Array<"after" | "before">;
 }
 
 export interface SearchResult {
@@ -51,6 +78,8 @@ export interface RecallResponse {
   tokensUsed: number;
   totalResults: number;
   query: string;
+  /** Present whenever a date filter (explicit, hinted, or anniversary) was requested. */
+  dateFilter?: DateFilterMeta;
 }
 
 // ─── Reranking ──────────────────────────────────────────────────
