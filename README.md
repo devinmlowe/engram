@@ -163,6 +163,8 @@ engram stats           # Database statistics
 engram health          # System health check
 engram migrate         # Migrate data from legacy superpowers DB
 engram validate        # Validate migration integrity
+engram backfill-event-ts  # Backfill event-time timestamps (temporal recall)
+engram mcp             # Start the MCP server (stdio; see Transports section)
 ```
 
 ## Web Visualization

@@ -136,6 +136,21 @@ recall("how did we set up the database?")
 
 Results are token-budgeted and formatted as XML for optimal Claude consumption.
 
+**Temporal recall.** Recall accepts natural-language date hints and two date
+semantics — "memories IN a period" (when they were recorded) and "memories
+ABOUT a period" (when the events happened, via source-exchange timestamps):
+
+```
+recall("launchd daemon work", dateHint: "last week")
+recall("project decisions", dateHint: "in March 2026", dateBasis: "event")
+recall("engram", dateHint: "on this day last year")   // anniversary flashback
+```
+
+Exact ISO bounds (`after`/`before` `YYYY-MM-DD`) are also accepted and override
+a date hint when both are passed. Applied filters are reported in the response
+as `<date_filter …>` metadata. In the CLI: `engram search <query> --date-hint
+"last month" --date-basis event` (also `--after`/`--before`).
+
 ### remember — Store Knowledge
 
 Explicitly store a fact, preference, decision, or other knowledge that should persist across conversations. Automatically deduplicates against existing memories.

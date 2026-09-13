@@ -44,9 +44,9 @@ For large file analysis, combine tools in this order:
 3. `scan_file` → exhaustive regex search for enumeration tasks (breadth)
 4. `fetch_snippets` → read specific line ranges for detail extraction (depth)
 
-## CLI Commands (14)
+## CLI Commands (16)
 
-`init`, `sync`, `search`, `remember`, `extract`, `dream`, `reflect`, `explore`, `entities`, `relationships`, `stats`, `health`, `migrate`, `validate`
+`init`, `sync`, `search`, `remember`, `extract`, `dream`, `reflect`, `explore`, `entities`, `relationships`, `stats`, `health`, `migrate`, `validate`, `backfill-event-ts`, `mcp`
 
 ## Web Visualization
 
