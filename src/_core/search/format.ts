@@ -6,7 +6,7 @@
  * Phase 1 core extraction.
  */
 
-import type { SearchResult, RecallResponse } from "../types/index.js";
+import type { SearchResult, RecallResponse, DateFilterMeta } from "../types/index.js";
 
 // ─── XML Escaping ────────────────────────────────────────────────
 
@@ -32,9 +32,13 @@ export function formatSemanticXml(result: SearchResult): string {
     importance >= 0.8 ? "high" : importance >= 0.5 ? "medium" : "low";
   const score = Math.round(result.score * 100);
 
+  // Basis date (present since temporal recall) — lets agents see when a
+  // memory was filed / happened without a follow-up call
+  const date = typeof meta.date === "string" && meta.date ? ` date="${escapeXml(meta.date)}"` : "";
+
   const lines: string[] = [];
   lines.push(
-    `  <semantic type="${escapeXml(type)}" confidence="${confidence}%" importance="${escapeXml(importanceLabel)}" relevance="${score}%">`,
+    `  <semantic type="${escapeXml(type)}" confidence="${confidence}%" importance="${escapeXml(importanceLabel)}" relevance="${score}%"${date}>`,
   );
   lines.push(`    ${escapeXml(result.content)}`);
   lines.push("  </semantic>");
@@ -61,6 +65,29 @@ export function formatGraphXml(result: SearchResult): string {
   return lines.join("\n");
 }
 
+// ─── Date filter XML ─────────────────────────────────────────────
+
+/**
+ * Describe the temporal scope that was applied to a recall, so agents can
+ * see exactly what a dateHint resolved to (and whether explicit bounds won).
+ */
+export function formatDateFilterXml(df: DateFilterMeta): string {
+  const attrs: string[] = [`basis="${escapeXml(df.basis)}"`];
+  if (df.after) attrs.push(`after="${escapeXml(df.after)}"`);
+  if (df.before) attrs.push(`before="${escapeXml(df.before)}"`);
+  if (df.anniversary) {
+    const mm = String(df.anniversary.month).padStart(2, "0");
+    const dd = String(df.anniversary.day).padStart(2, "0");
+    attrs.push(`anniversary="${mm}-${dd}"`);
+  }
+  if (df.hint) attrs.push(`hint="${escapeXml(df.hint)}"`);
+  if (df.overridden && df.overridden.length > 0) {
+    attrs.push(`overridden="${escapeXml(df.overridden.join(","))}"`);
+  }
+  if (df.note) attrs.push(`note="${escapeXml(df.note)}"`);
+  return `  <date_filter ${attrs.join(" ")}/>`;
+}
+
 // ─── Recall XML ──────────────────────────────────────────────────
 
 /**
@@ -71,6 +98,10 @@ export function formatRecallXml(response: RecallResponse): string {
   lines.push(
     `<engram_memory query="${escapeXml(response.query)}" tokens_used="${response.tokensUsed}" total_results="${response.totalResults}">`,
   );
+
+  if (response.dateFilter) {
+    lines.push(formatDateFilterXml(response.dateFilter));
+  }
 
   for (const result of response.results) {
     if (result.source === "semantic") {

@@ -13,7 +13,10 @@ import type {
   RecallResponse,
   EngramConfig,
   SearchResult,
+  DateBasis,
+  Anniversary,
 } from "../../_core/types/index.js";
+import { resolveDateFilter } from "../../_core/search/dates.js";
 import {
   searchMultiSource,
   formatRecallXml,
@@ -36,6 +39,18 @@ export interface UnifiedSearchParams {
   depth?: "shallow" | "deep";
   /** Restrict semantic results to these tenant scopes (ADR-010). */
   scopes?: string[];
+  /**
+   * Natural-language date window ("last week", "in March", "this day last
+   * year", "on this day"). Explicit after/before win over the hint; the
+   * applied filter is echoed back in RecallResponse.dateFilter.
+   */
+  dateHint?: string;
+  /** "filed" (default) = when recorded; "event" = when the events happened. */
+  dateBasis?: DateBasis;
+  /** Explicit anniversary (month/day across all years); usually set via dateHint. */
+  anniversary?: Anniversary;
+  /** Reference "now" for hint parsing — injectable for deterministic tests. */
+  now?: Date;
 }
 
 export interface RecallSessionResult {
@@ -65,7 +80,21 @@ export async function unifiedSearch(
   params: UnifiedSearchParams,
   config?: EngramConfig,
 ): Promise<RecallResponse> {
-  return searchMultiSource(
+  // Resolve the temporal scope once here so MCP, CLI and HTTP agree:
+  // explicit after/before override the hint, and whatever was applied is
+  // reported back on the response (transparency beats magic).
+  const dateFilter = resolveDateFilter(
+    {
+      after: params.after,
+      before: params.before,
+      dateHint: params.dateHint,
+      dateBasis: params.dateBasis,
+      anniversary: params.anniversary,
+    },
+    params.now ?? new Date(),
+  );
+
+  const response = await searchMultiSource(
     db,
     {
       query: params.query,
@@ -73,13 +102,18 @@ export async function unifiedSearch(
       mode: params.mode ?? "hybrid",
       limit: params.limit,
       budget: params.budget ?? 1500,
-      after: params.after,
-      before: params.before,
+      after: dateFilter?.after,
+      before: dateFilter?.before,
+      anniversary: dateFilter?.anniversary,
+      dateBasis: dateFilter?.basis,
       depth: params.depth,
       scopes: params.scopes,
     },
     config,
   );
+
+  if (dateFilter) response.dateFilter = dateFilter;
+  return response;
 }
 
 // ─── Session-Based Recall ───────────────────────────────────────

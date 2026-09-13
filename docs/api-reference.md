@@ -18,12 +18,21 @@ Retrieve relevant memories from past conversations and extracted knowledge. Uses
 |-----------|------|----------|---------|-------------|
 | `query` | string | yes | — | Search query (min 2 characters) |
 | `budget` | number | no | `1500` | Max tokens in response (100-5000) |
-| `after` | string | no | — | Only results after date (`YYYY-MM-DD`) |
-| `before` | string | no | — | Only results before date (`YYYY-MM-DD`) |
+| `after` | string | no | — | Only results on/after this date (`YYYY-MM-DD`, UTC) |
+| `before` | string | no | — | Only results before this date (`YYYY-MM-DD`, UTC; that day is excluded) |
+| `dateHint` | string | no | — | Natural-language window: `today`, `yesterday`, `this week`, `last month`, `3 days ago`, `this day last year`, `in March`, `March 2026`, `since last week`, `before March`, `on this day`, ISO `2026-03` / `2026-03-01`. Explicit `after`/`before` win over the hint. Unrecognized hints apply no filter and are reported in `<date_filter note>` |
+| `dateBasis` | string | no | `"filed"` | What dates refer to. `"filed"` = when the memory was recorded (memories **in** March). `"event"` = when the described events happened, via the earliest source-exchange timestamp with `created_at` as fallback (memories **about** March). Episodic results are identical under both |
 | `depth` | string | no | `"shallow"` | `"shallow"` or `"deep"` |
 | `sources` | string[] | no | `["episodic", "semantic"]` | Memory stores to search: `"episodic"`, `"semantic"`, `"graph"` |
 
-**Output:** XML-formatted results within the token budget.
+**Output:** XML-formatted results within the token budget. When any date filter was requested the first child is a `<date_filter>` element describing exactly what was applied (`basis`, `after`, `before`, `anniversary="MM-DD"`, `hint`, `overridden`, `note`). Semantic results carry a `date` attribute: the basis date they were filtered on.
+
+Temporal semantics: all boundaries are UTC; `after` is inclusive of the day's start, `before` is a start-of-day bound (the named day is excluded), so `dateHint: "in March"` resolves to `after=2026-03-01 before=2026-04-01`. `"on this day"` is not a range — it matches the same month/day across every year (`anniversary`).
+
+```json
+{ "query": "project decisions", "dateHint": "this day last year" }
+{ "query": "launchd daemon work", "dateHint": "last week", "dateBasis": "event" }
+```
 
 ```xml
 <engram_recall query="database setup" results="3" tokens="842">
@@ -198,9 +207,12 @@ engram search "database setup" [options]
 |------|-------------|
 | `-l, --limit <n>` | Max results (default: `10`) |
 | `-m, --mode <mode>` | Search mode: `hybrid`, `vector`, `text` (default: `hybrid`) |
-| `--after <date>` | Only results after date (`YYYY-MM-DD`) |
-| `--before <date>` | Only results before date (`YYYY-MM-DD`) |
+| `--after <date>` | Only results on/after date (`YYYY-MM-DD`, UTC) |
+| `--before <date>` | Only results before date (`YYYY-MM-DD`, UTC; that day excluded) |
+| `--date-hint <phrase>` | Natural-language window (`"last week"`, `"in March"`, `"this day last year"`, `"on this day"`); explicit `--after`/`--before` win |
+| `--date-basis <basis>` | `filed` (when recorded, default) or `event` (when the described events happened) |
 | `--budget <tokens>` | Token budget for results (default: `1500`) |
+| `--json` | Print the raw `RecallResponse` as JSON (ids, metadata, `dateFilter`) |
 
 ---
 

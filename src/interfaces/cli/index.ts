@@ -57,9 +57,19 @@ program
   .description("Search indexed conversations")
   .option("-l, --limit <n>", "Max results", "10")
   .option("-m, --mode <mode>", "Search mode: hybrid, vector, text", "hybrid")
-  .option("--after <date>", "Only results after date (YYYY-MM-DD)")
-  .option("--before <date>", "Only results before date (YYYY-MM-DD)")
+  .option("--after <date>", "Only results on/after date (YYYY-MM-DD)")
+  .option("--before <date>", "Only results before date (YYYY-MM-DD, that day excluded)")
+  .option(
+    "--date-hint <phrase>",
+    'Natural-language date window: "last week", "in March", "this day last year", "on this day"',
+  )
+  .option(
+    "--date-basis <basis>",
+    "Which timestamp dates apply to: filed (when recorded) or event (when it happened)",
+    "filed",
+  )
   .option("--budget <tokens>", "Token budget for results", "1500")
+  .option("--json", "Print the raw RecallResponse as JSON (ids, metadata, dateFilter)")
   .action(async (query, opts) => {
     const { unifiedSearch, formatRecallXml } = await import(
       "../shared/search.js"
@@ -69,6 +79,11 @@ program
     const db = getDatabase(config);
 
     try {
+      if (opts.dateBasis !== "filed" && opts.dateBasis !== "event") {
+        console.error(`Invalid --date-basis "${opts.dateBasis}" (expected filed or event)`);
+        process.exit(1);
+      }
+
       await initEmbeddings(config);
 
       const response = await unifiedSearch(db, {
@@ -78,10 +93,21 @@ program
         budget: parseInt(opts.budget, 10),
         after: opts.after,
         before: opts.before,
+        dateHint: opts.dateHint,
+        dateBasis: opts.dateBasis as "filed" | "event",
       }, config);
 
+      if (opts.json) {
+        console.log(JSON.stringify(response, null, 2));
+        return;
+      }
+
       if (response.results.length === 0) {
-        console.log("No results found.");
+        const df = response.dateFilter;
+        const scope = df
+          ? ` (date filter: basis=${df.basis}${df.after ? ` after=${df.after}` : ""}${df.before ? ` before=${df.before}` : ""}${df.anniversary ? ` anniversary=${df.anniversary.month}-${df.anniversary.day}` : ""}${df.note ? `; ${df.note}` : ""})`
+          : "";
+        console.log(`No results found.${scope}`);
         return;
       }
 
@@ -197,6 +223,7 @@ program
 
       // Convert rows to ConversationExchange format
       const exchanges = rows.map((row) => ({
+        id: row.id as string,
         index: row.exchange_index as number,
         userMessage: (row.user_message as string) || "",
         assistantMessage: (row.assistant_message as string) || "",

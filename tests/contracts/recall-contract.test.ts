@@ -109,3 +109,32 @@ describe("new tools are properly defined", () => {
     }
   });
 });
+
+describe("temporal recall surface", () => {
+  it("recall accepts dateHint and dateBasis in both the zod schema and the tool definition", () => {
+    const schemaSection = serverSource.substring(
+      serverSource.indexOf("const RecallInputSchema"),
+      serverSource.indexOf("const RememberInputSchema"),
+    );
+    expect(schemaSection).toContain("dateHint");
+    expect(schemaSection).toContain('dateBasis: z.enum(["filed", "event"])');
+
+    const recallSection = serverSource.substring(
+      serverSource.indexOf('name: "recall"'),
+      serverSource.indexOf('name: "remember"'),
+    );
+    expect(recallSection).toContain("dateHint: {");
+    expect(recallSection).toContain('enum: ["filed", "event"]');
+  });
+
+  it("recall handler forwards dateHint/dateBasis to unifiedSearch (explicit after/before still passed)", () => {
+    const handler = serverSource.substring(
+      serverSource.indexOf('if (name === "recall")'),
+      serverSource.indexOf('if (name === "remember")'),
+    );
+    expect(handler).toContain("dateHint: params.dateHint");
+    expect(handler).toContain("dateBasis: params.dateBasis");
+    expect(handler).toContain("after: params.after");
+    expect(handler).toContain("before: params.before");
+  });
+});

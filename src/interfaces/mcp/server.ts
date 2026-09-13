@@ -120,6 +120,8 @@ const RecallInputSchema = z.object({
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD")
     .optional(),
+  dateHint: z.string().trim().min(1).max(200).optional(),
+  dateBasis: z.enum(["filed", "event"]).optional(),
   depth: z.enum(["shallow", "deep"]).optional(),
   sources: z
     .array(z.enum(["episodic", "semantic", "graph"]))
@@ -270,7 +272,11 @@ function registerToolHandlers(srv: Server, callTool: ToolHandler = handleToolCal
         "Retrieve relevant memories from past Claude Code conversations and " +
         "extracted knowledge. Uses hybrid semantic + keyword search with " +
         "token-budgeted output across episodic and semantic memory stores. " +
-        "Search BEFORE every task to recover decisions, solutions, and context.",
+        "Search BEFORE every task to recover decisions, solutions, and context. " +
+        "Time-scope with after/before (YYYY-MM-DD) or a natural-language dateHint " +
+        "(\"last week\", \"in March\", \"this day last year\", \"on this day\"); " +
+        "dateBasis picks whether dates mean when a memory was filed or when the " +
+        "events it describes happened. The applied window is echoed in <date_filter>.",
       inputSchema: {
         type: "object",
         properties: {
@@ -290,7 +296,28 @@ function registerToolHandlers(srv: Server, callTool: ToolHandler = handleToolCal
           before: {
             type: "string",
             pattern: "^\\d{4}-\\d{2}-\\d{2}$",
-            description: "Only results before this date (YYYY-MM-DD)",
+            description: "Only results before this date (YYYY-MM-DD; that day is excluded)",
+          },
+          dateHint: {
+            type: "string",
+            maxLength: 200,
+            description:
+              "Natural-language date window, resolved in UTC: today, yesterday, " +
+              "this/last week|month|year, N days|weeks|months ago, this day last year, " +
+              "in <month>, <month> <year>, since <phrase>, before <phrase>, " +
+              "on this day (same month/day across all years), or an ISO date/month. " +
+              "Explicit after/before take precedence over the hint. Unrecognized " +
+              "hints apply no filter and are reported in <date_filter note>.",
+          },
+          dateBasis: {
+            type: "string",
+            enum: ["filed", "event"],
+            default: "filed",
+            description:
+              "What the dates refer to: 'filed' = when the memory was recorded " +
+              "(memories IN March); 'event' = when the described events happened, " +
+              "via source-exchange timestamps (memories ABOUT March). Episodic " +
+              "results are identical under both.",
           },
           depth: {
             type: "string",
@@ -874,6 +901,8 @@ export async function handleToolCall(name: string, args: unknown): Promise<ToolR
         budget: params.budget ?? 1500,
         after: params.after,
         before: params.before,
+        dateHint: params.dateHint,
+        dateBasis: params.dateBasis,
         depth: params.depth ?? "shallow",
         scopes: scoping.readScopes,
       }, config);
