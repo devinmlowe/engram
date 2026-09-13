@@ -440,6 +440,43 @@ program
     }
   });
 
+// ─── backfill-event-ts ─────────────────────────────────────────
+
+program
+  .command("backfill-event-ts")
+  .description(
+    "Recover event_ts (event-time basis) for legacy dream memories from the " +
+    "pipeline's pending-facts files; only NULL event_ts rows are written",
+  )
+  .option("-n, --dry-run", "Report what would change without writing")
+  .option(
+    "--tmp-dir <path>",
+    "Directory holding pending-facts-*.json (default: <dataDir>/tmp)",
+  )
+  .action(async (opts) => {
+    const { backfillEventTsFromPendingFacts } = await import(
+      "../../migration/backfill-event-ts.js"
+    );
+    const config = loadConfig();
+    const db = getDatabase(config);
+    try {
+      const tmpDir = opts.tmpDir ?? join(config.dataDir, "tmp");
+      const before = db
+        .prepare("SELECT COUNT(*) AS total, SUM(event_ts IS NOT NULL) AS dated FROM memories")
+        .get() as { total: number; dated: number };
+      const r = backfillEventTsFromPendingFacts(db, tmpDir, { dryRun: opts.dryRun });
+      const after = db
+        .prepare("SELECT COUNT(*) AS total, SUM(event_ts IS NOT NULL) AS dated FROM memories")
+        .get() as { total: number; dated: number };
+      console.log(`${r.dryRun ? "[dry run] " : ""}event_ts backfill from ${tmpDir}`);
+      console.log(`  files: ${r.files}  facts: ${r.facts}  with sources: ${r.factsWithSources}  unresolved: ${r.unresolvedFacts}`);
+      console.log(`  memories matched: ${r.matched}  ${r.dryRun ? "would update" : "updated"}: ${r.updated}  already dated: ${r.alreadySet}`);
+      console.log(`  memories: ${before.total} → ${after.total}  dated: ${before.dated ?? 0} → ${after.dated ?? 0}`);
+    } finally {
+      closeDatabase();
+    }
+  });
+
 // ─── init ──────────────────────────────────────────────────────
 
 program

@@ -336,6 +336,16 @@ engram stats
 
 ---
 
+### engram backfill-event-ts
+
+Recover `memories.event_ts` (the `event` date basis) for legacy dream-extracted memories, whose `source_exchanges` hold model exchange indexes rather than ids. Uses the dream pipeline's `<dataDir>/tmp/pending-facts-*.json` files to map fact content → conversation → exchange timestamp (earliest evidence). Writes only `event_ts`, only where NULL; idempotent.
+
+```bash
+engram backfill-event-ts [--dry-run] [--tmp-dir <path>]
+```
+
+---
+
 ### engram migrate
 
 Migrate data from the superpowers conversation-index database.
