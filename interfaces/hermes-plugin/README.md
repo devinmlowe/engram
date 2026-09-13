@@ -47,21 +47,27 @@ interfaces/hermes-plugin/
 ├── __init__.py            # provider + minimal MCP client (stdlib only)
 ├── plugin.yaml            # manifest (name/version/description)
 ├── README.md
-├── deploy.sh              # copies runtime files into each profile's plugins dir
+├── deploy.sh              # copies runtime files into $HERMES_HOME (and optional profiles)
 └── tests/test_provider.py # contract tests, HTTP mocked
 ```
 
 ## Deploy
 
 ```sh
+# default profile only ($HERMES_HOME, default ~/.hermes)
 interfaces/hermes-plugin/deploy.sh
+
+# also deploy to named profiles
+ENGRAM_PLUGIN_PROFILES="career pmp" interfaces/hermes-plugin/deploy.sh
 ```
 
 Copies (not symlinks) `__init__.py`, `plugin.yaml`, and `README.md` into
-`~/.hermes/plugins/engram/` and
-`~/.hermes/profiles/<profile>/plugins/engram/` for each profile in `PROFILES` (profiles
-that do not exist are skipped). Restart the gateways afterwards so running
-agents pick up the new code.
+`$HERMES_HOME/plugins/engram/`. When `ENGRAM_PLUGIN_PROFILES` is set to a
+space-separated list of profile names, the same files are also copied into
+`$HERMES_HOME/profiles/<name>/plugins/engram/` for each name (profiles that
+do not exist are skipped). With the variable unset the script deploys to the
+default profile only and prints a hint. Restart the gateways afterwards so
+running agents pick up the new code.
 
 ## Tests
 
