@@ -2,3 +2,6 @@
 # The Hermes-plugin e2e must launch the BUILT MCP server — allow just that path.
 !dist/interfaces/mcp/server.js
 !dist/interfaces/mcp/worker.js
+# Temporal-recall verify (/tmp/engram-temporal-verify.sh) runs the BUILT CLI for the
+# T6/T7 end-to-end date-hint checks — allow just that entry point.
+!dist/interfaces/cli/index.js
