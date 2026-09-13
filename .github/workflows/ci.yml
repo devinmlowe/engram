@@ -25,6 +25,19 @@ jobs:
       # exercise the built entry points.
       - run: npm ci
 
+      # Cache the ONNX model weights that @xenova/transformers downloads on
+      # first use (all-MiniLM-L6-v2, bge-reranker-base, ...). The library's
+      # default cacheDir is <package dir>/.cache, i.e. inside node_modules, so
+      # this step must run AFTER `npm ci` (which wipes node_modules) and
+      # before the tests that trigger the downloads.
+      - name: Cache transformer model downloads
+        uses: actions/cache@v4
+        with:
+          path: node_modules/@xenova/transformers/.cache
+          key: ${{ runner.os }}-transformers-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-transformers-
+
       - run: npm run lint
 
       # KNOWN ISSUE: tests/deployment/paths.test.ts has 3 pre-existing failures
