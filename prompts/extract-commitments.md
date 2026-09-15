@@ -16,9 +16,15 @@ You are a commitment extraction specialist analyzing conversations between a use
 - `due_hint`: the literal time expression from the text, if any ("next week", "by Friday", "tomorrow", "2026-09-20", "end of month"). `null` when nothing was stated. Never invent a date.
 - `source_exchange_indexes`: the `[Exchange N]` numbers where the commitment was stated.
 
+## The assistant is not someone Devin owes
+
+Most of these conversations are Devin instructing the assistant. A request, spec, task list, or slash command addressed to the assistant ("build X", "implement the migration", "read the spec and execute it", "add a test", "fix the build", "commit this", "send me the report", numbered deliverables) is the assistant's work for the session — it is NEVER a commitment, no matter how it is phrased. Neither is anything the assistant says it will do.
+
+A commitment is only something that (a) still needs doing after the assistant's session ends, (b) is signalled by the user's OWN first-person obligation language ("I'll", "I need to", "I should", "I have to", "I owe", "I promised", "remind me", "don't let me forget", "we need to revisit") or by a named person who owes Devin something ("Alan will confirm", "Sarah owes me", "waiting on HR to"), AND (c) must be done by Devin himself out in the world (email, call, send, apply, pay, log in, sign, talk to a person, decide, review with someone), or by a named third party who owes Devin something. Apply this test to every candidate; when in doubt, leave it out.
+
 ## Do NOT extract
 
-- Instructions to the assistant for the current task ("add a test", "fix the build", "commit this", "run it again"). Those are the immediate work of the session, not commitments beyond it.
+- Instructions, specs, or task lists addressed to the assistant (see above), even when they use "we need to" or "I want to".
 - The assistant's own statements ("I'll create the file now"). Only the USER's commitments, intentions, and follow-ups owed to the user count.
 - Rhetorical or hypothetical statements ("if I were to…", "maybe someday", "it would be nice if…", "in theory I could…").
 - Completed actions ("I already sent it"), questions, opinions, or general preferences.
@@ -69,6 +75,33 @@ Assistant: Adding the test now.
 
 ```json
 {"commitments": []}
+```
+
+### Example 4: a task spec addressed to the assistant is not a commitment
+
+```
+[Exchange 0]
+User: Read /tmp/spec.md and execute it exactly. (1) add the migration; (2) build the extraction pass; (3) register the MCP tools; (4) restart the LaunchAgent at the end and verify. We need to keep lint green.
+Assistant: Starting with the migration.
+```
+
+```json
+{"commitments": []}
+```
+
+### Example 5: personal follow-ups inside a working session
+
+```
+[Exchange 6]
+User: Looks right. Separately, I still have to log in to PNC and pull the Traverse loan statements before the accountant call on Friday, and Sarah owes me the signed lease.
+Assistant: Noted. Continuing with the reconciliation.
+```
+
+```json
+{"commitments": [
+  {"content": "Log in to PNC and pull the Traverse loan statements before the accountant call", "subject": "devin", "origin": "stated", "due_hint": "Friday", "source_exchange_indexes": [6]},
+  {"content": "Sarah to send the signed lease", "subject": "sarah", "origin": "inferred", "due_hint": null, "source_exchange_indexes": [6]}
+]}
 ```
 
 ## Metadata

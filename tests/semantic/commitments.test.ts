@@ -17,6 +17,8 @@ import {
   updateCommitmentStatus,
   formatCommitmentsXml,
   buildCommitmentsPrompt,
+  hasCommitmentCue,
+  filterByCue,
   type CommitmentCandidate,
 } from "../../src/semantic/commitments.js";
 
@@ -78,6 +80,39 @@ describe("parseCommitmentsResponse", () => {
     expect(normalizeSubject("The user")).toBe("devin");
     expect(normalizeSubject("Alan B.")).toBe("alan");
     expect(normalizeSubject(undefined)).toBe("devin");
+  });
+});
+
+describe("cue guard", () => {
+  it("recognises first-person obligation and third-party follow-up cues", () => {
+    for (const t of [
+      "I'll send Alan the timeline tomorrow",
+      "I need to remember to call the bank",
+      "we need to revisit this next week",
+      "remind me to file the claim",
+      "Alan will confirm the return date",
+      "Sarah owes me the signed lease",
+      "waiting on HR to send the letter",
+      "I promised Joe that report",
+    ]) expect(hasCommitmentCue(t), t).toBe(true);
+    for (const t of [
+      "Read /tmp/spec.md and execute it exactly. (1) add the migration; (2) build the pass",
+      "Close the browser session and commit",
+      "Check defaults and logs",
+      "Enter access code ABC123 for the current screen",
+    ]) expect(hasCommitmentCue(t), t).toBe(false);
+  });
+
+  it("filters candidates without a cue and third parties absent from the text", () => {
+    const user = new Map([["ex-1", "I'll send Alan the timeline tomorrow"], ["ex-2", "Build the migration and run the tests"]]);
+    const { kept, rejected } = filterByCue([
+      cand({ sourceExchangeIds: ["ex-1"] }),
+      cand({ content: "Build the migration", sourceExchangeIds: ["ex-2"] }),
+      cand({ content: "Alan to confirm the date", subject: "alan", sourceExchangeIds: ["ex-1"] }),
+      cand({ content: "Bob to send the file", subject: "bob", sourceExchangeIds: ["ex-1"] }),
+    ], user);
+    expect(kept.map((c) => c.content)).toEqual(["Send Alan the leave timeline", "Alan to confirm the date"]);
+    expect(rejected).toBe(2);
   });
 });
 

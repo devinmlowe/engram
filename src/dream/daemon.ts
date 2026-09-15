@@ -430,6 +430,7 @@ async function runExtractPhase(
       report.commitmentsExtracted = (report.commitmentsExtracted ?? 0) + pass.inserted;
       report.commitmentCandidates = (report.commitmentCandidates ?? 0) + pass.candidates;
       report.commitmentDuplicates = (report.commitmentDuplicates ?? 0) + pass.duplicates;
+      report.commitmentRejected = (report.commitmentRejected ?? 0) + pass.rejected;
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       logEntry(logPath, "extract", `Commitments pass failed (skipped): ${errorMsg}`);

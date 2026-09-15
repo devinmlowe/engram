@@ -106,6 +106,16 @@ describe("commitments pass", () => {
     expect(t.db.prepare("SELECT count(*) AS n FROM dream_checkpoints").get()).toEqual({ n: 0 });
   });
 
+  it("rejects LLM candidates whose source text carries no first-person cue", async () => {
+    seedConversation(t, "spec", 100, ["Read the spec and execute it: (1) add the migration; (2) build the pass; (3) restart the agent"]);
+    const eager: CommitmentsLlm = async () => ({
+      model: "stub",
+      raw: { commitments: [{ content: "Add the migration", subject: "devin", origin: "stated", due_hint: null, source_exchange_indexes: [0] }] },
+    });
+    const r = await runCommitmentsPass(t.db, t.config, { callLlm: eager });
+    expect(r).toMatchObject({ conversations: 1, candidates: 1, rejected: 1, inserted: 0 });
+  });
+
   it("isolates per-conversation LLM failures and records them", async () => {
     seedConversation(t, "bad", 100, ["this conversation will blow up in the model for sure"]);
     seedConversation(t, "good", 90, ["another one here", "I'll send Alan the timeline tomorrow"]);

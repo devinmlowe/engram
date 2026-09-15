@@ -15,6 +15,7 @@ import type { EngramConfig } from "../_core/types/index.js";
 import {
   buildCommitmentsPrompt,
   parseCommitmentsResponse,
+  filterByCue,
   dedupeCandidates,
   insertCommitments,
   defaultCommitmentsLlm,
@@ -58,6 +59,8 @@ export interface CommitmentsPassResult {
   conversations: number;
   skipped: number;
   candidates: number;
+  /** Candidates dropped by the first-person cue guard. */
+  rejected: number;
   duplicates: number;
   inserted: number;
   errors: number;
@@ -69,6 +72,7 @@ export interface CommitmentsPassResult {
 
 export interface ConversationCommitmentsResult {
   candidates: number;
+  rejected: number;
   duplicates: number;
   inserted: number;
   skipped: boolean;
@@ -148,7 +152,7 @@ export async function extractCommitmentsForConversation(
   const exchanges = loadExchanges(db, conversationId);
   const userChars = exchanges.reduce((n, ex) => n + ex.userMessage.trim().length, 0);
   if (exchanges.length === 0 || userChars < MIN_USER_TEXT_CHARS) {
-    return { candidates: 0, duplicates: 0, inserted: 0, skipped: true, lexicalOnly: false, items: [] };
+    return { candidates: 0, rejected: 0, duplicates: 0, inserted: 0, skipped: true, lexicalOnly: false, items: [] };
   }
 
   const conv = db
@@ -160,9 +164,13 @@ export async function extractCommitmentsForConversation(
 
   const idByIndex = new Map<number, string>();
   const timestamps = new Map<string, string>();
+  const userTextById = new Map<string, string>();
+  const assistantTextById = new Map<string, string>();
   for (const ex of exchanges) {
     idByIndex.set(ex.index, ex.id);
     if (ex.timestamp) timestamps.set(ex.id, ex.timestamp);
+    userTextById.set(ex.id, ex.userMessage);
+    assistantTextById.set(ex.id, ex.assistantMessage);
   }
 
   const candidates: CommitmentCandidate[] = [];
@@ -174,13 +182,15 @@ export async function extractCommitmentsForConversation(
     candidates.push(...parseCommitmentsResponse(raw, idByIndex));
   }
 
-  const { fresh, duplicates, lexicalOnly } = await dedupeCandidates(db, candidates, { embed });
+  const { kept, rejected } = filterByCue(candidates, userTextById, assistantTextById);
+  const { fresh, duplicates, lexicalOnly } = await dedupeCandidates(db, kept, { embed });
   const items = insertCommitments(db, fresh, timestamps);
   options.log?.(
-    `Commitments for ${conversationId}: ${candidates.length} candidates, ${items.length} inserted, ${duplicates} duplicates`,
+    `Commitments for ${conversationId}: ${candidates.length} candidates, ${rejected} rejected (no cue), ` +
+      `${items.length} inserted, ${duplicates} duplicates`,
     { model, lexicalOnly },
   );
-  return { candidates: candidates.length, duplicates, inserted: items.length, skipped: false, lexicalOnly, model, items };
+  return { candidates: candidates.length, rejected, duplicates, inserted: items.length, skipped: false, lexicalOnly, model, items };
 }
 
 /**
@@ -195,7 +205,7 @@ export async function runCommitmentsPass(
 ): Promise<CommitmentsPassResult> {
   const log = options.log ?? (() => {});
   const result: CommitmentsPassResult = {
-    conversations: 0, skipped: 0, candidates: 0, duplicates: 0, inserted: 0, errors: 0, items: [],
+    conversations: 0, skipped: 0, candidates: 0, rejected: 0, duplicates: 0, inserted: 0, errors: 0, items: [],
   };
 
   if (!options.callLlm && !hasCommitmentsProvider()) {
@@ -218,6 +228,7 @@ export async function runCommitmentsPass(
       result.conversations++;
       if (r.skipped) result.skipped++;
       result.candidates += r.candidates;
+      result.rejected += r.rejected;
       result.duplicates += r.duplicates;
       result.inserted += r.inserted;
       result.items.push(...r.items);
@@ -240,7 +251,7 @@ export async function runCommitmentsPass(
 
   log(
     `Commitments pass complete: ${result.conversations} conversations (${result.skipped} trivial), ` +
-      `${result.candidates} candidates → ${result.inserted} inserted, ${result.duplicates} duplicates, ${result.errors} errors`,
+      `${result.candidates} candidates → ${result.rejected} rejected (no cue), ${result.inserted} inserted, ${result.duplicates} duplicates, ${result.errors} errors`,
     { model: result.model },
   );
   return result;

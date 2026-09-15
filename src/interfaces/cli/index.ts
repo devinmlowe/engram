@@ -824,7 +824,7 @@ program
       console.log(`  Pruned:            ${report.memoriesPruned}`);
       console.log(
         `  Commitments:       ${report.commitmentsExtracted ?? 0} new ` +
-          `(${report.commitmentCandidates ?? 0} candidates, ${report.commitmentDuplicates ?? 0} duplicates)`,
+          `(${report.commitmentCandidates ?? 0} candidates, ${report.commitmentRejected ?? 0} rejected, ${report.commitmentDuplicates ?? 0} duplicates)`,
       );
 
       const durationSec = report.completedAt - report.startedAt;
@@ -925,7 +925,7 @@ program
         console.log(JSON.stringify({ conversationId, ...result }, null, 2));
       } else {
         console.log(
-          `${conversationId}: ${result.candidates} candidates, ${result.inserted} inserted, ` +
+          `${conversationId}: ${result.candidates} candidates, ${result.rejected} rejected (no cue), ${result.inserted} inserted, ` +
             `${result.duplicates} duplicates${result.skipped ? " (skipped: trivial conversation)" : ""}` +
             `${result.model ? ` [${result.model}]` : ""}`,
         );

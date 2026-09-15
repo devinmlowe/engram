@@ -45,4 +45,5 @@ export interface DreamReport {
   commitmentsExtracted?: number;
   commitmentCandidates?: number;
   commitmentDuplicates?: number;
+  commitmentRejected?: number;
 }

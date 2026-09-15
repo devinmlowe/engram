@@ -217,6 +217,46 @@ export function parseCommitmentsResponse(
   return out;
 }
 
+// ─── Cue guard ──────────────────────────────────────────────────
+
+/**
+ * First-person obligation / third-party follow-up cues. A candidate is kept
+ * only when the USER text of one of its source exchanges carries such a cue:
+ * bare imperatives ("add a test", "close the browser") are instructions to
+ * the assistant, not commitments, and the LLM alone does not reliably tell
+ * them apart. This is the spec's definition made deterministic.
+ */
+const COMMITMENT_CUE =
+  /\b(?:i(?:'ll| will| would| need to| needed to| should| ought to| have to| had to| must| owe| promised| plan to| intend to| am going to|'m going to| gotta| got to| still have to| have yet to| said i| told \w+ i)|remind me|don'?t (?:let me )?forget|let me not forget|not forget to|make a note to|note to self|todo for me|we (?:need|have|ought) to (?:revisit|follow up|circle back|remember|get back|come back|reconsider)|need to (?:remember|revisit|follow up|circle back|get back to)|follow[- ]up with|circle back|get back to (?:me|him|her|them|you)|(?:will|gonna|going to|said (?:he|she|they)(?:'d| would| will)?|supposed to) (?:send|confirm|get back|follow up|let me know|call|email|reply|deliver|share|review|sign)|owes? me|waiting (?:on|for) \w+ to)\b/i;
+
+/** True when the text carries a commitment cue (see COMMITMENT_CUE). */
+export function hasCommitmentCue(text: string): boolean {
+  return COMMITMENT_CUE.test(text);
+}
+
+/**
+ * Keep only candidates whose source exchanges' user text carries a cue. For a
+ * third-party subject the name must also appear in the source text (guards
+ * against invented counterparties).
+ */
+export function filterByCue(
+  candidates: CommitmentCandidate[],
+  userTextById: ReadonlyMap<string, string>,
+  assistantTextById: ReadonlyMap<string, string> = new Map(),
+): { kept: CommitmentCandidate[]; rejected: number } {
+  const kept: CommitmentCandidate[] = [];
+  let rejected = 0;
+  for (const cand of candidates) {
+    const userText = cand.sourceExchangeIds.map((id) => userTextById.get(id) ?? "").join("\n");
+    const allText = `${userText}\n${cand.sourceExchangeIds.map((id) => assistantTextById.get(id) ?? "").join("\n")}`.toLowerCase();
+    const cue = hasCommitmentCue(userText);
+    const subjectOk = cand.subject === "devin" || allText.includes(cand.subject.toLowerCase());
+    if (cue && subjectOk) kept.push(cand);
+    else rejected++;
+  }
+  return { kept, rejected };
+}
+
 // ─── Due-date resolution ────────────────────────────────────────
 
 const DAY = 86_400;
