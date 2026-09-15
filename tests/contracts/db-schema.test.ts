@@ -232,3 +232,71 @@ describe("Database Schema Contract", () => {
     db2.close();
   });
 });
+
+// ── Commitments Ledger (idempotent + checkpointed migration) ────
+
+describe("Commitments schema migration", () => {
+  let t: TestDb;
+
+  beforeEach(() => {
+    t = createTestDb();
+  });
+
+  afterEach(() => {
+    t.cleanup();
+  });
+
+  it("creates the commitments table with the spec columns and constraints", () => {
+    const cols = (t.db.pragma("table_info(commitments)") as Array<{ name: string; dflt_value: string | null }>);
+    const names = cols.map((c) => c.name);
+    expect(names).toEqual([
+      "id", "content", "status", "origin", "subject", "source_exchanges",
+      "due_at", "created_at", "resolved_at", "superseded_by",
+    ]);
+    const dflt = Object.fromEntries(cols.map((c) => [c.name, c.dflt_value]));
+    expect(dflt.status).toBe("'pending'");
+    expect(dflt.origin).toBe("'stated'");
+    expect(dflt.subject).toBe("'devin'");
+
+    // CHECK constraints reject unknown lifecycle states / origins
+    t.db.prepare("INSERT INTO commitments (id, content) VALUES ('c1', 'Send Alan the timeline')").run();
+    expect(() =>
+      t.db.prepare("INSERT INTO commitments (id, content, status) VALUES ('c2', 'x', 'bogus')").run(),
+    ).toThrow(/CHECK/);
+    expect(() =>
+      t.db.prepare("INSERT INTO commitments (id, content, origin) VALUES ('c3', 'x', 'guessed')").run(),
+    ).toThrow(/CHECK/);
+  });
+
+  it("has the (status, due_at) index", () => {
+    const idx = (t.db.pragma("index_list(commitments)") as Array<{ name: string }>).map((i) => i.name);
+    expect(idx).toContain("idx_commitments_status_due");
+    const cols = (t.db.pragma("index_info(idx_commitments_status_due)") as Array<{ name: string }>).map((i) => i.name);
+    expect(cols).toEqual(["status", "due_at"]);
+  });
+
+  it("records a checkpoint and is a no-op on re-run", async () => {
+    const { migrateCommitments, COMMITMENTS_MIGRATION } = await import("../../src/_core/db/index.js");
+    const rows = () =>
+      t.db.prepare("SELECT name, applied_at FROM schema_migrations WHERE name = ?").all(COMMITMENTS_MIGRATION) as Array<{ name: string; applied_at: number }>;
+    const schema = () =>
+      t.db.prepare("SELECT sql FROM sqlite_master WHERE name LIKE '%commitments%' ORDER BY name").all();
+
+    const first = rows();
+    expect(first).toHaveLength(1);
+    const before = schema();
+
+    // Re-running (as every initDatabase() does) must not touch anything
+    expect(migrateCommitments(t.db)).toBe(false);
+    expect(migrateCommitments(t.db)).toBe(false);
+    expect(rows()).toEqual(first);
+    expect(schema()).toEqual(before);
+  });
+
+  it("recreates the table when only the checkpoint row survives", async () => {
+    const { migrateCommitments } = await import("../../src/_core/db/index.js");
+    t.db.exec("DROP TABLE commitments");
+    expect(migrateCommitments(t.db)).toBe(true);
+    expect(t.db.prepare("SELECT count(*) AS n FROM commitments").get()).toEqual({ n: 0 });
+  });
+});

@@ -353,6 +353,12 @@ function createSchema(db: Database.Database, config: EngramConfig): void {
     backfillEventTs(db);
   }
 
+  // Commitments ledger ("mention once, never dropped"): first-person promises,
+  // intentions, and follow-ups owed by others, extracted by the dream EXTRACT
+  // phase (semantic/commitments.ts). Idempotent, and checkpointed in
+  // schema_migrations so a re-open is a provable no-op.
+  migrateCommitments(db);
+
   // FTS5 virtual tables (created separately — can't use IF NOT EXISTS)
   createFtsIfNeeded(db, "exchanges_fts", `
     CREATE VIRTUAL TABLE exchanges_fts USING fts5(
@@ -547,6 +553,50 @@ function idempotentAlter(
     return true;
   }
   return false;
+}
+
+/** Checkpoint name recorded in schema_migrations when the commitments table is created. */
+export const COMMITMENTS_MIGRATION = "commitments_v1";
+
+/**
+ * Create the commitments ledger (table + (status, due_at) index) and record
+ * the checkpoint. Safe to call on every open: when the table and its
+ * checkpoint row both exist nothing is executed and `false` is returned.
+ * Returns `true` only on the open that introduced the table.
+ */
+export function migrateCommitments(db: Database.Database): boolean {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      name TEXT PRIMARY KEY,
+      applied_at INTEGER DEFAULT (unixepoch())
+    )
+  `);
+  const checkpointed = db
+    .prepare("SELECT 1 FROM schema_migrations WHERE name = ?")
+    .get(COMMITMENTS_MIGRATION);
+  const tableExists = db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'commitments'")
+    .get();
+  if (checkpointed && tableExists) return false;
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS commitments (
+      id TEXT PRIMARY KEY,
+      content TEXT NOT NULL,
+      status TEXT CHECK(status IN ('pending', 'done', 'dropped', 'superseded')) DEFAULT 'pending',
+      origin TEXT CHECK(origin IN ('stated', 'inferred')) DEFAULT 'stated',
+      subject TEXT DEFAULT 'devin',
+      source_exchanges TEXT,
+      due_at INTEGER,
+      created_at INTEGER DEFAULT (unixepoch()),
+      resolved_at INTEGER,
+      superseded_by TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_commitments_status_due ON commitments(status, due_at);
+  `);
+  db.prepare("INSERT OR IGNORE INTO schema_migrations (name) VALUES (?)").run(COMMITMENTS_MIGRATION);
+  return true;
 }
 
 /**

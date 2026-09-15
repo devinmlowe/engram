@@ -6,7 +6,14 @@
  */
 
 // Schema & initialization
-export { initDatabase, pruneZeroEntityVectors, backfillEventTs, EVENT_TS_SUBQUERY } from "./schema.js";
+export {
+  initDatabase,
+  pruneZeroEntityVectors,
+  backfillEventTs,
+  migrateCommitments,
+  COMMITMENTS_MIGRATION,
+  EVENT_TS_SUBQUERY,
+} from "./schema.js";
 
 // Connection management
 export {
