@@ -822,6 +822,10 @@ program
       console.log(`  New relationships: ${report.newRelationships}`);
       console.log(`  Conflicts:         ${report.conflictsDetected}`);
       console.log(`  Pruned:            ${report.memoriesPruned}`);
+      console.log(
+        `  Commitments:       ${report.commitmentsExtracted ?? 0} new ` +
+          `(${report.commitmentCandidates ?? 0} candidates, ${report.commitmentDuplicates ?? 0} duplicates)`,
+      );
 
       const durationSec = report.completedAt - report.startedAt;
       console.log(`  Duration:          ${durationSec}s`);

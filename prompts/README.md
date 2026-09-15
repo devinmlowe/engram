@@ -15,6 +15,7 @@ LLM prompt templates used by the dream pipeline and semantic extraction layer. T
 ## Contains
 
 - [extract-facts.md](./extract-facts.md) — Fact/preference/decision extraction from conversations
+- [extract-commitments.md](./extract-commitments.md) — First-person promises, intentions and follow-ups owed by others (commitments ledger)
 - [extract-entities.md](./extract-entities.md) — Named entity extraction with type classification
 - [extract-relationships.md](./extract-relationships.md) — Relationship detection between entities
 - [resolve-conflict.md](./resolve-conflict.md) — Contradiction resolution between memories
@@ -24,6 +25,7 @@ LLM prompt templates used by the dream pipeline and semantic extraction layer. T
 ## See Also
 
 - [src/semantic/extractor.ts](../src/semantic/extractor.ts) — Uses extract-facts, calls LLM with these templates
+- [src/semantic/commitments.ts](../src/semantic/commitments.ts) — Uses extract-commitments (dream commitments pass)
 - [src/graph/extractor.ts](../src/graph/extractor.ts) — Uses extract-entities and extract-relationships
 - [src/graph/reflection.ts](../src/graph/reflection.ts) — Uses reflect template
 - [decisions/005-unified-llm-factory.md](../decisions/005-unified-llm-factory.md) — LLM provider design

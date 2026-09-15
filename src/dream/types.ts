@@ -41,4 +41,8 @@ export interface DreamReport {
   entitiesMerged?: number;
   orphansPruned?: number;
   clustersPruned?: number;
+  // Commitments pass (extract phase): candidates seen, deduped, inserted
+  commitmentsExtracted?: number;
+  commitmentCandidates?: number;
+  commitmentDuplicates?: number;
 }

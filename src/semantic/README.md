@@ -20,6 +20,7 @@ Extracts, consolidates, and retrieves structured knowledge from conversations �
 ## Contains
 
 - `extractor` — LLM-powered fact extraction with prompt templates
+- `commitments` — Commitments ledger: extraction prompt/schema, due-date resolution, dedupe (lexical overlap or embedding cosine ≥ 0.85), store, lifecycle and XML for the `commitments` tools
 - `consolidator` — Deduplication, merge, and conflict detection
 - `memory` — Memory CRUD, similarity search, access tracking
 - `search` — Hybrid vector + FTS5 search with RRF fusion; honors after/before on both candidate paths under a `filed` (created_at) or `event` (event_ts → earliest source exchange) basis

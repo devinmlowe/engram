@@ -203,6 +203,7 @@ export async function runDream(
       newMemories: report.newMemories,
       newEntities: report.newEntities,
       memoriesPruned: report.memoriesPruned,
+      commitmentsExtracted: report.commitmentsExtracted ?? 0,
     });
 
     return report;
@@ -292,7 +293,16 @@ async function runExtractPhase(
 
   // Load checkpoints for skip detection
   const checkpointed = getCheckpointedItems(db, runId, "extract");
-  const toProcess = conversationIds.filter((id) => !checkpointed.has(id));
+  let toProcess = conversationIds.filter((id) => !checkpointed.has(id));
+
+  // Opt-in cap on fact extraction per run (ENGRAM_DREAM_MAX_CONVERSATIONS).
+  // Unset = unlimited (nightly behaviour). Lets a manual end-to-end run stay
+  // bounded — a full pass over every conversation takes 10-15 hours.
+  const factCap = Number.parseInt(process.env.ENGRAM_DREAM_MAX_CONVERSATIONS ?? "", 10);
+  if (!options.conversationId && Number.isFinite(factCap) && factCap >= 0 && toProcess.length > factCap) {
+    logEntry(logPath, "extract", `Capping fact extraction to ${factCap} of ${toProcess.length} conversations (ENGRAM_DREAM_MAX_CONVERSATIONS)`);
+    toProcess = toProcess.slice(0, factCap);
+  }
 
   logEntry(logPath, "extract", `Processing ${toProcess.length} conversations (${checkpointed.size} already checkpointed)`);
 
@@ -403,6 +413,28 @@ async function runExtractPhase(
   // Store accumulated facts in a temporary table-like structure for consolidation
   // We use a simple approach: store facts as JSON in the run's data
   storePendingFacts(db, runId, allFacts);
+
+  // Commitments pass ("mention once, never dropped"): a second extraction
+  // target alongside facts. Checkpointed per conversation across runs, so
+  // only new or grown conversations cost an LLM call. Never breaks the run.
+  if (!shuttingDown) {
+    try {
+      const { runCommitmentsPass } = await import("./commitments-pass.js");
+      const pass = await runCommitmentsPass(db, config, {
+        runId,
+        conversationIds: options.conversationId ? [options.conversationId] : undefined,
+        log: (message, data) => logEntry(logPath, "extract", message, data),
+        shouldStop: () => shuttingDown,
+        onProgress: (done, total, passErrors) => options.onProgress?.("extract", done, total, passErrors),
+      });
+      report.commitmentsExtracted = (report.commitmentsExtracted ?? 0) + pass.inserted;
+      report.commitmentCandidates = (report.commitmentCandidates ?? 0) + pass.candidates;
+      report.commitmentDuplicates = (report.commitmentDuplicates ?? 0) + pass.duplicates;
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      logEntry(logPath, "extract", `Commitments pass failed (skipped): ${errorMsg}`);
+    }
+  }
 
   return {
     phase: "extract",
