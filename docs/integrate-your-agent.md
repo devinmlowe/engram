@@ -137,6 +137,8 @@ Twelve tools, registered in `src/interfaces/mcp/tool-names.ts`:
 | `explore_selective` | Graph walk that expands only the branches you name. |
 | `fetch_snippets` | Fetch several line ranges from one file in a single call. |
 | `scan_file` | Regex-scan a file server-side and return structured matches. |
+| `commitments` | List the user's tracked commitments (pending by default; overdue first). Call it in proactive check-ins. |
+| `commitments_update` | Mark a commitment done, dropped, or superseded once the user confirms. |
 | `index_file_structure` | Parse a source file into its function, class, and module definitions. |
 
 The list above and `tools/list` on a running server are authoritative;

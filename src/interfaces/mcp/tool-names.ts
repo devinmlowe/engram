@@ -17,4 +17,6 @@ export const MCP_TOOL_NAMES = [
   "fetch_snippets",
   "scan_file",
   "index_file_structure",
+  "commitments",
+  "commitments_update",
 ] as const;

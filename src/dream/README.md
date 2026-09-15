@@ -18,6 +18,7 @@ Autonomous memory consolidation pipeline — orchestrates the five-phase dream c
 ## Contains
 
 - `daemon` — Pipeline orchestrator with phase sequencing and signal handling
+- `commitments-pass` — Commitments pass of the EXTRACT phase: scans never-scanned (or grown) conversations, cross-run checkpoints under phase `commitments`, capped by `ENGRAM_COMMITMENTS_MAX_CONVERSATIONS` (default 60); errors are logged and skipped
 - `scheduler` — Run lifecycle management, checkpointing, conversation prioritization
 - `types` — Dream-specific type definitions (DreamPhase, DreamReport, DreamOptions)
 

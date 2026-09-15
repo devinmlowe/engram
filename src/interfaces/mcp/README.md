@@ -1,6 +1,6 @@
 # MCP Server
 
-Model Context Protocol server exposing 12 tools for LLM agent memory operations. Runs as a stdio transport server, designed for integration with Claude Code and other MCP-compatible agents.
+Model Context Protocol server exposing 14 tools for LLM agent memory operations. Runs as a stdio transport server, designed for integration with Claude Code and other MCP-compatible agents.
 
 ## In Scope
 
@@ -16,7 +16,7 @@ Model Context Protocol server exposing 12 tools for LLM agent memory operations.
 
 ## Contains
 
-- `server.ts` — MCP server with 12 tools: `recall`, `remember`, `show`, `explore`, `reflect`, `recall_session`, `recall_drill`, `explore_selective`, `remember_batch`, `fetch_snippets`, `index_file_structure`, `scan_file`
+- `server.ts` — MCP server with 14 tools: `recall`, `remember`, `show`, `explore`, `reflect`, `recall_session`, `recall_drill`, `explore_selective`, `remember_batch`, `fetch_snippets`, `index_file_structure`, `scan_file`, `commitments`, `commitments_update`
 
 ## See Also
 

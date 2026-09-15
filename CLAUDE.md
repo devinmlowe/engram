@@ -36,6 +36,11 @@ Shared infrastructure in `_core/` (config, db, types, embeddings, search, llm, c
 - **fetch_snippets** — Read multiple line ranges from a file in one call (session budget aware). Replaces multiple Read calls with a single request.
 - **scan_file** — Apply up to 10 regex patterns against a file server-side; returns structured matches with context lines and enclosing function name. The file is NEVER loaded into context.
 
+### Commitments Ledger
+
+- **commitments** — List tracked commitments extracted nightly from conversations (first-person promises, intentions, follow-ups owed by others). Pending by default; overdue first, then by due date. `include_due_within_days` narrows to what is due soon.
+- **commitments_update** — Mark a commitment `done`, `dropped`, or `superseded` (with `superseded_by`) once the user confirms it is handled.
+
 ### Recommended Workflow
 
 For large file analysis, combine tools in this order:
@@ -44,9 +49,9 @@ For large file analysis, combine tools in this order:
 3. `scan_file` → exhaustive regex search for enumeration tasks (breadth)
 4. `fetch_snippets` → read specific line ranges for detail extraction (depth)
 
-## CLI Commands (16)
+## CLI Commands (19)
 
-`init`, `sync`, `search`, `remember`, `extract`, `dream`, `reflect`, `explore`, `entities`, `relationships`, `stats`, `health`, `migrate`, `validate`, `backfill-event-ts`, `mcp`
+`init`, `sync`, `search`, `remember`, `extract`, `dream`, `reflect`, `explore`, `entities`, `relationships`, `stats`, `health`, `migrate`, `validate`, `backfill-event-ts`, `mcp`, `commitments`, `commitment-done`, `commitments-extract`
 
 ## Web Visualization
 

@@ -97,7 +97,7 @@ Four domains with shared core infrastructure:
 
 ## MCP Server
 
-12 tools for LLM agent memory operations:
+14 tools for LLM agent memory operations:
 
 | Tool | Purpose |
 |------|---------|
@@ -113,6 +113,8 @@ Four domains with shared core infrastructure:
 | `fetch_snippets` | Multi-range file snippet fetching (up to 20 ranges) |
 | `index_file_structure` | Parse file structure into graph entities (multi-language) |
 | `scan_file` | Regex-based file scanning with function context detection |
+| `commitments` | List tracked commitments (promises, intentions, follow-ups owed by others) — overdue first |
+| `commitments_update` | Mark a commitment done, dropped, or superseded |
 
 ### Transports: stdio (default) and HTTP
 
@@ -173,6 +175,9 @@ engram health          # System health check
 engram migrate         # Migrate data from legacy superpowers DB
 engram validate        # Validate migration integrity
 engram backfill-event-ts  # Backfill event-time timestamps (temporal recall)
+engram commitments [status]        # List tracked commitments (same XML as the MCP tool)
+engram commitment-done <id>        # Mark a commitment done (--status dropped|superseded)
+engram commitments-extract <conv>  # Re-scan one conversation (no checkpoint; proves dedupe)
 engram mcp             # Start the MCP server (stdio; see Transports section)
 ```
 

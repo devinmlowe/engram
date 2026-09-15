@@ -71,6 +71,8 @@ export const WORKER_TOOLS: ReadonlySet<string> = new Set([
   "scan_file",
   "fetch_snippets",
   "index_file_structure",
+  "commitments",
+  "commitments_update",
 ]);
 
 /** Tools whose results reference an in-memory recall session. */

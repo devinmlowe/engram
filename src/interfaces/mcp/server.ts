@@ -38,6 +38,14 @@ import { fetchSnippets } from "../../_core/search/snippets.js";
 import { scanFile } from "../../_core/search/scan.js";
 import { getSessionStore } from "../../_core/search/index.js";
 import { indexFileStructure } from "../../graph/file-indexer.js";
+import {
+  listCommitments,
+  formatCommitmentsXml,
+  updateCommitmentStatus,
+  COMMITMENT_RESOLUTIONS,
+  type CommitmentQueryStatus,
+  type CommitmentStatus,
+} from "../../semantic/commitments.js";
 import type Database from "better-sqlite3";
 import type {
   EngramConfig,
@@ -108,6 +116,19 @@ const VALID_MEMORY_SOURCES: readonly MemorySource[] = ["user", "dream", "rlm", "
 
 
 // ─── Input Schemas ─────────────────────────────────────────────
+
+const CommitmentsInputSchema = z.object({
+  status: z.enum(["pending", "done", "dropped", "superseded", "all"]).optional(),
+  include_due_within_days: z.number().min(0).max(3650).optional(),
+  limit: z.number().int().min(1).max(500).optional(),
+  budget: z.number().int().min(100).max(10000).optional(),
+});
+
+const CommitmentsUpdateInputSchema = z.object({
+  id: z.string().min(6, "Commitment id (or a unique prefix of at least 6 characters) is required"),
+  status: z.enum(["done", "dropped", "superseded"]),
+  superseded_by: z.string().min(6).optional(),
+});
 
 const RecallInputSchema = z.object({
   query: z.string().min(2, "Query must be at least 2 characters"),
@@ -870,6 +891,88 @@ function registerToolHandlers(srv: Server, callTool: ToolHandler = handleToolCal
         openWorldHint: false,
       },
     },
+    {
+      name: "commitments",
+      description:
+        "List tracked commitments — first-person promises, intentions and " +
+        "follow-ups owed by others, extracted nightly from conversations " +
+        "(\"mention once, never dropped\"). Default: pending items, overdue " +
+        "first, then by due date, then newest. Use include_due_within_days to " +
+        "surface only what is due soon or overdue.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          status: {
+            type: "string",
+            enum: ["pending", "done", "dropped", "superseded", "all"],
+            default: "pending",
+            description: "Lifecycle state to list",
+          },
+          include_due_within_days: {
+            type: "number",
+            minimum: 0,
+            description: "Only items with a due date within this many days (overdue items included)",
+          },
+          limit: {
+            type: "number",
+            minimum: 1,
+            maximum: 500,
+            default: 20,
+            description: "Max items",
+          },
+          budget: {
+            type: "number",
+            minimum: 100,
+            maximum: 10000,
+            default: 1500,
+            description: "Token budget for the XML response",
+          },
+        },
+        additionalProperties: false,
+      },
+      annotations: {
+        title: "Commitments",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    {
+      name: "commitments_update",
+      description:
+        "Resolve a tracked commitment once the user confirms it is handled: " +
+        "mark it done, dropped, or superseded by another commitment. Accepts " +
+        "the full id or a unique prefix (6+ characters).",
+      inputSchema: {
+        type: "object",
+        properties: {
+          id: {
+            type: "string",
+            minLength: 6,
+            description: "Commitment id (from the commitments tool) or a unique prefix",
+          },
+          status: {
+            type: "string",
+            enum: ["done", "dropped", "superseded"],
+            description: "Resolution",
+          },
+          superseded_by: {
+            type: "string",
+            description: "Id of the commitment that replaces this one (required when status is superseded)",
+          },
+        },
+        required: ["id", "status"],
+        additionalProperties: false,
+      },
+      annotations: {
+        title: "Update Commitment",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
   ],
 }));
 
@@ -1305,6 +1408,34 @@ export async function handleToolCall(name: string, args: unknown): Promise<ToolR
             type: "text",
             text: JSON.stringify(result, null, 2),
           },
+        ],
+      };
+    }
+
+    if (name === "commitments") {
+      const params = CommitmentsInputSchema.parse(args ?? {});
+      const result = listCommitments(getDb(), {
+        status: (params.status ?? "pending") as CommitmentQueryStatus,
+        dueWithinDays: params.include_due_within_days,
+        limit: params.limit ?? 20,
+      });
+      return {
+        content: [{ type: "text", text: formatCommitmentsXml(result, { budget: params.budget ?? 1500 }) }],
+      };
+    }
+
+    if (name === "commitments_update") {
+      const params = CommitmentsUpdateInputSchema.parse(args);
+      if (!COMMITMENT_RESOLUTIONS.includes(params.status as CommitmentStatus)) {
+        throw new Error(`Invalid status: ${params.status}`);
+      }
+      const updated = updateCommitmentStatus(getDb(), params.id, params.status as CommitmentStatus, {
+        supersededBy: params.superseded_by,
+      });
+      const suffix = updated.supersededBy ? ` (superseded by ${updated.supersededBy})` : "";
+      return {
+        content: [
+          { type: "text", text: `Commitment ${updated.id} marked ${updated.status}${suffix}: ${updated.content}` },
         ],
       };
     }

@@ -6,7 +6,7 @@ Complete reference for MCP tools, CLI commands, and configuration.
 
 ## MCP Tools
 
-Engram exposes 12 tools via the Model Context Protocol (the canonical list is `src/interfaces/mcp/tool-names.ts`; `tools/list` on a running server is authoritative). The five core tools are documented below. The Phase 6 session tools (`recall_session`, `recall_drill`, `explore_selective`, `remember_batch`) and Phase 7 file tools (`index_file_structure`, `fetch_snippets`, `scan_file`) are summarized in [CLAUDE.md](../CLAUDE.md) and [integrate-your-agent.md](./integrate-your-agent.md).
+Engram exposes 14 tools via the Model Context Protocol (the canonical list is `src/interfaces/mcp/tool-names.ts`; `tools/list` on a running server is authoritative). The five core tools are documented below. The Phase 6 session tools (`recall_session`, `recall_drill`, `explore_selective`, `remember_batch`) and Phase 7 file tools (`index_file_structure`, `fetch_snippets`, `scan_file`) are summarized in [CLAUDE.md](../CLAUDE.md) and [integrate-your-agent.md](./integrate-your-agent.md); the commitments ledger tools (`commitments`, `commitments_update`) are documented below. The rest are summarized in [CLAUDE.md](../CLAUDE.md) and [integrate-your-agent.md](./integrate-your-agent.md).
 
 ### recall
 
@@ -162,6 +162,33 @@ View emergent patterns and structure in the knowledge graph. Shows topic communi
 ```
 
 ---
+
+### commitments
+
+List tracked commitments — first-person promises ("I'll send Alan the timeline"), self-directed intentions ("we need to revisit this next week") and follow-ups owed to the user by others ("Alan will confirm the return date"), extracted by the dream pipeline's commitments pass. "Mention once, never dropped."
+
+**Input Schema:**
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `status` | string | no | `"pending"` | `pending`, `done`, `dropped`, `superseded`, or `all` |
+| `include_due_within_days` | number | no | — | Only items with a due date within N days; overdue items are always included |
+| `limit` | number | no | `20` | Max items (1-500) |
+| `budget` | number | no | `1500` | Token budget for the XML |
+
+**Output:** `<engram_commitments status count total as_of [truncated] tokens_used>` wrapping `<commitment id status subject origin age [due overdue] [resolved] [superseded_by] sources>content</commitment>` elements. Order: overdue first, then dated items by due date, then undated items newest first. `subject` is `devin` when the user owes the action, otherwise the other party; `origin` is `stated` for the user's own words, `inferred` for implied obligations and follow-ups owed by others; `sources` are the exchange ids the item was extracted from.
+
+### commitments_update
+
+Resolve a commitment once the user confirms it is handled.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | string | yes | Commitment id, or a unique prefix of at least 6 characters |
+| `status` | string | yes | `done`, `dropped`, or `superseded` |
+| `superseded_by` | string | with `superseded` | Id of the replacing commitment |
+
+**Output:** `Commitment <id> marked <status>: <content>`. Resolved items leave the default pending list; `resolved_at` is recorded.
 
 ## CLI Commands
 

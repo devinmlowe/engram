@@ -834,6 +834,111 @@ program
     }
   });
 
+// ─── commitments ─────────────────────────────────────────────────
+
+program
+  .command("commitments [status]")
+  .description(
+    "List tracked commitments (pending|done|dropped|superseded|all; default pending) — " +
+      "same XML as the `commitments` MCP tool",
+  )
+  .option("--due-within <days>", "Only items due within N days (overdue included)")
+  .option("-l, --limit <n>", "Max items", "20")
+  .option("--budget <tokens>", "Token budget for the XML output", "1500")
+  .option("--json", "Output JSON instead of XML")
+  .action(async (status: string | undefined, opts) => {
+    const { listCommitments, formatCommitmentsXml, COMMITMENT_STATUSES } = await import(
+      "../../semantic/commitments.js"
+    );
+    const wanted = status ?? "pending";
+    if (wanted !== "all" && !(COMMITMENT_STATUSES as readonly string[]).includes(wanted)) {
+      console.error(`Invalid status: ${wanted}. Must be one of: ${COMMITMENT_STATUSES.join(", ")}, all`);
+      process.exit(1);
+    }
+    const config = loadConfig();
+    const db = getDatabase(config);
+    try {
+      const result = listCommitments(db, {
+        status: wanted as import("../../semantic/commitments.js").CommitmentQueryStatus,
+        dueWithinDays: opts.dueWithin !== undefined ? parseFloat(opts.dueWithin) : undefined,
+        limit: parseInt(opts.limit, 10),
+      });
+      if (opts.json) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        console.log(formatCommitmentsXml(result, { budget: parseInt(opts.budget, 10) }));
+      }
+    } finally {
+      closeDatabase();
+    }
+  });
+
+program
+  .command("commitment-done <id>")
+  .description("Resolve a commitment: mark it done (default), dropped, or superseded")
+  .option("--status <status>", "done|dropped|superseded", "done")
+  .option("--superseded-by <id>", "Replacement commitment id (with --status superseded)")
+  .action(async (id: string, opts) => {
+    const { updateCommitmentStatus } = await import("../../semantic/commitments.js");
+    const config = loadConfig();
+    const db = getDatabase(config);
+    try {
+      const updated = updateCommitmentStatus(
+        db,
+        id,
+        opts.status as import("../../semantic/commitments.js").CommitmentStatus,
+        { supersededBy: opts.supersededBy },
+      );
+      const suffix = updated.supersededBy ? ` (superseded by ${updated.supersededBy})` : "";
+      console.log(`Commitment ${updated.id} marked ${updated.status}${suffix}: ${updated.content}`);
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    } finally {
+      closeDatabase();
+    }
+  });
+
+program
+  .command("commitments-extract <conversation-id>")
+  .description(
+    "Re-scan one conversation for commitments with the configured LLM (no dream checkpoint; " +
+      "dedupes against the ledger — useful to prove a re-run adds nothing)",
+  )
+  .option("--json", "Output extraction stats as JSON")
+  .action(async (conversationId: string, opts) => {
+    const { extractCommitmentsForConversation } = await import("../../dream/commitments-pass.js");
+    const { hasCommitmentsProvider } = await import("../../semantic/commitments.js");
+    const { initEmbeddings } = await import("../../_core/embeddings/index.js");
+    if (!hasCommitmentsProvider()) {
+      console.error("No extraction provider configured (set OPENROUTER_API_KEY, ANTHROPIC_API_KEY or ENGRAM_LOCAL_MODEL)");
+      process.exit(1);
+    }
+    const config = loadConfig();
+    const db = getDatabase(config);
+    try {
+      await initEmbeddings(config);
+      const result = await extractCommitmentsForConversation(db, conversationId, {
+        log: (message) => { if (!opts.json) console.error(message); },
+      });
+      if (opts.json) {
+        console.log(JSON.stringify({ conversationId, ...result }, null, 2));
+      } else {
+        console.log(
+          `${conversationId}: ${result.candidates} candidates, ${result.inserted} inserted, ` +
+            `${result.duplicates} duplicates${result.skipped ? " (skipped: trivial conversation)" : ""}` +
+            `${result.model ? ` [${result.model}]` : ""}`,
+        );
+        for (const c of result.items) console.log(`  + ${c.id}  ${c.content}`);
+      }
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    } finally {
+      closeDatabase();
+    }
+  });
+
 // ─── mcp ──────────────────────────────────────────────────────────
 
 program
