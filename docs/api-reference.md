@@ -6,7 +6,7 @@ Complete reference for MCP tools, CLI commands, and configuration.
 
 ## MCP Tools
 
-Engram exposes 5 tools via the Model Context Protocol. These are used automatically by Claude Code when Engram is registered as an MCP server.
+Engram exposes 12 tools via the Model Context Protocol (the canonical list is `src/interfaces/mcp/tool-names.ts`; `tools/list` on a running server is authoritative). The five core tools are documented below. The Phase 6 session tools (`recall_session`, `recall_drill`, `explore_selective`, `remember_batch`) and Phase 7 file tools (`index_file_structure`, `fetch_snippets`, `scan_file`) are summarized in [CLAUDE.md](../CLAUDE.md) and [integrate-your-agent.md](./integrate-your-agent.md).
 
 ### recall
 

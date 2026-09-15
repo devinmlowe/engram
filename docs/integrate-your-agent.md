@@ -139,8 +139,8 @@ Twelve tools, registered in `src/interfaces/mcp/tool-names.ts`:
 | `scan_file` | Regex-scan a file server-side and return structured matches. |
 | `index_file_structure` | Parse a source file into its function, class, and module definitions. |
 
-Note: `docs/api-reference.md` and `docs/user-guide.md` predate several of these
-and still say "5 tools". The list above and `tools/list` are authoritative.
+The list above and `tools/list` on a running server are authoritative;
+`docs/api-reference.md` documents the five core tools in detail.
 
 **`recall` arguments**
 
