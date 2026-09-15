@@ -19,6 +19,7 @@ Supplementary documentation — user guides, API reference, architecture overvie
 ## Contains
 
 - [user-guide.md](./user-guide.md) — Installation, setup, daily usage
+- [integrate-your-agent.md](./integrate-your-agent.md) — Hand-to-your-agent setup contract for Codex CLI, Cursor, and other MCP/hook-capable hosts
 - [api-reference.md](./api-reference.md) — MCP tools, CLI commands, config reference
 - [architecture.md](./architecture.md) — Layer diagram, data flow, module map
 - [score-normalization.md](./score-normalization.md) — RRF score normalization approach

@@ -146,6 +146,15 @@ never spawns workers.
 See the "MCP Server Transports" section of [CLAUDE.md](CLAUDE.md) for the
 worker-pool internals (`worker-pool.ts`, `dispatch.ts`, `worker.ts`).
 
+### Integrating other agents (Codex CLI, Cursor, custom hosts)
+
+[docs/integrate-your-agent.md](docs/integrate-your-agent.md) is written to be
+handed to an AI agent running in the host you want to connect. It states the
+public contract (endpoints, handshake, tools, scoping) and the three behaviors
+to implement (auto-recall before each turn, explicit MCP tools, capture via
+`remember`), with a verify ladder and a worked Codex CLI example. The Hermes
+Agent provider in `interfaces/hermes-plugin/` is the reference implementation.
+
 ## CLI
 
 ```
