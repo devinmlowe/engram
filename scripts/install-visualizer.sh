@@ -6,14 +6,36 @@
 #   ./scripts/install-visualizer.sh uninstall  Unload and remove the service
 #   ./scripts/install-visualizer.sh status     Check service status
 #   ./scripts/install-visualizer.sh restart    Restart the service
+#
+# Port liveness is probed portably: a node TCP connect (node is mandatory for
+# engram anyway), falling back to curl against /api/health. lsof is only an
+# optional fast path when it happens to be installed, so `status` no longer
+# reports "not listening" on hosts without it.
+#
+# Directories follow the CLI: ENGRAM_DATA_DIR (default ~/.local/share/engram) and
+# ENGRAM_LOGS_DIR (default $ENGRAM_DATA_DIR/logs).
 
 set -euo pipefail
 
 LABEL="com.engram.visualizer"
 PLIST_SRC="$(cd "$(dirname "$0")/../launchd" && pwd)/${LABEL}.plist"
 PLIST_DST="${HOME}/Library/LaunchAgents/${LABEL}.plist"
-LOG_DIR="${HOME}/.local/share/engram/logs"
+DATA_DIR="${ENGRAM_DATA_DIR:-$HOME/.local/share/engram}"
+LOG_DIR="${ENGRAM_LOGS_DIR:-$DATA_DIR/logs}"
 ENGRAM_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+PORT="${PORT:-3001}"
+HOST="127.0.0.1"
+
+# Up-front tool checks: one line naming what to install, instead of a bare
+# "command not found" halfway through.
+need() {
+    if ! command -v "$1" >/dev/null 2>&1; then
+        echo "Error: '$1' not found — $2" >&2
+        exit 1
+    fi
+}
+need launchctl "this installer targets macOS launchd; on Linux run the visualizer under your own supervisor (see README)"
+need npm "install Node.js 22+ (https://nodejs.org); it ships npm"
 
 ensure_dirs() {
     mkdir -p "$LOG_DIR"
@@ -36,9 +58,51 @@ resolve_node() {
         if [ -n "$fallback" ]; then
             echo "$fallback"
         else
-            echo "ERROR: No node binary found." >&2
+            echo "ERROR: No node binary found — install Node.js 22+ (https://nodejs.org)." >&2
             exit 1
         fi
+    fi
+}
+
+# port_listening PORT — succeeds when something accepts TCP connections on
+# 127.0.0.1:PORT. Order: lsof (optional fast path), node TCP connect, curl /api/health.
+port_listening() {
+    local port="$1" node_bin
+    if command -v lsof >/dev/null 2>&1; then
+        if lsof -nP -iTCP:"$port" -sTCP:LISTEN -t >/dev/null 2>&1; then
+            return 0
+        fi
+    fi
+    node_bin="$(command -v node 2>/dev/null || true)"
+    if [ -n "$node_bin" ]; then
+        if "$node_bin" -e '
+            const s = require("node:net").connect({ host: process.argv[1], port: Number(process.argv[2]) });
+            s.setTimeout(1500);
+            s.once("connect", () => { s.destroy(); process.exit(0); });
+            s.once("timeout", () => { s.destroy(); process.exit(1); });
+            s.once("error", () => process.exit(1));
+        ' "$HOST" "$port"; then
+            return 0
+        fi
+        return 1
+    fi
+    if command -v curl >/dev/null 2>&1; then
+        if curl -fsS --max-time 2 "http://${HOST}:${port}/api/health" >/dev/null 2>&1; then
+            return 0
+        fi
+        return 1
+    fi
+    echo "Warning: cannot probe port $port — install node (https://nodejs.org) or curl." >&2
+    return 1
+}
+
+# Free the port before (re)installing. Only lsof can map a port to a PID
+# portably enough here; without it we just warn so the failure is not silent.
+stop_port_holder() {
+    if command -v lsof >/dev/null 2>&1; then
+        lsof -nP -iTCP:"$PORT" -sTCP:LISTEN -t 2>/dev/null | xargs kill 2>/dev/null || true
+    elif port_listening "$PORT"; then
+        echo "Warning: something is already listening on ${HOST}:${PORT}; the service cannot bind until it is stopped." >&2
     fi
 }
 
@@ -50,8 +114,8 @@ install_service() {
         exit 1
     fi
 
-    # Kill any existing graph-server process
-    lsof -ti :3001 2>/dev/null | xargs kill 2>/dev/null || true
+    # Stop any existing graph-server process (dev server, previous install)
+    stop_port_holder
 
     NODE_BIN="$(resolve_node)"
     echo "Using node: $NODE_BIN ($($NODE_BIN --version))"
@@ -81,7 +145,7 @@ install_service() {
     echo ""
     echo "Engram visualizer installed and loaded."
     echo "  Plist:  $PLIST_DST"
-    echo "  URL:    http://localhost:3001/graph"
+    echo "  URL:    http://localhost:${PORT}/graph"
     echo "  Logs:   $LOG_DIR/visualizer.log"
     echo ""
     echo "To restart:   $0 restart"
@@ -102,10 +166,10 @@ status_service() {
     if launchctl list "$LABEL" 2>/dev/null; then
         echo ""
         echo "Service is loaded."
-        if lsof -ti :3001 &>/dev/null; then
-            echo "Port 3001: listening"
+        if port_listening "$PORT"; then
+            echo "Port ${PORT}: listening"
         else
-            echo "Port 3001: not listening (may be starting)"
+            echo "Port ${PORT}: not listening (may be starting)"
         fi
     else
         echo "Service is not loaded."

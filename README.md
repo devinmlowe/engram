@@ -74,7 +74,8 @@ If you installed before that file existed, move the keys there and re-run `insta
 [scripts/README.md](./scripts/README.md#service-environment-file-api-keys) for the steps.
 
 Every script checks its external tools up front and names what to install. The visualizer
-installer expects `lsof` for port checks; the Claude Code post-compaction hook
+installer probes its port with `node` (or `curl` against `/api/health`), using `lsof` only as
+an optional fast path when it is installed; the Claude Code post-compaction hook
 (`scripts/compact-dream.sh`) needs only `node` (it honours `ENGRAM_DATA_DIR` / `ENGRAM_LOGS_DIR`),
 and `scripts/commitments-surface.sh` expects `python3`.
 
