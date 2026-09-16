@@ -111,6 +111,33 @@ describe("Semantic Memory CRUD", () => {
       expect(results[0].id).toBe("mem-vec-1");
       expect(results[0].distance).toBeCloseTo(0, 3);
     });
+
+    it("persists extraction_basis, defaulting to 'observed' when unset", () => {
+      const explicitMem = createTestMemory({
+        id: "mem-basis-explicit",
+        extractionBasis: "explicit",
+      });
+      const inferredMem = createTestMemory({
+        id: "mem-basis-inferred",
+        extractionBasis: "inferred",
+      });
+      const unsetMem = createTestMemory({ id: "mem-basis-unset" });
+
+      insertMemory(t.db, explicitMem, randomEmbedding());
+      insertMemory(t.db, inferredMem, randomEmbedding());
+      insertMemory(t.db, unsetMem, randomEmbedding());
+
+      const getBasis = (id: string) =>
+        (
+          t.db
+            .prepare("SELECT extraction_basis FROM memories WHERE id = ?")
+            .get(id) as { extraction_basis: string }
+        ).extraction_basis;
+
+      expect(getBasis("mem-basis-explicit")).toBe("explicit");
+      expect(getBasis("mem-basis-inferred")).toBe("inferred");
+      expect(getBasis("mem-basis-unset")).toBe("observed");
+    });
   });
 
   describe("getMemory", () => {

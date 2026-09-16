@@ -126,8 +126,8 @@ export function insertMemory(
       INSERT INTO memories
         (id, type, content, context, confidence, importance, access_count,
          last_accessed, created_at, updated_at, source_exchanges, superseded_by, is_active, source, scope,
-         event_ts)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         event_ts, extraction_basis)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       memory.id,
       memory.type,
@@ -145,6 +145,7 @@ export function insertMemory(
       memory.source ?? "user",
       memory.scope ?? "global",
       memory.eventTs ?? resolveEventTs(db, memory.sourceExchanges),
+      memory.extractionBasis ?? "observed",
     );
 
     // 2. Get rowid and insert into FTS5

@@ -37,6 +37,8 @@ export interface Memory {
    * when no source exchange resolves — query-time falls back to createdAt.
    */
   eventTs?: number;
+  /** How this memory was extracted; defaults to 'observed' when unset. */
+  extractionBasis?: "explicit" | "inferred" | "observed";
 }
 
 export interface Conflict {

@@ -252,6 +252,7 @@ function insertNovelMemory(
     sourceExchanges: fact.sourceExchangeIds,
     isActive: true,
     source: "dream",
+    extractionBasis: fact.extractionBasis,
   };
 
   insertMemory(db, memory, embedding);
@@ -297,6 +298,7 @@ async function resolveMemoryConflict(
         sourceExchanges: newFact.sourceExchangeIds,
         isActive: true,
         source: "dream",
+        extractionBasis: newFact.extractionBasis,
       };
 
       applyContradiction(db, existingMemory.id);
@@ -335,6 +337,7 @@ async function resolveMemoryConflict(
         sourceExchanges: newFact.sourceExchangeIds,
         isActive: true,
         source: "dream",
+        extractionBasis: newFact.extractionBasis,
       };
 
       // Both stay active, but the existing memory was contradicted: persist
