@@ -68,8 +68,8 @@ up automatically when you open the engram checkout itself in Claude Code.
 
 The installers render `launchd/*.plist` from the checkout you run them in, whatever its
 location, and use whichever `node` they find (fnm, Homebrew, nvm, or system). They expect
-`lsof` for port checks; the Claude Code post-compaction hook (`scripts/compact-dream.sh`)
-expects `jq`, and `scripts/commitments-surface.sh` expects `python3`.
+`lsof` for port checks; the Claude Code post-compaction hook (`scripts/compact-dream.sh`) needs
+only `node` (it honours `ENGRAM_DATA_DIR` / `ENGRAM_LOGS_DIR`), and `scripts/commitments-surface.sh` expects `python3`.
 
 **Supported platforms**
 
@@ -80,7 +80,7 @@ expects `jq`, and `scripts/commitments-surface.sh` expects `python3`.
 | Web visualizer (`node dist/interfaces/web/server.js`) | yes | yes | yes |
 | Visualizer keep-alive service | launchd | run under your own supervisor (systemd user unit, pm2) | see [issue #3](https://github.com/devinmlowe/engram/issues/3) |
 | Nightly dream daemon | launchd | cron / systemd timer running `engram dream` | Task Scheduler running `engram dream` |
-| Claude Code hooks (`scripts/*.sh`) | yes | yes (bash, `jq`) | WSL or Git Bash only |
+| Claude Code hooks (`scripts/*.sh`) | yes | yes (bash, node) | WSL or Git Bash only |
 
 Native dependencies (`better-sqlite3`, `sqlite-vec`, `onnxruntime-node`) ship prebuilt binaries
 for x64 and arm64 macOS/Linux and x64 Windows. On other targets (Windows on ARM, 32-bit ARM
