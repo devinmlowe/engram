@@ -290,7 +290,7 @@ curl -s http://127.0.0.1:9907/mcp -H "mcp-session-id: $SID" \
 curl -s http://127.0.0.1:9907/mcp -H "mcp-session-id: $SID" \
   -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
-#    -> twelve tools
+#    -> fourteen tools (recall, remember, commitments, ... — tools/list is authoritative)
 
 # 3. Round trip
 #    remember {"content":"integration probe: the sky is green","type":"fact","source":"user"}

@@ -331,6 +331,44 @@ to implement (auto-recall before each turn, explicit MCP tools, capture via
 `remember`), with a verify ladder and a worked Codex CLI example. The Hermes
 Agent provider in `interfaces/hermes-plugin/` is the reference implementation.
 
+## Updating an existing installation
+
+Schema migrations run automatically on every database open (checkpointed in
+`schema_migrations`, provably no-op on re-run), and your data lives outside
+the repo (`~/.local/share/engram/engram.db`) — updating is a pull + rebuild +
+service restart, never a re-install:
+
+```bash
+git fetch origin
+git status --short        # resolve any local changes first
+git pull origin main
+# if package-lock.json changed in the diff, reinstall dependencies:
+#   npm install
+npm install               # also rebuilds via the "prepare" hook and runs the
+                          # install preflight (node >= 22, platform checks)
+```
+
+Then restart whatever supervises the running processes so they load the new
+`dist/` output:
+
+| Platform | MCP HTTP daemon | Dream daemon | Visualizer |
+|---|---|---|---|
+| macOS (launchd) | `launchctl kickstart -k gui/$(id -u)/ai.hermes.engram-mcp` | `launchctl kickstart -k gui/$(id -u)/com.engram.dreamstate` | see scripts/install-visualizer.sh |
+| Windows (Task Scheduler) | `.\scripts\install-mcp-daemon.ps1 restart` | `.\scripts\install-daemon.ps1 restart` | `.\scripts\install-visualizer.ps1 restart` |
+| Linux (systemd) | `systemctl --user restart engram-mcp` | `systemctl --user restart engram-dream` | see docs |
+
+Verify after restarting:
+
+```bash
+engram health      # database, embedding model, MCP entry point
+engram doctor      # node version, platform/arch, native modules, model cache
+engram search "smoke test"   # end-to-end recall through the new build
+```
+
+`engram doctor` is the first stop if anything looks wrong after an update —
+it reports node version, platform/arch, better-sqlite3 and sqlite-vec native
+module state, and the local model cache.
+
 ## CLI
 
 ```
