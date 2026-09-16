@@ -32,13 +32,16 @@ export function resolveDefaultDataDir(
   return base ? join(base, "engram") : join(home, ".local", "share", "engram");
 }
 
+// Snapshot of the platform default at import time. The path fields below are
+// placeholders only: loadConfig() always recomputes them from ENGRAM_DATA_DIR /
+// resolveDefaultDataDir(env) so environment changes after import still apply.
+const IMPORT_TIME_DATA_DIR = resolveDefaultDataDir();
+
 const defaults: EngramConfig = {
-  // Path fields are placeholders: loadConfig() always recomputes them from
-  // ENGRAM_DATA_DIR / resolveDefaultDataDir() so env changes after import apply.
-  dataDir: resolveDefaultDataDir(),
-  dbPath: join(resolveDefaultDataDir(), "engram.db"),
-  archiveDir: join(resolveDefaultDataDir(), "archive"),
-  logsDir: join(resolveDefaultDataDir(), "logs"),
+  dataDir: IMPORT_TIME_DATA_DIR,
+  dbPath: join(IMPORT_TIME_DATA_DIR, "engram.db"),
+  archiveDir: join(IMPORT_TIME_DATA_DIR, "archive"),
+  logsDir: join(IMPORT_TIME_DATA_DIR, "logs"),
   claudeProjectsDir: join(HOME, ".claude", "projects"),
 
   embedding: {
