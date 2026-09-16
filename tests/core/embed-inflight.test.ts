@@ -7,6 +7,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const state = vi.hoisted(() => ({ modelCalls: 0, loads: 0 }));
 
 vi.mock("@xenova/transformers", () => ({
+  // initEmbeddings points env.cacheDir at ENGRAM_MODEL_CACHE_DIR before loading
+  env: { cacheDir: "/mock/.cache/" },
   layer_norm: vi.fn(),
   pipeline: vi.fn(async (_task: string, model: string) => {
     if (model.includes("nomic")) throw new Error("force MiniLM fallback (no post-processing)");

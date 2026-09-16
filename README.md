@@ -26,9 +26,10 @@ Designed as an MCP server for Claude Code and other LLM agents, with CLI and web
 ```bash
 git clone https://github.com/devinmlowe/engram.git
 cd engram
-npm install          # also runs the TypeScript build via the "prepare" script
+npm install          # prints a platform preflight verdict, then builds via the "prepare" script
 npm link             # puts `engram` on your PATH (or run `node dist/interfaces/cli/index.js` directly)
 
+engram doctor        # node version, platform/arch, native modules, model cache — all [ok]?
 engram init          # creates engram.db in the data dir (default ~/.local/share/engram; see Configuration) and downloads the embedding model
 engram sync          # index conversations from ~/.claude/projects (optional)
 engram search "what did I decide about caching"
@@ -36,8 +37,10 @@ engram search "what did I decide about caching"
 
 > **Heads up: first run downloads models.** `engram init`, the first search, and the test
 > suite pull `nomic-ai/nomic-embed-text-v1.5` (embeddings) and `Xenova/bge-reranker-base`
-> (reranker) from Hugging Face — several hundred MB in total — into the
-> `@xenova/transformers` cache under `node_modules/`. This happens once; later runs are offline.
+> (reranker) from Hugging Face — several hundred MB in total — into the model cache. By default
+> that cache is `node_modules/@xenova/transformers/.cache/`, which every `npm install` / `npm ci`
+> wipes; set `ENGRAM_MODEL_CACHE_DIR` to keep the models somewhere durable (see
+> [Model cache](#model-cache)). Downloads happen once; later runs are offline.
 > Set `ENGRAM_RERANK_ENABLED=false` to skip the reranker model.
 
 **Use it from Claude Code (MCP)**
@@ -106,10 +109,48 @@ post-compaction hook (`scripts/compact-dream.sh`) expects `jq`, and
 | Nightly dream daemon | launchd (`scripts/install-daemon.sh`) | systemd user timer `engram-dream.timer` (`scripts/install-daemon.sh`) | Task Scheduler (`scripts/install-daemon.ps1`) |
 | Claude Code hooks (`scripts/*.sh`) | yes | yes (bash, `jq`) | WSL or Git Bash only |
 
-Native dependencies (`better-sqlite3`, `sqlite-vec`, `onnxruntime-node`) ship prebuilt binaries
-for x64 and arm64 macOS/Linux and x64 Windows. On other targets (Windows on ARM, 32-bit ARM
-Linux) `npm install` needs a C++ toolchain, and `sqlite-vec` has no prebuilt at all, so
-`engram init` will fail with a clear platform error. CI runs the test suite on all three OSes.
+**Supported platform/arch set**
+
+Engram depends on three native/prebuilt chains: `better-sqlite3`, `sqlite-vec` (alpha; ships
+platform packages only), and `onnxruntime-node` (pulled in by `@xenova/transformers`). Engram
+works where all three have prebuilt binaries:
+
+| `process.platform`-`process.arch` | Machines | Status |
+|---|---|---|
+| `darwin-arm64` | Apple silicon Macs | supported (CI) |
+| `darwin-x64` | Intel Macs | supported |
+| `linux-x64` | x86-64 Linux (glibc) | supported (CI) |
+| `linux-arm64` | 64-bit ARM Linux (glibc): Graviton, Raspberry Pi OS 64-bit, Apple-silicon VMs | supported |
+| `win32-x64` | x86-64 Windows 10/11 | supported (CI, experimental) |
+| `win32-arm64` | Windows on ARM (Snapdragon, Apple-silicon VMs running Windows 11 ARM) | **not supported** — see caveats |
+| `linux-arm` | 32-bit ARM Linux (armv7: Raspberry Pi OS 32-bit, older SBCs) | **not supported** — see caveats |
+
+Two things tell you where you stand: `npm install` runs a non-fatal **postinstall preflight**
+(`scripts/preflight.cjs`) that prints `[ok]`/`[FAIL]` lines for node, platform/arch,
+better-sqlite3 and sqlite-vec without ever failing the install (`ENGRAM_SKIP_PREFLIGHT=1` silences
+it; `node scripts/preflight.cjs --strict` exits non-zero for CI), and `engram doctor` runs the full
+post-build version of the same checks plus the model cache. `package.json` deliberately does not
+declare hard `os`/`cpu` fields: those would refuse to install for anyone with a working toolchain
+on an unlisted target.
+
+**Caveats: Windows on ARM and armv7.** `sqlite-vec` publishes no binary for `win32-arm64` or
+`linux-arm` (armv7), and the `onnxruntime-node` version pinned by `@xenova/transformers` 2.x has
+no build for them either, so even a successful source build of `better-sqlite3` leaves
+`engram init` failing on the sqlite-vec load. On Windows on ARM the practical workaround is to
+install the **x64** Node.js build: Windows 11 runs it under emulation and the `win32-x64` prebuilts
+load (slower, not covered by CI). On armv7 boards, use a 64-bit OS image (`linux-arm64`).
+
+**Toolchain needed elsewhere.** On any target without prebuilts, `npm install` compiles
+`better-sqlite3` from source with node-gyp, which needs a C++ toolchain and Python 3:
+
+- Windows: Visual Studio 2022 **Build Tools** with the "Desktop development with C++" workload
+  (MSVC compiler + Windows SDK) and Python 3. node-gyp finds them automatically; if it picks the
+  wrong Visual Studio run `npm config set msvs_version 2022`.
+- Linux: `gcc`/`g++`, `make`, and `python3` — Debian/Ubuntu `sudo apt install build-essential python3`;
+  Fedora `sudo dnf install gcc-c++ make python3`; Alpine `apk add build-base python3` (musl builds are untested).
+- macOS: Xcode Command Line Tools (`xcode-select --install`).
+
+CI runs lint and the full test suite on all three OSes (x64 Linux/Windows, arm64 macOS).
 
 ## Core Principles
 
@@ -217,7 +258,8 @@ engram explore <name>  # Explore entity connections
 engram entities        # List/search entities
 engram relationships   # Show relationships for an entity
 engram stats           # Database statistics
-engram health          # System health check
+engram health          # System health check (database, model, Ollama, MCP entry point)
+engram doctor          # Runtime diagnostics: node, platform/arch, better-sqlite3, sqlite-vec, model cache (--json)
 engram migrate --source <db>   # Import a legacy conversation-index SQLite DB (--source is required; no default path)
 engram validate --source <db>  # Validate migration integrity against that source DB
 engram backfill-event-ts  # Backfill event-time timestamps (temporal recall)
@@ -341,6 +383,27 @@ npm run dream        # Run dream consolidation
 npm run lint         # Type-check without emit
 ```
 
+## Model cache
+
+`@xenova/transformers` downloads ONNX model weights on first use (embeddings
+`nomic-ai/nomic-embed-text-v1.5`, reranker `Xenova/bge-reranker-base`, and the NLI model used by
+consolidation). Its default cache directory is **inside the package**,
+`node_modules/@xenova/transformers/.cache/`, so every `npm install`, `npm ci`, or `rm -rf
+node_modules` throws the models away and the next run re-downloads several hundred MB.
+
+Set `ENGRAM_MODEL_CACHE_DIR` to relocate the cache; engram applies it to every model loader
+(embeddings, reranker, NLI) before the first download:
+
+```bash
+export ENGRAM_MODEL_CACHE_DIR="$HOME/.local/share/engram/models"   # survives reinstalls
+engram doctor                                                       # shows the effective location + writability
+```
+
+Any absolute path works (a shared network volume is fine; a read-only one works for already
+downloaded models but new downloads fail). `engram doctor` prints the directory in use, whether it
+is writable, and whether it came from `ENGRAM_MODEL_CACHE_DIR` or the library default. CI keeps
+the default location and caches `node_modules/@xenova/transformers/.cache` between runs.
+
 ## Configuration
 
 All settings are environment variables; nothing is read from a config file.
@@ -359,6 +422,8 @@ All settings are environment variables; nothing is read from a config file.
 | `ENGRAM_CLAUDE_PROJECTS_DIR` | `~/.claude/projects` | Where `engram sync` looks for Claude Code conversations |
 | `ENGRAM_EMBEDDING_DIMS` | `256` | Matryoshka embedding dimensions (must match the existing DB) |
 | `ENGRAM_RERANK_ENABLED` | `true` | Set to `false` or `0` to disable the cross-encoder reranker |
+| `ENGRAM_MODEL_CACHE_DIR` | `node_modules/@xenova/transformers/.cache/` | Where model weights are downloaded/cached (see [Model cache](#model-cache)) |
+| `ENGRAM_SKIP_PREFLIGHT` | — | Set to `1` to silence the `npm install` platform preflight |
 | `ENGRAM_CHUNKING_STRATEGY` | `fixed` | `fixed` or `adaptive` (content-aware boundaries) |
 | `ENGRAM_BIND` | `127.0.0.1` | Web visualizer bind address (`0.0.0.0` to expose on the network) |
 | `PORT` | `3001` | Web visualizer port |

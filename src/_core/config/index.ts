@@ -102,6 +102,10 @@ export function loadConfig(overrides?: Partial<EngramConfig>): EngramConfig {
       env.ENGRAM_CLAUDE_PROJECTS_DIR ??
       overrides?.claudeProjectsDir ??
       defaults.claudeProjectsDir,
+    modelCacheDir:
+      (env.ENGRAM_MODEL_CACHE_DIR?.trim() || undefined) ??
+      overrides?.modelCacheDir ??
+      undefined,
 
     embedding: {
       ...defaults.embedding,

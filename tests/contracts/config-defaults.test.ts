@@ -199,6 +199,21 @@ describe("Config Defaults Contract", () => {
     expect(c.dbPath).toBe("/other/path.db"); // explicit wins over cascade
   });
 
+  it("ENGRAM_MODEL_CACHE_DIR is unset by default (transformers.js default applies)", () => {
+    expect(loadConfig().modelCacheDir).toBeUndefined();
+  });
+
+  it("ENGRAM_MODEL_CACHE_DIR overrides modelCacheDir", () => {
+    process.env.ENGRAM_MODEL_CACHE_DIR = "/tmp/engram-models";
+    expect(loadConfig().modelCacheDir).toBe("/tmp/engram-models");
+  });
+
+  it("blank ENGRAM_MODEL_CACHE_DIR is treated as unset", () => {
+    process.env.ENGRAM_MODEL_CACHE_DIR = "   ";
+    expect(loadConfig().modelCacheDir).toBeUndefined();
+    expect(loadConfig({ modelCacheDir: "/from/overrides" }).modelCacheDir).toBe("/from/overrides");
+  });
+
   it("ENGRAM_EMBEDDING_DIMS overrides dimensions", () => {
     process.env.ENGRAM_EMBEDDING_DIMS = "768";
     const c = loadConfig();
