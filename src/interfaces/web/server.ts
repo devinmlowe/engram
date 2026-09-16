@@ -37,6 +37,7 @@ import { handleWordFrequencies } from "./routes/words.js";
 import { handleHealth } from "./routes/health.js";
 import { broadcastUpdate } from "./routes/sse.js";
 import { resetWordCache } from "./data/word-queries.js";
+import { resetThresholdCache } from "./data/graph-queries.js";
 
 // Page templates
 import { graphPage } from "./pages/graph.html.js";
@@ -85,7 +86,11 @@ function serve() {
     watcher = watch(DB_PATH + "-wal", () => {
       if (debounce) clearTimeout(debounce);
       debounce = setTimeout(() => {
-        resetWordCache(); // the DB changed; don't serve a stale word cloud for up to a minute
+        // The DB changed (engram sync/dream, hook ingestion, or any external writer).
+        // Drop every per-process cache so the next request recomputes from live data;
+        // a threshold computed against an empty DB must not outlive the first import.
+        resetWordCache();
+        resetThresholdCache();
         broadcastUpdate(db);
       }, 5000);
     });

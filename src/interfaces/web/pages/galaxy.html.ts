@@ -139,7 +139,7 @@ export function galaxyPage(): string {
 
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
-<script src="https://unpkg.com/3d-force-graph"></script>
+<script src="https://unpkg.com/3d-force-graph@1.79.1"></script>
 <script>
 // Panel logic
 document.getElementById('settings-toggle').addEventListener('click', () => {
