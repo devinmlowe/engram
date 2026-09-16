@@ -67,9 +67,16 @@ up automatically when you open the engram checkout itself in Claude Code.
 ```
 
 The installers render `launchd/*.plist` from the checkout you run them in, whatever its
-location, and use whichever `node` they find (fnm, Homebrew, nvm, or system). They expect
-`lsof` for port checks; the Claude Code post-compaction hook (`scripts/compact-dream.sh`) needs
-only `node` (it honours `ENGRAM_DATA_DIR` / `ENGRAM_LOGS_DIR`), and `scripts/commitments-surface.sh` expects `python3`.
+location, and use whichever `node` they find (fnm, Homebrew, nvm, or system). The dream daemon
+takes its API keys from `~/.config/engram/env` (mode 600, created by the installer with a
+commented template; `$XDG_CONFIG_HOME` is honoured) — the plist itself never contains secrets.
+If you installed before that file existed, move the keys there and re-run `install`; see
+[scripts/README.md](./scripts/README.md#service-environment-file-api-keys) for the steps.
+
+Every script checks its external tools up front and names what to install. The visualizer
+installer expects `lsof` for port checks; the Claude Code post-compaction hook
+(`scripts/compact-dream.sh`) needs only `node` (it honours `ENGRAM_DATA_DIR` / `ENGRAM_LOGS_DIR`),
+and `scripts/commitments-surface.sh` expects `python3`.
 
 **Supported platforms**
 
@@ -317,7 +324,9 @@ npm run lint         # Type-check without emit
 
 ## Configuration
 
-All settings are environment variables; nothing is read from a config file.
+All settings are environment variables; the CLI and MCP server read nothing from a config file.
+The one exception is the launchd dream daemon, whose launcher (`scripts/run-dream.sh`) sources
+`~/.config/engram/env` so API keys stay out of the plist — any variable below can be set there.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
