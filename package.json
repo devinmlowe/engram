@@ -12,11 +12,13 @@
     "prompts",
     "launchd",
     ".claude-plugin",
-    ".mcp.json"
+    ".mcp.json",
+    "scripts/preflight.cjs"
   ],
   "scripts": {
     "build": "tsc",
     "prepare": "npm run build",
+    "postinstall": "node scripts/preflight.cjs",
     "dev": "tsx src/interfaces/cli/index.ts",
     "test": "vitest",
     "test:run": "vitest run",
