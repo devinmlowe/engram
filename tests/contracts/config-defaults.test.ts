@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { loadConfig } from "../../src/_core/config/index.js";
+import { loadConfig, resolveDefaultDataDir } from "../../src/_core/config/index.js";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -19,10 +19,16 @@ const HOME = homedir();
 describe("Config Defaults Contract", () => {
   const envBackup: Record<string, string | undefined> = {};
 
+  // Platform data-dir vars also steer the default (LOCALAPPDATA is always set
+  // on Windows CI), so they are cleared alongside ENGRAM_* to pin the fallback.
+  const PLATFORM_DIR_VARS = ["XDG_DATA_HOME", "LOCALAPPDATA"];
+  const isManaged = (key: string) =>
+    key.startsWith("ENGRAM_") || PLATFORM_DIR_VARS.includes(key);
+
   beforeEach(() => {
-    // Save and clear all ENGRAM_ env vars
+    // Save and clear all managed env vars
     for (const key of Object.keys(process.env)) {
-      if (key.startsWith("ENGRAM_")) {
+      if (isManaged(key)) {
         envBackup[key] = process.env[key];
         delete process.env[key];
       }
@@ -32,7 +38,7 @@ describe("Config Defaults Contract", () => {
   afterEach(() => {
     // Restore env vars
     for (const key of Object.keys(process.env)) {
-      if (key.startsWith("ENGRAM_")) delete process.env[key];
+      if (isManaged(key)) delete process.env[key];
     }
     for (const [key, val] of Object.entries(envBackup)) {
       if (val !== undefined) process.env[key] = val;
@@ -48,6 +54,71 @@ describe("Config Defaults Contract", () => {
     expect(c.archiveDir).toBe(join(HOME, ".local", "share", "engram", "archive"));
     expect(c.logsDir).toBe(join(HOME, ".local", "share", "engram", "logs"));
     expect(c.claudeProjectsDir).toBe(join(HOME, ".claude", "projects"));
+  });
+
+  // ── Platform Data-Dir Resolution ───────────────────────────────
+  // Only consulted when ENGRAM_DATA_DIR is unset; the fallback is the
+  // historical location so existing installs never move.
+
+  it("falls back to ~/.local/share/engram on every platform when no var is set", () => {
+    for (const platform of ["darwin", "linux", "win32"] as const) {
+      expect(resolveDefaultDataDir({}, platform, "/home/u")).toBe(
+        join("/home/u", ".local", "share", "engram"),
+      );
+    }
+  });
+
+  it("macOS default stays ~/.local/share/engram (XDG_DATA_HOME normally unset)", () => {
+    expect(resolveDefaultDataDir({ LOCALAPPDATA: "/ignored" }, "darwin", "/Users/u")).toBe(
+      join("/Users/u", ".local", "share", "engram"),
+    );
+  });
+
+  it("honors XDG_DATA_HOME on Linux and macOS", () => {
+    expect(resolveDefaultDataDir({ XDG_DATA_HOME: "/xdg" }, "linux", "/home/u")).toBe(
+      join("/xdg", "engram"),
+    );
+    expect(resolveDefaultDataDir({ XDG_DATA_HOME: "/xdg" }, "darwin", "/Users/u")).toBe(
+      join("/xdg", "engram"),
+    );
+  });
+
+  it("honors LOCALAPPDATA on Windows and ignores XDG_DATA_HOME there", () => {
+    const env = { LOCALAPPDATA: "C:\\Users\\u\\AppData\\Local", XDG_DATA_HOME: "/xdg" };
+    expect(resolveDefaultDataDir(env, "win32", "C:\\Users\\u")).toBe(
+      join("C:\\Users\\u\\AppData\\Local", "engram"),
+    );
+  });
+
+  it("treats blank platform vars as unset", () => {
+    expect(resolveDefaultDataDir({ XDG_DATA_HOME: "  " }, "linux", "/home/u")).toBe(
+      join("/home/u", ".local", "share", "engram"),
+    );
+    expect(resolveDefaultDataDir({ LOCALAPPDATA: "" }, "win32", "/home/u")).toBe(
+      join("/home/u", ".local", "share", "engram"),
+    );
+  });
+
+  it("loadConfig derives every path from the platform default", () => {
+    process.env.XDG_DATA_HOME = "/xdg-home";
+    const c = loadConfig();
+    if (process.platform === "win32") {
+      expect(c.dataDir).toBe(join(HOME, ".local", "share", "engram"));
+    } else {
+      expect(c.dataDir).toBe(join("/xdg-home", "engram"));
+      expect(c.dbPath).toBe(join("/xdg-home", "engram", "engram.db"));
+      expect(c.archiveDir).toBe(join("/xdg-home", "engram", "archive"));
+      expect(c.logsDir).toBe(join("/xdg-home", "engram", "logs"));
+    }
+  });
+
+  it("ENGRAM_DATA_DIR wins over XDG_DATA_HOME and LOCALAPPDATA", () => {
+    process.env.XDG_DATA_HOME = "/xdg-home";
+    process.env.LOCALAPPDATA = "/local-app-data";
+    process.env.ENGRAM_DATA_DIR = "/explicit";
+    const c = loadConfig();
+    expect(c.dataDir).toBe("/explicit");
+    expect(c.dbPath).toBe(join("/explicit", "engram.db"));
   });
 
   // ── Embedding Defaults ─────────────────────────────────────────
