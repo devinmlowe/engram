@@ -246,3 +246,71 @@ describe("Windows nightly dream Task Scheduler script (issue #6)", () => {
     expect(row).toContain("install-daemon.ps1");
   });
 });
+
+describe("Windows MCP daemon supervision scripts (issue #12)", () => {
+  const installer = join(ROOT, "scripts", "install-mcp-daemon.ps1");
+  const runner = join(ROOT, "scripts", "run-mcp-daemon.ps1");
+
+  it("both PowerShell scripts ship and the installer invokes the runner it expects", () => {
+    expect(existsSync(installer)).toBe(true);
+    expect(existsSync(runner)).toBe(true);
+    const src = readFileSync(installer, "utf-8");
+    expect(src).toContain("run-mcp-daemon.ps1");
+    expect(src).toContain("/health"); // liveness contract shared with the other installers
+  });
+
+  it("registers a per-user MCP task at logon with all six control verbs", () => {
+    const src = readFileSync(installer, "utf-8");
+    expect(src, "MCP task name default").toContain("$TaskName = 'MCP'");
+    expect(src, "logon trigger").toContain("-AtLogOn");
+    expect(src, "registers the scheduled task").toContain("Register-ScheduledTask");
+    for (const verb of ["install", "uninstall", "start", "stop", "restart", "status"]) {
+      expect(src, `verb ${verb}`).toContain(`'${verb}'`);
+    }
+  });
+
+  it("stays on loopback: no bind parameter, no 0.0.0.0, 127.0.0.1 in both scripts", () => {
+    const installerSrc = readFileSync(installer, "utf-8");
+    const runnerSrc = readFileSync(runner, "utf-8");
+    expect(installerSrc).toContain("127.0.0.1");
+    expect(runnerSrc).toContain("127.0.0.1");
+    expect(installerSrc).not.toContain("0.0.0.0");
+    expect(runnerSrc).not.toContain("0.0.0.0");
+    expect(installerSrc, "MCP has no configurable bind address").not.toMatch(/\$Bind\b/);
+  });
+
+  it("runner launches the compiled MCP server over HTTP with bounded restart-on-failure", () => {
+    const src = readFileSync(runner, "utf-8");
+    expect(src, "compiled MCP entry point").toContain("dist\\interfaces\\mcp\\server.js");
+    expect(src).toContain("'--http'");
+    expect(src).toContain("'--port'");
+    expect(src, "bounded restart window").toContain("MaxRestarts");
+    expect(src, "bounded restart window").toContain("RestartWindowSeconds");
+  });
+
+  it("installer reaps orphaned MCP processes via taskkill and a CIM process sweep", () => {
+    const src = readFileSync(installer, "utf-8");
+    expect(src).toContain("taskkill.exe");
+    expect(src, "tree kill").toContain("/T /F");
+    expect(src, "leftover-process sweep").toContain("Win32_Process");
+  });
+
+  it("resolves paths from their own location and env, never a personal layout or embedded credentials", () => {
+    for (const p of [installer, runner]) {
+      const src = readFileSync(p, "utf-8");
+      expect(src, `${p} derives RepoRoot from the script location`).toContain("$MyInvocation.MyCommand.Path");
+      expect(src, "honors ENGRAM_DATA_DIR like the CLI").toContain("ENGRAM_DATA_DIR");
+      expect(src).not.toMatch(/C:\\Users\\[A-Za-z]/);
+      expect(src).not.toMatch(/\/Users\/[A-Za-z]/);
+      expect(src, "no credential names in the task surface").not.toMatch(/API_KEY/);
+    }
+  });
+
+  it("README documents the Windows MCP daemon path and platform matrix row", () => {
+    const readme = readFileSync(join(ROOT, "README.md"), "utf-8");
+    expect(readme).toContain("install-mcp-daemon.ps1");
+    const row = readme.split("\n").find((l) => l.startsWith("| MCP HTTP daemon keep-alive"));
+    expect(row, "platform matrix row present").toBeTruthy();
+    expect(row).toContain("install-mcp-daemon.ps1");
+  });
+});

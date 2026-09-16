@@ -57,9 +57,11 @@ engram; copy it rather than writing a new one.
   authentication. Remote hosts need an SSH tunnel or Tailscale-style overlay;
   do not expose the port.
 - **Windows note.** engram is developed and exercised on macOS. The launchd
-  supervision scripts in `launchd/` are macOS-only. On Windows or Linux the
-  agent must supervise the HTTP daemon with Task Scheduler, a systemd user
-  unit, or an equivalent. Native modules (`better-sqlite3`, `sqlite-vec`) must
+  supervision scripts in `launchd/` are macOS-only. On Windows the repo now
+  ships `scripts/install-mcp-daemon.ps1`, which registers a per-user Task
+  Scheduler task (`\Engram\MCP`, at logon) for the HTTP daemon. On Linux the
+  agent must supervise the HTTP daemon with a systemd user unit or an
+  equivalent. Native modules (`better-sqlite3`, `sqlite-vec`) must
   build for the platform; treat a successful `engram health` as the gate.
 
 ---

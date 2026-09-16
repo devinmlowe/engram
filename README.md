@@ -86,7 +86,84 @@ On Windows, use the built-in per-user Task Scheduler adapters:
 .\scripts\install-daemon.ps1 status
 .\scripts\install-visualizer.ps1 install
 .\scripts\install-visualizer.ps1 status
+.\scripts\install-mcp-daemon.ps1 install           # per-user Task Scheduler task for the MCP HTTP daemon (loopback only)
+.\scripts\install-mcp-daemon.ps1 status
 ```
+
+**Windows: MCP HTTP daemon lifecycle**
+
+`scripts/install-mcp-daemon.ps1` registers a per-user Task Scheduler task,
+`\Engram\MCP`, that starts at logon and runs `scripts/run-mcp-daemon.ps1` with
+absolute paths to `node.exe` and the compiled `dist\interfaces\mcp\server.js`.
+The server binds `127.0.0.1:9907` by design — it has no authentication and
+never binds any other address, so the task never exposes the MCP port to the
+network.
+
+Six verbs, same shape as the other installers: `install`, `uninstall`,
+`start`, `stop`, `restart`, `status`. `status` reports both the Task
+Scheduler state and a live `GET /health` check against the daemon.
+
+Process hygiene: the runner writes its own pid and the child `node.exe` pid
+to files under the data directory; `stop` and `uninstall` tree-kill those
+pids with `taskkill.exe` and then sweep for any leftover `node.exe` or
+`run-mcp-daemon.ps1` process by command line, so a stale or missing pid file
+can never leave an orphan process behind.
+
+Restart-on-failure is bounded at two levels: the runner gives up and exits 1
+after 5 restarts within a 600-second window, and Task Scheduler itself
+retries a failed task 3 times at 1-minute intervals before stopping — so a
+broken install cannot restart-loop forever. A clean server exit (code 0) is
+treated as a deliberate stop and is not restarted. The task inherits your
+user-scope environment variables (API keys included); nothing is copied
+into the task definition or committed to the repo.
+
+**Reboot smoke-test procedure** (copy-paste each block in order):
+
+1. Install and confirm it's healthy:
+   ```powershell
+   .\scripts\install-mcp-daemon.ps1 install
+   .\scripts\install-mcp-daemon.ps1 status   # taskState Running, healthy True
+   ```
+2. Restart Windows and log back in — do not start anything by hand.
+3. Confirm the task came back on its own:
+   ```powershell
+   .\scripts\install-mcp-daemon.ps1 status   # taskState Running, healthy True
+   curl.exe http://127.0.0.1:9907/health     # { "status": "ok", ... }
+   ```
+4. Confirm the MCP handshake works — initialize, then the `initialized`
+   notification, then `tools/list`, threading the `Mcp-Session-Id` response
+   header through each call:
+   ```powershell
+   curl.exe -s -D headers.txt -o init.json http://127.0.0.1:9907/mcp `
+     -H "Content-Type: application/json" `
+     -H "Accept: application/json, text/event-stream" `
+     -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"smoke-test","version":"1.0"}}}'
+   $sid = (Select-String -Path headers.txt -Pattern '^Mcp-Session-Id:\s*(\S+)').Matches.Groups[1].Value
+
+   curl.exe -s http://127.0.0.1:9907/mcp `
+     -H "Content-Type: application/json" `
+     -H "Accept: application/json, text/event-stream" `
+     -H "Mcp-Session-Id: $sid" `
+     -d '{"jsonrpc":"2.0","method":"notifications/initialized"}'
+
+   curl.exe -s http://127.0.0.1:9907/mcp `
+     -H "Content-Type: application/json" `
+     -H "Accept: application/json, text/event-stream" `
+     -H "Mcp-Session-Id: $sid" `
+     -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
+   ```
+5. Confirm Codex/Claude Code can `recall` and `remember` through this same
+   server without you starting Node by hand.
+6. Stop it and confirm no MCP process survives:
+   ```powershell
+   .\scripts\install-mcp-daemon.ps1 stop
+   Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" | Where-Object CommandLine -like '*mcp\server.js*'   # empty
+   ```
+7. Uninstall and confirm only the visualizer task remains:
+   ```powershell
+   .\scripts\install-mcp-daemon.ps1 uninstall
+   Get-ScheduledTask -TaskPath '\Engram\'   # lists Visualizer, not MCP
+   ```
 
 All visualizer paths run the same compiled Node server on loopback at `http://127.0.0.1:3001`
 and write logs under the engram data directory; all dream paths run
@@ -116,6 +193,7 @@ or `python3`.
 | Web visualizer (`node dist/interfaces/web/server.js`) | yes | yes | yes |
 | Visualizer keep-alive service | launchd (`scripts/install-visualizer.sh`) | run under your own supervisor (systemd user unit, pm2) | Task Scheduler (`scripts/install-visualizer.ps1`) |
 | Nightly dream daemon | launchd (`scripts/install-daemon.sh`) | systemd user timer `engram-dream.timer` (`scripts/install-daemon.sh`) | Task Scheduler (`scripts/install-daemon.ps1`) |
+| MCP HTTP daemon keep-alive (`--http --port 9907`) | run under your own supervisor (launchd agent, KeepAlive) | run under your own supervisor (systemd user unit) | Task Scheduler (`scripts/install-mcp-daemon.ps1`) |
 | Claude Code hooks (`scripts/*.sh`) | yes | yes (bash, node) | WSL or Git Bash only |
 
 **Supported platform/arch set**
