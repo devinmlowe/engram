@@ -33,7 +33,7 @@ resolve_node() {
         echo "$system"
     else
         local fallback
-        fallback="$(which node 2>/dev/null)"
+        fallback="$(command -v node 2>/dev/null || true)"
         if [ -n "$fallback" ]; then
             if echo "$fallback" | grep -q "fnm_multishells"; then
                 echo "WARNING: Resolved node path is an ephemeral fnm multishell path." >&2

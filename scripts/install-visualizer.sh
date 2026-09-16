@@ -32,7 +32,7 @@ resolve_node() {
         echo "$system"
     else
         local fallback
-        fallback="$(which node 2>/dev/null)"
+        fallback="$(command -v node 2>/dev/null || true)"
         if [ -n "$fallback" ]; then
             echo "$fallback"
         else
