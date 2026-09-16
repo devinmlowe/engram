@@ -58,12 +58,21 @@ pointing at the compiled server with an absolute path:
 The `.mcp.json` shipped in this repo does the same thing with a repo-relative path and is picked
 up automatically when you open the engram checkout itself in Claude Code.
 
-**Optional: background consolidation (macOS)**
+**Optional: background consolidation and visualization**
 
 ```bash
 ./scripts/install-daemon.sh install      # nightly `engram dream` at 02:00 via launchd
-./scripts/install-visualizer.sh install  # keep the web visualizer running on http://127.0.0.1:3001
+./scripts/install-visualizer.sh install  # macOS launchd visualizer
 ```
+
+On Windows, use the built-in per-user Task Scheduler adapter:
+
+```powershell
+.\scripts\install-visualizer.ps1 install
+.\scripts\install-visualizer.ps1 status
+```
+
+Both paths run the same compiled Node visualizer on loopback at `http://127.0.0.1:3001` and write logs under the engram data directory.
 
 ## Core Principles
 
@@ -193,6 +202,8 @@ Interactive knowledge graph visualization at `localhost:3001`:
 - **Real-time Updates** — SSE watching SQLite WAL for instant graph changes
 
 Start: `npx tsx src/interfaces/web/server.ts`
+
+For a persistent Windows installation, use [`scripts/install-visualizer.ps1`](scripts/install-visualizer.ps1). The macOS launchd path remains [`scripts/install-visualizer.sh`](scripts/install-visualizer.sh).
 
 ## Search
 

@@ -1,10 +1,10 @@
 # Scripts
 
-Shell scripts for installation, maintenance, and operational tasks. All scripts are Bash (not Fish) for portability.
+Installation, maintenance, and operational scripts. Bash remains the macOS/Linux path; PowerShell provides the Windows visualizer service path.
 
 ## In Scope
 
-- Service installation and uninstallation (launchd plists)
+- Service installation and uninstallation (launchd and Windows Task Scheduler)
 - Operational wrappers for dream pipeline execution
 - Dependency checking and environment validation
 
@@ -17,6 +17,8 @@ Shell scripts for installation, maintenance, and operational tasks. All scripts 
 
 - [install-daemon.sh](./install-daemon.sh) — Install dream state launchd agent
 - [install-visualizer.sh](./install-visualizer.sh) — Install web visualizer launchd agent
+- [install-visualizer.ps1](./install-visualizer.ps1) — Install and control the Windows Task Scheduler visualizer task
+- [run-visualizer.ps1](./run-visualizer.ps1) — Run the compiled visualizer with explicit Windows paths and restart-on-child-exit behavior
 - [run-dream.sh](./run-dream.sh) — Manual dream cycle wrapper with logging
 - [compact-dream.sh](./compact-dream.sh) — Compact dream run with reduced output
 - [check-deps.sh](./check-deps.sh) — Verify system dependencies are available

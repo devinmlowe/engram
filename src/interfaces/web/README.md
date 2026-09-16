@@ -33,6 +33,10 @@ HTTP server for interactive knowledge graph visualization and dream pipeline con
   - `dream.ts` — Dream pipeline status and trigger endpoints
   - `sse.ts` — Server-Sent Events for real-time updates
 
+## Service lifecycle
+
+The visualizer itself is a portable foreground Node process. The macOS launcher is [`scripts/install-visualizer.sh`](../../../scripts/install-visualizer.sh); Windows uses the built-in per-user Task Scheduler adapter [`scripts/install-visualizer.ps1`](../../../scripts/install-visualizer.ps1), which runs [`scripts/run-visualizer.ps1`](../../../scripts/run-visualizer.ps1). Both paths keep the default bind at `127.0.0.1`, use `/api/health` for liveness, and write logs under the engram data directory.
+
 ## See Also
 
 - [interfaces/](../) — Parent interfaces module
