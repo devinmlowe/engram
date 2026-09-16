@@ -43,6 +43,8 @@ vi.mock("@xenova/transformers", () => {
     logits: state.logitsFor(inputs.input_ids.dims[0]),
   });
   return {
+    // initReranker points env.cacheDir at ENGRAM_MODEL_CACHE_DIR before loading
+    env: { cacheDir: "/mock/.cache/" },
     AutoTokenizer: { from_pretrained: vi.fn(async () => tokenizer) },
     AutoModelForSequenceClassification: { from_pretrained: vi.fn(async () => model) },
   };
