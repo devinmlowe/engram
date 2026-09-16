@@ -20,6 +20,8 @@ Installation, maintenance, and operational scripts. Bash remains the macOS/Linux
 - [install-visualizer.sh](./install-visualizer.sh) — Install web visualizer launchd agent
 - [install-visualizer.ps1](./install-visualizer.ps1) — Install and control the Windows Task Scheduler visualizer task
 - [run-visualizer.ps1](./run-visualizer.ps1) — Run the compiled visualizer with explicit Windows paths and restart-on-child-exit behavior
+- [install-mcp-daemon.ps1](./install-mcp-daemon.ps1) — Install and control the Windows Task Scheduler MCP HTTP daemon task (`install|uninstall|start|stop|restart|status`); status reports both Task Scheduler state and `/health`; reaps orphaned processes on stop/uninstall
+- [run-mcp-daemon.ps1](./run-mcp-daemon.ps1) — Run the compiled MCP server (`--http --port`) with explicit Windows paths and bounded restart-on-failure
 - [run-dream.sh](./run-dream.sh) — Dream-cycle launcher: interactive (`tsx`, tee'd log) or `--daemon` (what the launchd plist runs); sources the service environment file first
 - [compact-dream.sh](./compact-dream.sh) — Claude Code post-compaction hook: background ingest + extract for the compacted session (needs only `node`; honours `ENGRAM_DATA_DIR` / `ENGRAM_LOGS_DIR`)
 - [commitments-surface.sh](./commitments-surface.sh) — Heartbeat digest of the commitments ledger via the HTTP MCP `commitments` tool (count, overdue, due within 7 days; prints nothing when empty). Self-contained node program inside a bash wrapper (no python3). Deployed copy: `~/.hermes/scripts/fleet/commitments-surface.sh`
