@@ -21,5 +21,6 @@ macOS Launch Agent plist files for scheduled and persistent engram services. Ins
 
 - [scripts/install-daemon.sh](../scripts/install-daemon.sh) — Installs plists to LaunchAgents
 - [scripts/install-visualizer.sh](../scripts/install-visualizer.sh) — Installs visualizer service
+- [scripts/install-visualizer.ps1](../scripts/install-visualizer.ps1) — Windows sibling adapter using Task Scheduler
 - [docs/lessons-learned-launchd-env.md](../docs/lessons-learned-launchd-env.md) — Environment pitfalls
 - [docs/research/daemon-launchd-patterns.md](../docs/research/daemon-launchd-patterns.md) — Design research

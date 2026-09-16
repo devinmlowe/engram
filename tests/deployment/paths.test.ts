@@ -85,3 +85,33 @@ describe("deployment path integrity (ADR-010 Phase 0)", () => {
     expect(existsSync(cli), `CLI entry ${cli} exists`).toBe(true);
   });
 });
+
+describe("Windows visualizer supervision scripts (issue #3)", () => {
+  const installer = join(ROOT, "scripts", "install-visualizer.ps1");
+  const runner = join(ROOT, "scripts", "run-visualizer.ps1");
+
+  it("both PowerShell scripts ship and the installer invokes the runner it expects", () => {
+    expect(existsSync(installer)).toBe(true);
+    expect(existsSync(runner)).toBe(true);
+    const src = readFileSync(installer, "utf-8");
+    expect(src).toContain("run-visualizer.ps1");
+    expect(src).toContain("/api/health"); // liveness contract shared with the launchd path
+  });
+
+  it("scripts resolve paths from their own location and env, never a personal layout", () => {
+    for (const p of [installer, runner]) {
+      const src = readFileSync(p, "utf-8");
+      expect(src, `${p} derives RepoRoot from the script location`).toContain("$MyInvocation.MyCommand.Path");
+      expect(src).not.toMatch(/C:\\Users\\[A-Za-z]/);
+      expect(src).not.toMatch(/\/Users\/[A-Za-z]/);
+      expect(src, "honors ENGRAM_DATA_DIR like the CLI").toContain("ENGRAM_DATA_DIR");
+    }
+    const runnerSrc = readFileSync(runner, "utf-8");
+    expect(runnerSrc, "binds loopback unless told otherwise").toMatch(/\$Bind = '127\.0\.0\.1'/);
+  });
+
+  it("README documents the Windows path", () => {
+    const readme = readFileSync(join(ROOT, "README.md"), "utf-8");
+    expect(readme).toContain("install-visualizer.ps1");
+  });
+});

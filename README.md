@@ -59,12 +59,21 @@ pointing at the compiled server with an absolute path:
 The `.mcp.json` shipped in this repo does the same thing with a repo-relative path and is picked
 up automatically when you open the engram checkout itself in Claude Code.
 
-**Optional: background consolidation (macOS)**
+**Optional: background consolidation and visualization**
 
 ```bash
 ./scripts/install-daemon.sh install      # nightly `engram dream` at 02:00 via launchd
-./scripts/install-visualizer.sh install  # keep the web visualizer running on http://127.0.0.1:3001
+./scripts/install-visualizer.sh install  # macOS launchd visualizer
 ```
+
+On Windows, use the built-in per-user Task Scheduler adapter:
+
+```powershell
+.\scripts\install-visualizer.ps1 install
+.\scripts\install-visualizer.ps1 status
+```
+
+Both paths run the same compiled Node visualizer on loopback at `http://127.0.0.1:3001` and write logs under the engram data directory.
 
 The installers render `launchd/*.plist` from the checkout you run them in, whatever its
 location, and use whichever `node` they find (fnm, Homebrew, nvm, or system). They expect
@@ -78,7 +87,7 @@ expects `jq`, and `scripts/commitments-surface.sh` expects `python3`.
 | CLI (`engram init/sync/search/dream`) | yes | yes | yes |
 | MCP server (stdio + HTTP) | yes | yes | yes |
 | Web visualizer (`node dist/interfaces/web/server.js`) | yes | yes | yes |
-| Visualizer keep-alive service | launchd | run under your own supervisor (systemd user unit, pm2) | see [issue #3](https://github.com/devinmlowe/engram/issues/3) |
+| Visualizer keep-alive service | launchd (`scripts/install-visualizer.sh`) | run under your own supervisor (systemd user unit, pm2) | Task Scheduler (`scripts/install-visualizer.ps1`) |
 | Nightly dream daemon | launchd | cron / systemd timer running `engram dream` | Task Scheduler running `engram dream` |
 | Claude Code hooks (`scripts/*.sh`) | yes | yes (bash, `jq`) | WSL or Git Bash only |
 
@@ -220,6 +229,8 @@ Interactive knowledge graph visualization at `localhost:3001`:
 - **Real-time Updates** — SSE watching SQLite WAL for instant graph changes
 
 Start: `npx tsx src/interfaces/web/server.ts`
+
+For a persistent Windows installation, use [`scripts/install-visualizer.ps1`](scripts/install-visualizer.ps1). The macOS launchd path remains [`scripts/install-visualizer.sh`](scripts/install-visualizer.sh).
 
 ## Search
 
