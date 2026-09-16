@@ -9,7 +9,7 @@ curated writes. Design rationale: `../../decisions/adr-010-memory-provider-integ
 
 ```fish
 npm run build                                   # engram repo root — build dist/
-ln -s ~/git/engram/integrations/hermes-plugin ~/.hermes/plugins/engram
+ln -s /path/to/your/engram/checkout/integrations/hermes-plugin ~/.hermes/plugins/engram
 ```
 
 Then per profile (start with default only):

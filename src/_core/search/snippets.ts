@@ -55,7 +55,7 @@ export function fetchSnippets(params: FetchSnippetsParams): FetchSnippetsResult 
 
   // ── Read file once ──────────────────────────────────────────
   const fileContent = readFileSync(path, "utf-8");
-  const allLines = fileContent.split("\n");
+  const allLines = fileContent.split(/\r?\n/); // CRLF-safe: Windows-authored files must not leak \r into results
   // Handle trailing newline: if last element is empty string from trailing \n, keep it
   // but for line count purposes we treat it as the actual line count
   const totalLines = allLines.length;

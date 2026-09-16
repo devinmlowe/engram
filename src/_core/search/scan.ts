@@ -144,7 +144,7 @@ export function scanFile(params: ScanFileParams): ScanFileResult {
 
   // ── Read file once ──────────────────────────────────────────
   const fileContent = readFileSync(path, "utf-8");
-  const allLines = fileContent.split("\n");
+  const allLines = fileContent.split(/\r?\n/); // CRLF-safe: Windows-authored files must not leak \r into results
   // Trim trailing empty line from trailing newline
   if (allLines.length > 0 && allLines[allLines.length - 1] === "") {
     allLines.pop();

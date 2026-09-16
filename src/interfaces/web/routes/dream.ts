@@ -7,15 +7,15 @@
 
 import type Database from "better-sqlite3";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import { existsSync, statSync, openSync, readSync, closeSync } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
 import { resetThresholdCache } from "../data/graph-queries.js";
+import { loadConfig } from "../../../_core/config/index.js";
 
 // ─── Constants ──────────────────────────────────────────────────
 
-const ENGRAM_DIR = join(homedir(), ".local", "share", "engram");
-const DREAM_LOG = join(ENGRAM_DIR, "logs", "dream.log");
+// Same resolution as every other component (ENGRAM_DATA_DIR / ENGRAM_LOGS_DIR aware).
+const DREAM_LOG = join(loadConfig().logsDir, "dream.log");
 
 const DREAM_PHASES = ["ingest", "extract", "consolidate", "reflect", "prune"] as const;
 
@@ -135,9 +135,27 @@ export function getDreamStatus(db: Database.Database): DreamStatus {
 
 // ─── Start Dream ────────────────────────────────────────────────
 
-/** Path to the CLI entry: routes/ -> web/ -> interfaces/ -> cli/index.ts */
+/**
+ * Path to the CLI entry: routes/ -> web/ -> interfaces/ -> cli/index.{js,ts}.
+ * When running from dist/ this is the compiled CLI (runnable with plain node
+ * on every platform). When running from src/ via tsx it is the TypeScript
+ * source, which the tsx loader in the parent process cannot hand to a child;
+ * that case is only reachable in development.
+ */
 export function resolveEngramCli(): string {
-  return join(import.meta.dirname ?? ".", "..", "..", "cli", "index.ts");
+  const base = join(import.meta.dirname ?? ".", "..", "..", "cli");
+  const built = join(base, "index.js");
+  return existsSync(built) ? built : join(base, "index.ts");
+}
+
+/** Command + args to run the CLI, chosen by the entry point's extension. */
+export function dreamSpawnCommand(cli: string): { command: string; args: string[] } {
+  if (cli.endsWith(".js")) {
+    // process.execPath is the exact node binary already running the server:
+    // no PATH lookup, no `npx.cmd` shell quirk on Windows, no tsx devDependency.
+    return { command: process.execPath, args: [cli, "dream", "--verbose"] };
+  }
+  return { command: process.execPath, args: ["--import", "tsx", cli, "dream", "--verbose"] };
 }
 
 export function startDream(): { ok: boolean; message: string } {
@@ -145,10 +163,10 @@ export function startDream(): { ok: boolean; message: string } {
     return { ok: false, message: "Dream already running" };
   }
 
-  const engramBin = resolveEngramCli();
+  const { command, args } = dreamSpawnCommand(resolveEngramCli());
 
-  dreamProcess = spawn("npx", ["tsx", engramBin, "dream", "--verbose"], {
-    // Repo root: routes/ -> web/ -> interfaces/ -> src/ -> root
+  dreamProcess = spawn(command, args, {
+    // Package root: routes/ -> web/ -> interfaces/ -> {dist|src}/ -> root
     cwd: join(import.meta.dirname ?? ".", "..", "..", "..", ".."),
     stdio: "ignore",
     detached: true,

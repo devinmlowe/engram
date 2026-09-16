@@ -22,7 +22,10 @@ from typing import Any, Dict, List, Optional
 
 from mcp_client import McpStdioClient, McpError
 
-DEFAULT_REPO_PATH = os.path.expanduser("~/git/engram")
+# The plugin ships inside the engram checkout (integrations/hermes-plugin/), and the
+# documented install is a symlink into ~/.hermes/plugins, so realpath() lands back
+# in the repo: no assumption about where the user cloned it.
+DEFAULT_REPO_PATH = os.path.realpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 DEFAULT_PREFETCH_BUDGET = 1200
 DEFAULT_IDLE_KILL_S = 600.0
 PREFETCH_TIMEOUT_S = 6.0  # under Hermes's 8s external-prefetch ceiling

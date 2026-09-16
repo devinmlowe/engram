@@ -115,9 +115,9 @@ describe("Config Defaults Contract", () => {
     process.env.ENGRAM_DATA_DIR = "/tmp/engram-custom";
     const c = loadConfig();
     expect(c.dataDir).toBe("/tmp/engram-custom");
-    expect(c.dbPath).toBe("/tmp/engram-custom/engram.db");
-    expect(c.archiveDir).toBe("/tmp/engram-custom/archive");
-    expect(c.logsDir).toBe("/tmp/engram-custom/logs");
+    expect(c.dbPath).toBe(join("/tmp/engram-custom", "engram.db"));
+    expect(c.archiveDir).toBe(join("/tmp/engram-custom", "archive"));
+    expect(c.logsDir).toBe(join("/tmp/engram-custom", "logs"));
   });
 
   it("explicit env vars override cascaded paths", () => {

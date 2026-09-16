@@ -12,7 +12,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          # Windows is newly supported; keep it visible without blocking merges
+          # until it has been green for a while. Flip to false once stable.
+          - os: windows-latest
+            experimental: true
+    continue-on-error: ${{ matrix.experimental == true }}
     steps:
       - uses: actions/checkout@v4
 
@@ -40,10 +46,7 @@ jobs:
 
       - run: npm run lint
 
-      # KNOWN ISSUE: tests/deployment/paths.test.ts has 3 pre-existing failures
-      # (the launchd plists and .mcp.json were scrubbed to /Users/USER paths in
-      # the release scrub, so the path-integrity checks cannot resolve them on a
-      # clean checkout). They are excluded here rather than masked with
-      # `|| true` so that any NEW failure still turns the job red. Tracked to be
-      # fixed separately; drop the --exclude once those tests are updated.
-      - run: npm run test:run -- --exclude "tests/deployment/**"
+      # tests/deployment validates the launchd template + installer contract and
+      # .mcp.json path resolution; it runs on every OS now that templates use
+      # placeholders instead of one developer's paths.
+      - run: npm run test:run

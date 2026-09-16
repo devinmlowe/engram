@@ -23,8 +23,20 @@ export function initDatabase(config: EngramConfig): Database.Database {
   db.pragma("mmap_size = 268435456"); // 256MB memory-mapped I/O
   db.pragma("cache_size = -64000"); // 64MB page cache
 
-  // Load sqlite-vec extension for vector similarity search
-  sqliteVec.load(db);
+  // Load sqlite-vec extension for vector similarity search. It ships prebuilt
+  // binaries for a fixed set of platforms (darwin/linux x64+arm64, windows x64);
+  // anywhere else the load throws an opaque error, so translate it.
+  try {
+    sqliteVec.load(db);
+  } catch (err) {
+    db.close();
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `engram: failed to load the sqlite-vec extension for ${process.platform}-${process.arch} ` +
+        `(node ${process.version}). Vector search requires a sqlite-vec prebuilt for this platform; ` +
+        `see https://github.com/asg017/sqlite-vec/releases. Underlying error: ${detail}`,
+    );
+  }
 
   // Run schema migrations
   createSchema(db, config);

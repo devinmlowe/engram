@@ -72,7 +72,7 @@ running agents pick up the new code.
 ## Tests
 
 ```sh
-cd ~/git/engram
+cd /path/to/your/engram/checkout
 PYTHONPATH=~/.hermes/hermes-agent python3 -m pytest interfaces/hermes-plugin/tests/ -q
 ```
 

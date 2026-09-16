@@ -17,7 +17,8 @@ Designed as an MCP server for Claude Code and other LLM agents, with CLI and web
 **Prerequisites**
 
 - Node.js 22 or newer (`node --version`)
-- macOS or Linux (the optional launchd daemon is macOS-only; everything else is portable)
+- macOS, Linux, or Windows for the CLI, MCP server, and web visualizer. Scheduled
+  background consolidation is currently macOS-only (launchd); see the platform matrix below.
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) if you want `engram sync` to ingest your conversation history from `~/.claude/projects`
 - At least one LLM provider for extraction and dream consolidation (see [Configuration](#configuration)). Search, `remember`, and the web visualizer work without one.
 
@@ -64,6 +65,27 @@ up automatically when you open the engram checkout itself in Claude Code.
 ./scripts/install-daemon.sh install      # nightly `engram dream` at 02:00 via launchd
 ./scripts/install-visualizer.sh install  # keep the web visualizer running on http://127.0.0.1:3001
 ```
+
+The installers render `launchd/*.plist` from the checkout you run them in, whatever its
+location, and use whichever `node` they find (fnm, Homebrew, nvm, or system). They expect
+`lsof` for port checks; the Claude Code post-compaction hook (`scripts/compact-dream.sh`)
+expects `jq`, and `scripts/commitments-surface.sh` expects `python3`.
+
+**Supported platforms**
+
+| Component | macOS | Linux | Windows |
+|---|---|---|---|
+| CLI (`engram init/sync/search/dream`) | yes | yes | yes |
+| MCP server (stdio + HTTP) | yes | yes | yes |
+| Web visualizer (`node dist/interfaces/web/server.js`) | yes | yes | yes |
+| Visualizer keep-alive service | launchd | run under your own supervisor (systemd user unit, pm2) | see [issue #3](https://github.com/devinmlowe/engram/issues/3) |
+| Nightly dream daemon | launchd | cron / systemd timer running `engram dream` | Task Scheduler running `engram dream` |
+| Claude Code hooks (`scripts/*.sh`) | yes | yes (bash, `jq`) | WSL or Git Bash only |
+
+Native dependencies (`better-sqlite3`, `sqlite-vec`, `onnxruntime-node`) ship prebuilt binaries
+for x64 and arm64 macOS/Linux and x64 Windows. On other targets (Windows on ARM, 32-bit ARM
+Linux) `npm install` needs a C++ toolchain, and `sqlite-vec` has no prebuilt at all, so
+`engram init` will fail with a clear platform error. CI runs the test suite on all three OSes.
 
 ## Core Principles
 
@@ -280,7 +302,7 @@ Run via `engram dream`, web UI dream button, or scheduled via launchd.
 | Graph Analysis | graphology (Louvain communities, betweenness centrality) |
 | LLM Providers | Anthropic, OpenRouter, Ollama (tiered cascade) |
 | MCP Server | @modelcontextprotocol/sdk |
-| Daemon | macOS launchd |
+| Daemon | macOS launchd (Linux/Windows: run `engram dream` from cron, systemd, or Task Scheduler) |
 
 ## Development
 

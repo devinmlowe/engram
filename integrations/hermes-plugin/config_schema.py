@@ -4,12 +4,18 @@ Loaded by path by plugins/memory/config_schema.get_provider_config_schema();
 imports only the pure-data schema module, per the dashboard contract.
 """
 
+import os
+
 from plugins.memory.config_schema import (
     KIND_NUMBER,
     KIND_TEXT,
     ProviderConfigSchema,
     ProviderField,
 )
+
+# Default to the checkout this file lives in (symlink-safe via realpath), not a
+# fixed ~/git/engram layout. Mirrors DEFAULT_REPO_PATH in provider.py.
+DEFAULT_REPO_PATH = os.path.realpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 
 CONFIG_SCHEMA = ProviderConfigSchema(
     name="engram",
@@ -21,7 +27,7 @@ CONFIG_SCHEMA = ProviderConfigSchema(
             key="repo_path",
             label="Engram repo",
             kind=KIND_TEXT,
-            default="~/git/engram",
+            default=DEFAULT_REPO_PATH,
             description="Engram checkout containing the built dist/ tree.",
         ),
         ProviderField(

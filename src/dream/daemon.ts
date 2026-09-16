@@ -19,6 +19,7 @@ import { join } from "node:path";
 import type Database from "better-sqlite3";
 import type { DreamPhase, DreamReport } from "./types.js";
 import type { EngramConfig } from "../_core/types/index.js";
+import { loadConfig } from "../_core/config/index.js";
 import type { ExtractedFact } from "../semantic/types.js";
 import { OpenRouterError } from "../_core/llm/providers/openrouter.js";
 import {
@@ -843,7 +844,7 @@ function storePendingFacts(
   if (facts.length === 0) return;
 
   // Store in a JSON file for retrieval during consolidation
-  const dataDir = join(process.env.ENGRAM_DATA_DIR ?? join(process.env.HOME ?? "", ".local/share/engram"), "tmp");
+  const dataDir = join(loadConfig().dataDir, "tmp");
   mkdirSync(dataDir, { recursive: true });
   const filePath = join(dataDir, `pending-facts-${runId}.json`);
   writeFileSync(filePath, JSON.stringify(facts));
@@ -853,7 +854,7 @@ function loadPendingFacts(
   _db: Database.Database,
   runId: string,
 ): Array<{ conversationId: string; facts: ExtractedFact[] }> {
-  const dataDir = join(process.env.ENGRAM_DATA_DIR ?? join(process.env.HOME ?? "", ".local/share/engram"), "tmp");
+  const dataDir = join(loadConfig().dataDir, "tmp");
   const filePath = join(dataDir, `pending-facts-${runId}.json`);
 
   if (!existsSync(filePath)) return [];
