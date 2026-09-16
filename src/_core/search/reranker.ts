@@ -8,7 +8,6 @@
  * Moved from retrieval/reranker.ts during Phase 1 core extraction.
  */
 
-import { applyModelCacheDir } from "../embeddings/model-cache.js";
 import type { SearchResult, RerankerConfig } from "../types/index.js";
 
 // ─── Types ──────────────────────────────────────────────────────
@@ -88,8 +87,7 @@ export async function initReranker(
 
   try {
     // Dynamic import to avoid pulling in transformers when reranking is disabled
-    const { AutoTokenizer, AutoModelForSequenceClassification, env } = await import("@xenova/transformers");
-    applyModelCacheDir(env);
+    const { AutoTokenizer, AutoModelForSequenceClassification } = await import("@xenova/transformers");
     const [tokenizer, seqCls] = await Promise.all([
       AutoTokenizer.from_pretrained(model),
       AutoModelForSequenceClassification.from_pretrained(model),

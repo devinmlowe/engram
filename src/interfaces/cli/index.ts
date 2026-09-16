@@ -1047,27 +1047,6 @@ program
     }
   });
 
-// ─── doctor ─────────────────────────────────────────────────────
-
-program
-  .command("doctor")
-  .description(
-    "Diagnose the runtime: node version, platform/arch, native modules, model cache",
-  )
-  .option("--json", "Print the report as JSON instead of text")
-  .action(async (opts) => {
-    const { runDoctor, formatDoctorReport } = await import("./doctor.js");
-    const report = await runDoctor(loadConfig());
-
-    if (opts.json) {
-      console.log(JSON.stringify(report, null, 2));
-    } else {
-      for (const line of formatDoctorReport(report)) console.log(line);
-    }
-
-    if (!report.ok) process.exit(1);
-  });
-
 // ─── reflect ─────────────────────────────────────────────────────
 
 program

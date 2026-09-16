@@ -12,11 +12,9 @@ import {
   AutoTokenizer,
   AutoModelForSequenceClassification,
   softmax,
-  env as transformersEnv,
   type PreTrainedTokenizer,
   type PreTrainedModel,
 } from "@xenova/transformers";
-import { applyModelCacheDir } from "../_core/embeddings/model-cache.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -54,8 +52,6 @@ let activeModelName: string | null = null;
  */
 export async function initNli(): Promise<void> {
   if (tokenizer && model) return;
-
-  applyModelCacheDir(transformersEnv);
 
   try {
     tokenizer = await AutoTokenizer.from_pretrained(PREFERRED_MODEL);
