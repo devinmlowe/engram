@@ -1,6 +1,6 @@
 # Launchd
 
-macOS Launch Agent plist files for scheduled and persistent engram services. Install to `~/Library/LaunchAgents/` via [scripts/install-daemon.sh](../scripts/install-daemon.sh).
+macOS Launch Agent plist files for scheduled and persistent engram services. Install to `~/Library/LaunchAgents/` via [scripts/install-daemon.sh](../scripts/install-daemon.sh). The Linux equivalent of the nightly dream agent lives in [systemd/](../systemd/) (user unit + timer, same installer); Windows uses [scripts/install-daemon.ps1](../scripts/install-daemon.ps1) (Task Scheduler).
 
 ## In Scope
 
@@ -19,7 +19,9 @@ macOS Launch Agent plist files for scheduled and persistent engram services. Ins
 
 ## See Also
 
-- [scripts/install-daemon.sh](../scripts/install-daemon.sh) — Installs plists to LaunchAgents
+- [scripts/install-daemon.sh](../scripts/install-daemon.sh) — Installs the dream plist to LaunchAgents (macOS) or the systemd user timer (Linux)
+- [scripts/install-daemon.ps1](../scripts/install-daemon.ps1) — Windows sibling for the nightly dream task using Task Scheduler
+- [systemd/](../systemd/) — Linux sibling templates (`engram-dream.service` + `engram-dream.timer`) rendered from the same placeholders
 - [scripts/install-visualizer.sh](../scripts/install-visualizer.sh) — Installs visualizer service
 - [scripts/install-visualizer.ps1](../scripts/install-visualizer.ps1) — Windows sibling adapter using Task Scheduler
 - [docs/lessons-learned-launchd-env.md](../docs/lessons-learned-launchd-env.md) — Environment pitfalls

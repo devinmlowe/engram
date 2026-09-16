@@ -18,7 +18,8 @@ Designed as an MCP server for Claude Code and other LLM agents, with CLI and web
 
 - Node.js 22 or newer (`node --version`)
 - macOS, Linux, or Windows for the CLI, MCP server, and web visualizer. Scheduled
-  background consolidation is currently macOS-only (launchd); see the platform matrix below.
+  background consolidation ships an installer for each (launchd, systemd user timer,
+  Task Scheduler); see the platform matrix below.
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) if you want `engram sync` to ingest your conversation history from `~/.claude/projects`
 - At least one LLM provider for extraction and dream consolidation (see [Configuration](#configuration)). Search, `remember`, and the web visualizer work without one.
 
@@ -66,19 +67,33 @@ up automatically when you open the engram checkout itself in Claude Code.
 ./scripts/install-visualizer.sh install  # macOS launchd visualizer
 ```
 
-On Windows, use the built-in per-user Task Scheduler adapter:
+On Linux the same script detects `uname -s` and installs a systemd *user* timer instead
+(no root; `loginctl enable-linger $USER` if you want it to fire while logged out):
+
+```bash
+./scripts/install-daemon.sh install      # renders systemd/engram-dream.{service,timer}, enables engram-dream.timer
+./scripts/install-daemon.sh status       # systemctl --user list-timers + last log lines
+./scripts/install-daemon.sh run-now      # systemctl --user start engram-dream.service
+```
+
+On Windows, use the built-in per-user Task Scheduler adapters:
 
 ```powershell
+.\scripts\install-daemon.ps1 install -PersistEnv   # daily 02:00 task running the compiled CLI with the resolved node.exe
+.\scripts\install-daemon.ps1 status
 .\scripts\install-visualizer.ps1 install
 .\scripts\install-visualizer.ps1 status
 ```
 
-Both paths run the same compiled Node visualizer on loopback at `http://127.0.0.1:3001` and write logs under the engram data directory.
+All visualizer paths run the same compiled Node server on loopback at `http://127.0.0.1:3001`
+and write logs under the engram data directory; all dream paths run
+`node dist/interfaces/cli/index.js dream` and log to `<data dir>/logs/dream.log`.
 
-The installers render `launchd/*.plist` from the checkout you run them in, whatever its
-location, and use whichever `node` they find (fnm, Homebrew, nvm, or system). They expect
-`lsof` for port checks; the Claude Code post-compaction hook (`scripts/compact-dream.sh`)
-expects `jq`, and `scripts/commitments-surface.sh` expects `python3`.
+The installers render `launchd/*.plist` (macOS) or `systemd/engram-dream.service` (Linux)
+from the checkout you run them in, whatever its location, and use whichever `node` they
+find (fnm, Homebrew, nvm, or system). They expect `lsof` for port checks; the Claude Code
+post-compaction hook (`scripts/compact-dream.sh`) expects `jq`, and
+`scripts/commitments-surface.sh` expects `python3`.
 
 **Supported platforms**
 
@@ -88,7 +103,7 @@ expects `jq`, and `scripts/commitments-surface.sh` expects `python3`.
 | MCP server (stdio + HTTP) | yes | yes | yes |
 | Web visualizer (`node dist/interfaces/web/server.js`) | yes | yes | yes |
 | Visualizer keep-alive service | launchd (`scripts/install-visualizer.sh`) | run under your own supervisor (systemd user unit, pm2) | Task Scheduler (`scripts/install-visualizer.ps1`) |
-| Nightly dream daemon | launchd | cron / systemd timer running `engram dream` | Task Scheduler running `engram dream` |
+| Nightly dream daemon | launchd (`scripts/install-daemon.sh`) | systemd user timer `engram-dream.timer` (`scripts/install-daemon.sh`) | Task Scheduler (`scripts/install-daemon.ps1`) |
 | Claude Code hooks (`scripts/*.sh`) | yes | yes (bash, `jq`) | WSL or Git Bash only |
 
 Native dependencies (`better-sqlite3`, `sqlite-vec`, `onnxruntime-node`) ship prebuilt binaries
@@ -299,7 +314,7 @@ flowchart LR
 
 All phases use **_core** infrastructure: `llm` for LLM calls, `db` for persistence, `embeddings` for similarity.
 
-Run via `engram dream`, web UI dream button, or scheduled via launchd.
+Run via `engram dream`, the web UI dream button, or nightly at 02:00 via `scripts/install-daemon.sh` (launchd on macOS, `engram-dream.timer` on Linux) / `scripts/install-daemon.ps1` (Windows Task Scheduler).
 
 ## Technology
 
@@ -313,7 +328,7 @@ Run via `engram dream`, web UI dream button, or scheduled via launchd.
 | Graph Analysis | graphology (Louvain communities, betweenness centrality) |
 | LLM Providers | Anthropic, OpenRouter, Ollama (tiered cascade) |
 | MCP Server | @modelcontextprotocol/sdk |
-| Daemon | macOS launchd (Linux/Windows: run `engram dream` from cron, systemd, or Task Scheduler) |
+| Daemon | launchd (macOS), systemd user timer (Linux), Task Scheduler (Windows) — `scripts/install-daemon.sh` / `.ps1` |
 
 ## Development
 

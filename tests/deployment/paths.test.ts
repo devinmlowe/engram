@@ -209,4 +209,13 @@ describe("Windows nightly dream Task Scheduler script (issue #6)", () => {
     expect(src, "honors ENGRAM_DATA_DIR like the CLI").toContain("ENGRAM_DATA_DIR");
     expect(src, "honors ENGRAM_LOGS_DIR like the CLI").toContain("ENGRAM_LOGS_DIR");
   });
+
+  it("README platform matrix names the Linux timer and the Windows installer", () => {
+    const readme = readFileSync(join(ROOT, "README.md"), "utf-8");
+    const row = readme.split("\n").find((l) => l.startsWith("| Nightly dream daemon"));
+    expect(row, "platform matrix row present").toBeTruthy();
+    expect(row).toContain("install-daemon.sh");
+    expect(row).toContain("engram-dream.timer");
+    expect(row).toContain("install-daemon.ps1");
+  });
 });
