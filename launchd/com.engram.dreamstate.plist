@@ -7,14 +7,14 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/USER/.local/share/fnm/aliases/default/bin/node</string>
+        <string>__NODE_BIN__</string>
         <string>--max-old-space-size=2048</string>
         <string>dist/interfaces/cli/index.js</string>
         <string>dream</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/Users/USER/git/engram</string>
+    <string>__ENGRAM_DIR__</string>
 
     <key>StartCalendarInterval</key>
     <dict>
@@ -33,10 +33,10 @@
     </dict>
 
     <key>StandardOutPath</key>
-    <string>/Users/USER/.local/share/engram/logs/dream.log</string>
+    <string>__LOG_DIR__/dream.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/Users/USER/.local/share/engram/logs/dream-error.log</string>
+    <string>__LOG_DIR__/dream-error.log</string>
 
     <key>Nice</key>
     <integer>10</integer>

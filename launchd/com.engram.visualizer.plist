@@ -7,12 +7,12 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/local/bin/node</string>
+        <string>__NODE_BIN__</string>
         <string>dist/interfaces/web/server.js</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/Users/USER/git/engram</string>
+    <string>__ENGRAM_DIR__</string>
 
     <key>EnvironmentVariables</key>
     <dict>
@@ -25,10 +25,10 @@
     </dict>
 
     <key>StandardOutPath</key>
-    <string>/Users/USER/.local/share/engram/logs/visualizer.log</string>
+    <string>__LOG_DIR__/visualizer.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/Users/USER/.local/share/engram/logs/visualizer-error.log</string>
+    <string>__LOG_DIR__/visualizer-error.log</string>
 
     <key>RunAtLoad</key>
     <true/>

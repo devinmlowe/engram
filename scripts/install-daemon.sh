@@ -63,11 +63,19 @@ install_daemon() {
     NODE_BIN="$(resolve_node)"
     echo "Using node: $NODE_BIN ($($NODE_BIN --version))"
 
-    # Generate plist with correct paths
-    sed -e "s|/usr/local/lib/engram|${ENGRAM_DIR}|g" \
-        -e "s|/Users/USER|${HOME}|g" \
-        -e "s|/usr/local/bin/node|${NODE_BIN}|g" \
+    # Render the template: placeholders are substituted with the *resolved*
+    # checkout, node binary, and log directory so the service works from any
+    # clone location and any node installer (fnm, brew, nvm, system).
+    sed -e "s|__ENGRAM_DIR__|${ENGRAM_DIR}|g" \
+        -e "s|__NODE_BIN__|${NODE_BIN}|g" \
+        -e "s|__LOG_DIR__|${LOG_DIR}|g" \
         "$PLIST_SRC" > "$PLIST_DST"
+    if grep -q "__[A-Z_]*__" "$PLIST_DST"; then
+        echo "Error: unresolved placeholder in rendered plist:" >&2
+        grep -n "__[A-Z_]*__" "$PLIST_DST" >&2
+        rm -f "$PLIST_DST"
+        exit 1
+    fi
 
     # Copy ANTHROPIC_API_KEY if set
     if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
