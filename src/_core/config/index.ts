@@ -4,11 +4,44 @@ import type { EngramConfig } from "../types/index.js";
 
 const HOME = homedir();
 
+/** A directory-valued env var counts as set only when non-blank (XDG semantics). */
+function envDir(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : undefined;
+}
+
+/**
+ * Platform default for the engram data directory, used only when
+ * ENGRAM_DATA_DIR is unset. This is the single place in the codebase that
+ * knows where engram data lives by default; every other component must go
+ * through loadConfig().
+ *
+ * - Windows: %LOCALAPPDATA%\engram
+ * - Linux/macOS: $XDG_DATA_HOME/engram
+ * - Fallback (var unset/blank): the historical ~/.local/share/engram, so
+ *   existing installs never move. On macOS XDG_DATA_HOME is normally unset,
+ *   so the default there stays ~/.local/share/engram.
+ */
+export function resolveDefaultDataDir(
+  env: Record<string, string | undefined> = process.env,
+  platform: NodeJS.Platform = process.platform,
+  home: string = HOME,
+): string {
+  const base =
+    platform === "win32" ? envDir(env.LOCALAPPDATA) : envDir(env.XDG_DATA_HOME);
+  return base ? join(base, "engram") : join(home, ".local", "share", "engram");
+}
+
+// Snapshot of the platform default at import time. The path fields below are
+// placeholders only: loadConfig() always recomputes them from ENGRAM_DATA_DIR /
+// resolveDefaultDataDir(env) so environment changes after import still apply.
+const IMPORT_TIME_DATA_DIR = resolveDefaultDataDir();
+
 const defaults: EngramConfig = {
-  dataDir: join(HOME, ".local", "share", "engram"),
-  dbPath: join(HOME, ".local", "share", "engram", "engram.db"),
-  archiveDir: join(HOME, ".local", "share", "engram", "archive"),
-  logsDir: join(HOME, ".local", "share", "engram", "logs"),
+  dataDir: IMPORT_TIME_DATA_DIR,
+  dbPath: join(IMPORT_TIME_DATA_DIR, "engram.db"),
+  archiveDir: join(IMPORT_TIME_DATA_DIR, "archive"),
+  logsDir: join(IMPORT_TIME_DATA_DIR, "logs"),
   claudeProjectsDir: join(HOME, ".claude", "projects"),
 
   embedding: {
@@ -56,7 +89,7 @@ export function loadConfig(overrides?: Partial<EngramConfig>): EngramConfig {
   const env = process.env;
 
   const dataDir =
-    env.ENGRAM_DATA_DIR ?? overrides?.dataDir ?? defaults.dataDir;
+    envDir(env.ENGRAM_DATA_DIR) ?? overrides?.dataDir ?? resolveDefaultDataDir(env);
 
   return {
     ...defaults,

@@ -28,7 +28,7 @@ cd engram
 npm install          # also runs the TypeScript build via the "prepare" script
 npm link             # puts `engram` on your PATH (or run `node dist/interfaces/cli/index.js` directly)
 
-engram init          # creates ~/.local/share/engram/engram.db and downloads the embedding model
+engram init          # creates engram.db in the data dir (default ~/.local/share/engram; see Configuration) and downloads the embedding model
 engram sync          # index conversations from ~/.claude/projects (optional)
 engram search "what did I decide about caching"
 ```
@@ -203,8 +203,8 @@ engram entities        # List/search entities
 engram relationships   # Show relationships for an entity
 engram stats           # Database statistics
 engram health          # System health check
-engram migrate         # Migrate data from legacy superpowers DB
-engram validate        # Validate migration integrity
+engram migrate --source <db>   # Import a legacy conversation-index SQLite DB (--source is required; no default path)
+engram validate --source <db>  # Validate migration integrity against that source DB
 engram backfill-event-ts  # Backfill event-time timestamps (temporal recall)
 engram commitments [status]        # List tracked commitments (same XML as the MCP tool)
 engram commitment-done <id>        # Mark a commitment done (--status dropped|superseded)
@@ -337,7 +337,7 @@ All settings are environment variables; nothing is read from a config file.
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama endpoint; used first if reachable |
 | `ENGRAM_LOCAL_MODEL` | `qwen2.5:7b` | Ollama model name |
 | `ENGRAM_OPENROUTER_MODEL` | `google/gemini-2.5-flash-lite` | OpenRouter model name |
-| `ENGRAM_DATA_DIR` | `~/.local/share/engram` | Root for database, archive, and logs |
+| `ENGRAM_DATA_DIR` | platform default (see below) | Root for database, archive, and logs |
 | `ENGRAM_DB_PATH` | `$ENGRAM_DATA_DIR/engram.db` | SQLite database location |
 | `ENGRAM_ARCHIVE_DIR` | `$ENGRAM_DATA_DIR/archive` | Conversation archive directory |
 | `ENGRAM_LOGS_DIR` | `$ENGRAM_DATA_DIR/logs` | Log directory |
@@ -347,6 +347,12 @@ All settings are environment variables; nothing is read from a config file.
 | `ENGRAM_CHUNKING_STRATEGY` | `fixed` | `fixed` or `adaptive` (content-aware boundaries) |
 | `ENGRAM_BIND` | `127.0.0.1` | Web visualizer bind address (`0.0.0.0` to expose on the network) |
 | `PORT` | `3001` | Web visualizer port |
+
+**Data directory.** When `ENGRAM_DATA_DIR` is unset the default is `$XDG_DATA_HOME/engram` on
+Linux/macOS and `%LOCALAPPDATA%\engram` on Windows; if that variable is unset or blank too, engram
+falls back to `~/.local/share/engram` on every platform, so existing installs never move (on macOS,
+where `XDG_DATA_HOME` is normally unset, the default stays `~/.local/share/engram`). Every component
+(CLI, MCP server, dream daemon, web visualizer) resolves paths through this one rule.
 
 **LLM providers.** Extraction and the dream pipeline try Ollama first (if `OLLAMA_HOST` answers),
 then OpenRouter (if `OPENROUTER_API_KEY` is set), then Anthropic (if `ANTHROPIC_API_KEY` is set).

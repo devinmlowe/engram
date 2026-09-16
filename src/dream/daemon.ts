@@ -37,6 +37,20 @@ import {
 
 // ─── Types ───────────────────────────────────────────────────────
 
+// ─── Paths ──────────────────────────────────────────────────────
+// Every dream path is derived from loadConfig() so the daemon, the CLI, and
+// the web visualizer agree under ENGRAM_DATA_DIR / ENGRAM_LOGS_DIR.
+
+/** Structured JSONL log written by runDream and tailed by the web dream route. */
+export function resolveDreamLogPath(config: EngramConfig = loadConfig()): string {
+  return join(config.logsDir, "dream.log");
+}
+
+/** Scratch directory for facts handed from the extract phase to consolidate. */
+export function resolvePendingFactsDir(config: EngramConfig = loadConfig()): string {
+  return join(config.dataDir, "tmp");
+}
+
 export interface DreamOptions {
   phases?: DreamPhase[];
   conversationId?: string;
@@ -107,9 +121,8 @@ export async function runDream(
   options: DreamOptions = {},
 ): Promise<DreamReport> {
   const startedAt = Math.floor(Date.now() / 1000);
-  const logDir = config.logsDir;
-  mkdirSync(logDir, { recursive: true });
-  const logPath = join(logDir, "dream.log");
+  const logPath = resolveDreamLogPath(config);
+  mkdirSync(config.logsDir, { recursive: true });
 
   setupSignalHandlers(logPath);
   shuttingDown = false;
@@ -844,7 +857,7 @@ function storePendingFacts(
   if (facts.length === 0) return;
 
   // Store in a JSON file for retrieval during consolidation
-  const dataDir = join(loadConfig().dataDir, "tmp");
+  const dataDir = resolvePendingFactsDir();
   mkdirSync(dataDir, { recursive: true });
   const filePath = join(dataDir, `pending-facts-${runId}.json`);
   writeFileSync(filePath, JSON.stringify(facts));
@@ -854,7 +867,7 @@ function loadPendingFacts(
   _db: Database.Database,
   runId: string,
 ): Array<{ conversationId: string; facts: ExtractedFact[] }> {
-  const dataDir = join(loadConfig().dataDir, "tmp");
+  const dataDir = resolvePendingFactsDir();
   const filePath = join(dataDir, `pending-facts-${runId}.json`);
 
   if (!existsSync(filePath)) return [];

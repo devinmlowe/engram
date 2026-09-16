@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import { Command } from "commander";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { loadConfig } from "../../_core/config/index.js";
 import { getDatabase, closeDatabase } from "../../_core/db/index.js";
@@ -504,11 +503,10 @@ program
 
 program
   .command("migrate")
-  .description("Migrate data from superpowers conversation-index DB")
-  .option(
+  .description("Migrate data from a legacy conversation-index SQLite database")
+  .requiredOption(
     "-s, --source <path>",
-    "Source database path",
-    join(homedir(), ".config/superpowers/conversation-index/db.sqlite"),
+    "Path to the source conversation-index SQLite database (no default)",
   )
   .option(
     "-n, --dry-run",
@@ -570,11 +568,10 @@ program
 
 program
   .command("validate")
-  .description("Validate migration integrity")
-  .option(
+  .description("Validate migration integrity against the source database")
+  .requiredOption(
     "-s, --source <path>",
-    "Source database path",
-    join(homedir(), ".config/superpowers/conversation-index/db.sqlite"),
+    "Path to the source conversation-index SQLite database (no default)",
   )
   .action(async (opts) => {
     const { runValidation } = await import("../../migration/validate.js");
