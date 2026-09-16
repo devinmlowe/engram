@@ -14,8 +14,15 @@ import { loadConfig } from "../../../_core/config/index.js";
 
 // ─── Constants ──────────────────────────────────────────────────
 
-// Same resolution as every other component (ENGRAM_DATA_DIR / ENGRAM_LOGS_DIR aware).
-const DREAM_LOG = join(loadConfig().logsDir, "dream.log");
+/**
+ * The dream daemon's log file, resolved through loadConfig() so this route
+ * tails the same file runDream() writes (ENGRAM_DATA_DIR / ENGRAM_LOGS_DIR
+ * aware). Resolved per call rather than at import so the environment is
+ * read when it is used.
+ */
+export function resolveDreamLogPath(): string {
+  return join(loadConfig().logsDir, "dream.log");
+}
 
 const DREAM_PHASES = ["ingest", "extract", "consolidate", "reflect", "prune"] as const;
 
@@ -99,6 +106,7 @@ export function getDreamStatus(db: Database.Database): DreamStatus {
 
   // Read last log line for detail (read only tail of file)
   let detail: string | null = null;
+  const DREAM_LOG = resolveDreamLogPath();
   try {
     if (existsSync(DREAM_LOG)) {
       const stat = statSync(DREAM_LOG);
