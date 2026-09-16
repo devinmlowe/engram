@@ -1,3 +1,9 @@
 name: engram
 version: 1.0.0
-description: "Engram — automatic recall from consolidated conversation memory (HTTP MCP server on :9907) plus a single engram_memory_save tool."
+description: >-
+  Engram — automatic recall from the operator's consolidated knowledge graph
+  (episodic history, semantic memories, entity graph) before every turn, plus
+  an engram_memory_save tool. Default transport talks to the engram HTTP MCP
+  server on :9907; an optional stdio transport spawns the server as a lazy
+  child with per-profile scoped writes.
+requires_env: []

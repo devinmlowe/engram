@@ -1,9 +1,22 @@
 """Engram memory plugin — MemoryProvider wrapping the engram HTTP MCP server.
 
+Entry point: ``register(ctx)`` calls ``ctx.register_memory_provider(...)``
+with the provider for the configured transport (see ``transport`` below).
+
 Engram (https://github.com/devinmlowe/engram) is a cognitive memory system
 that ingests LLM conversation history and consolidates it into structured
 knowledge. It exposes a streamable-HTTP MCP server (LaunchAgent
 ``ai.hermes.engram-mcp``, default ``http://127.0.0.1:9907/mcp``).
+
+Two transports live in this directory and share ``$HERMES_HOME/engram.json``:
+
+* ``http`` (default, this module) — talks to the already-running engram HTTP
+  MCP server. Thin, stateless, one save tool.
+* ``stdio`` (``provider.py`` + ``mcp_client.py``) — spawns engram's MCP
+  server as a lazy stdio child per primary agent context, with per-profile
+  scoped writes, ``engram_*`` recall/explore/reflect/remember tools, and a
+  ``hermes engram`` CLI (``cli.py``) plus dashboard schema
+  (``config_schema.py``). Select it with ``"transport": "stdio"``.
 
 This provider is deliberately thin: recall is automatic (``prefetch`` calls
 the ``recall`` MCP tool with the user's message) and the model gets exactly
@@ -19,11 +32,14 @@ cannot collide with the ``engram``-prefixed MCP tools.
 Configuration (non-secret, lives in ``$HERMES_HOME/engram.json``, written by
 ``hermes memory setup engram``)::
 
+  transport              — "http" (default) or "stdio"
   base_url               — MCP server base URL   (default http://127.0.0.1:9907)
   timeout_secs           — HTTP timeout for health + prefetch (default 2)
   prefetch_token_budget  — recall token budget per turn (default 300)
 
-There are no secrets.
+The stdio transport reads its own keys from the same file (``repo_path``,
+``node_path``, ``db_path``, ``budget``, ``read_scopes``, ``idle_kill_s``);
+see ``provider.py``. There are no secrets.
 """
 
 from __future__ import annotations
@@ -32,6 +48,7 @@ import json
 import logging
 import os
 import re
+import sys
 import threading
 import time
 import urllib.error
@@ -51,6 +68,11 @@ logger = logging.getLogger(__name__)
 PROVIDER_NAME = "engram"
 CONFIG_FILENAME = "engram.json"
 DB_PATH = "~/.local/share/engram/engram.db"
+
+TRANSPORT_HTTP = "http"
+TRANSPORT_STDIO = "stdio"
+TRANSPORTS = (TRANSPORT_HTTP, TRANSPORT_STDIO)
+DEFAULT_TRANSPORT = TRANSPORT_HTTP
 
 DEFAULT_BASE_URL = "http://127.0.0.1:9907"
 DEFAULT_TIMEOUT_SECS = 2.0
@@ -602,6 +624,32 @@ class EngramMemoryProvider(MemoryProvider):
         return [os.path.expanduser(DB_PATH)]
 
 
+def selected_transport(hermes_home: Optional[str] = None) -> str:
+    """Return the configured transport name; unknown values fall back to http."""
+    raw = _load_config(hermes_home).get("transport")
+    transport = str(raw or DEFAULT_TRANSPORT).strip().lower()
+    if transport not in TRANSPORTS:
+        logger.warning("engram: unknown transport %r in %s; using %s",
+                       raw, CONFIG_FILENAME, DEFAULT_TRANSPORT)
+        return DEFAULT_TRANSPORT
+    return transport
+
+
+def make_provider(transport: Optional[str] = None):
+    """Instantiate the provider for ``transport`` (default: from engram.json)."""
+    transport = transport or selected_transport()
+    if transport == TRANSPORT_STDIO:
+        # provider.py is a sibling file. Hermes's user-lane loader imports this
+        # module as a package, but plain file loads (tests, tooling) do not, so
+        # resolve the sibling by path instead of a relative import.
+        here = os.path.dirname(os.path.abspath(__file__))
+        if here not in sys.path:
+            sys.path.insert(0, here)
+        from provider import EngramMemoryProvider as StdioEngramMemoryProvider
+        return StdioEngramMemoryProvider()
+    return EngramMemoryProvider()
+
+
 def register(ctx) -> None:
     """Register engram as a memory provider plugin."""
-    ctx.register_memory_provider(EngramMemoryProvider())
+    ctx.register_memory_provider(make_provider())
