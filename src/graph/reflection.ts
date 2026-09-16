@@ -31,19 +31,36 @@ import { computeConversationCounts, computeInformativeness } from "./informative
 
 /**
  * Link memories to their communities by tracing entity memberships
- * through relationships back to source memories.
+ * through relationships, then through conversations, to source memories.
  *
- * For each topic_cluster in the given generation:
+ * `relationships.source_memories` historically stores CONVERSATION ids
+ * (despite the name), written by `findOrCreateRelationship`. Its elements
+ * are a mix of nested one-element arrays and flat strings — both forms
+ * appear in production data and both are flattened/deduped here.
+ *
+ * `memories.source_exchanges` is a JSON array of `exchanges.id` values on
+ * memories written after 2026-09-12; on older memories it instead holds
+ * legacy exchange-index strings (e.g. "3") that match no `exchanges.id`
+ * and therefore never resolve — this is expected and non-fatal.
+ *
+ * A single query builds a conversation id -> active memory ids map up
+ * front (join `memories.source_exchanges` through `exchanges` once for
+ * the whole generation), then for each topic_cluster:
  * 1. Parse entity_ids JSON array
  * 2. Query relationships involving those entities
- * 3. Collect source_memories from matching relationships
- * 4. Filter to only active memories
- * 5. Update topic_clusters.memory_ids with deduplicated set
+ * 3. Collect source_memories, flatten one level, dedupe -> conversation ids
+ * 4. Look up each conversation id in the precomputed map and union the
+ *    resulting active memory ids
+ * 5. Update topic_clusters.memory_ids with the deduplicated set
+ *
+ * Also reports `conversationsUnresolved`: the count of distinct
+ * conversation ids (across all clusters in this generation) that never
+ * resolved to any active memory, for observability into join coverage.
  */
 export function linkMemoriesToCommunities(
   db: Database.Database,
   generation: number,
-): { clustersUpdated: number; memoriesLinked: number } {
+): { clustersUpdated: number; memoriesLinked: number; conversationsUnresolved: number } {
   const clusters = db
     .prepare(
       "SELECT id, entity_ids FROM topic_clusters WHERE generation = ?",
@@ -57,60 +74,111 @@ export function linkMemoriesToCommunities(
     "UPDATE topic_clusters SET memory_ids = ?, updated_at = unixepoch() WHERE id = ?",
   );
 
-  const doLink = db.transaction(() => {
-    for (const cluster of clusters) {
-      const entityIds: string[] = JSON.parse(cluster.entity_ids || "[]");
-      if (entityIds.length === 0) continue;
+  // Conversation id -> active memory ids, built once for the whole
+  // generation. json_each throws on a malformed source_exchanges value,
+  // which (thanks to idx_memories_active) only reaches an active row
+  // with bad JSON — guard against that so one bad row can't abort
+  // reflection; on failure, nothing links this pass rather than aborting.
+  const convToMemories = new Map<string, string[]>();
+  try {
+    const pairs = db
+      .prepare(
+        `SELECT DISTINCT e.conversation_id AS conversation_id, m.id AS memory_id
+         FROM memories m, json_each(m.source_exchanges) je
+         JOIN exchanges e ON e.id = je.value
+         WHERE m.is_active = 1`,
+      )
+      .all() as Array<{ conversation_id: string; memory_id: string }>;
+    for (const p of pairs) {
+      const list = convToMemories.get(p.conversation_id) ?? [];
+      list.push(p.memory_id);
+      convToMemories.set(p.conversation_id, list);
+    }
+  } catch {
+    // Malformed source_exchanges JSON on some active memory — leave the
+    // map empty rather than aborting the whole reflection pass.
+  }
 
-      // Query relationships where source or target is in entity_ids
-      const placeholders = entityIds.map(() => "?").join(", ");
-      const relationships = db
-        .prepare(
-          `SELECT source_memories FROM relationships
-           WHERE source_entity_id IN (${placeholders})
-              OR target_entity_id IN (${placeholders})`,
-        )
-        .all(...entityIds, ...entityIds) as Array<{
-        source_memories: string | null;
-      }>;
+  // Pass 1: for each cluster, resolve entity_ids -> relationships ->
+  // conversation ids. Also accumulate the full set of conversation ids
+  // seen across all clusters in this generation, for the
+  // conversationsUnresolved summary stat.
+  const allConversationIds = new Set<string>();
+  const clusterConversationIds: Array<{ id: string; conversationIds: string[] }> = [];
 
-      // Collect all memory IDs from relationships
-      const allMemoryIds = new Set<string>();
-      for (const rel of relationships) {
-        if (rel.source_memories) {
-          const memIds: string[] = JSON.parse(rel.source_memories);
-          for (const mid of memIds) {
-            allMemoryIds.add(mid);
+  for (const cluster of clusters) {
+    const entityIds: string[] = JSON.parse(cluster.entity_ids || "[]");
+    if (entityIds.length === 0) continue;
+
+    // Query relationships where source or target is in entity_ids
+    const placeholders = entityIds.map(() => "?").join(", ");
+    const relationships = db
+      .prepare(
+        `SELECT source_memories FROM relationships
+         WHERE source_entity_id IN (${placeholders})
+            OR target_entity_id IN (${placeholders})`,
+      )
+      .all(...entityIds, ...entityIds) as Array<{
+      source_memories: string | null;
+    }>;
+
+    // Collect conversation ids from relationships, flattening one level
+    // (elements are either a flat string or a one-element array of a
+    // string) and ignoring anything else after flattening.
+    const conversationIds = new Set<string>();
+    for (const rel of relationships) {
+      if (!rel.source_memories) continue;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(rel.source_memories);
+      } catch {
+        continue;
+      }
+      if (!Array.isArray(parsed)) continue;
+      for (const item of parsed) {
+        if (typeof item === "string") {
+          conversationIds.add(item);
+        } else if (Array.isArray(item)) {
+          for (const nested of item) {
+            if (typeof nested === "string") conversationIds.add(nested);
           }
         }
       }
+    }
 
-      if (allMemoryIds.size === 0) {
-        updateStmt.run(JSON.stringify([]), cluster.id);
+    for (const cid of conversationIds) allConversationIds.add(cid);
+    clusterConversationIds.push({ id: cluster.id, conversationIds: Array.from(conversationIds) });
+  }
+
+  let conversationsUnresolved = 0;
+  for (const cid of allConversationIds) {
+    if (!convToMemories.has(cid)) conversationsUnresolved++;
+  }
+
+  const doLink = db.transaction(() => {
+    for (const { id, conversationIds } of clusterConversationIds) {
+      if (conversationIds.length === 0) {
+        updateStmt.run(JSON.stringify([]), id);
         continue;
       }
 
-      // Filter to only active memories
-      const memPlaceholders = Array.from(allMemoryIds)
-        .map(() => "?")
-        .join(", ");
-      const activeMemories = db
-        .prepare(
-          `SELECT id FROM memories WHERE id IN (${memPlaceholders}) AND is_active = 1`,
-        )
-        .all(...allMemoryIds) as Array<{ id: string }>;
+      const activeMemoryIds = new Set<string>();
+      for (const cid of conversationIds) {
+        for (const memId of convToMemories.get(cid) ?? []) {
+          activeMemoryIds.add(memId);
+        }
+      }
 
-      const activeMemoryIds = activeMemories.map((m) => m.id);
-
-      updateStmt.run(JSON.stringify(activeMemoryIds), cluster.id);
+      const activeMemoryIdsArr = Array.from(activeMemoryIds);
+      updateStmt.run(JSON.stringify(activeMemoryIdsArr), id);
       clustersUpdated++;
-      totalMemoriesLinked += activeMemoryIds.length;
+      totalMemoriesLinked += activeMemoryIdsArr.length;
     }
   });
 
   doLink();
 
-  return { clustersUpdated, memoriesLinked: totalMemoriesLinked };
+  return { clustersUpdated, memoriesLinked: totalMemoriesLinked, conversationsUnresolved };
 }
 
 // ─── Edge Weight Recomputation ──────────────────────────────────

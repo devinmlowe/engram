@@ -93,7 +93,10 @@ function insertRelationship(
   opts: {
     type?: string;
     weight?: number;
-    sourceMemories?: string[];
+    // `source_memories` actually stores conversation ids. Production data
+    // mixes flat strings and nested one-element arrays, so both shapes
+    // are accepted here.
+    sourceMemories?: Array<string | string[]>;
   } = {},
 ) {
   db.prepare(
@@ -117,17 +120,36 @@ function insertMemory(
     isActive?: number;
     confidence?: number;
     importance?: number;
+    sourceExchanges?: string[];
   } = {},
 ) {
   db.prepare(
     `INSERT INTO memories (id, type, content, confidence, importance, access_count, is_active, created_at, source_exchanges)
-    VALUES (?, 'fact', 'Test memory content', ?, ?, 0, ?, ?, '[]')`,
+    VALUES (?, 'fact', 'Test memory content', ?, ?, 0, ?, ?, ?)`,
   ).run(
     id,
     opts.confidence ?? 0.8,
     opts.importance ?? 0.7,
     opts.isActive ?? 1,
     NOW,
+    JSON.stringify(opts.sourceExchanges ?? []),
+  );
+}
+
+function insertExchange(
+  db: Database.Database,
+  id: string,
+  conversationId: string,
+  opts: { project?: string; timestamp?: string } = {},
+) {
+  db.prepare(
+    `INSERT INTO exchanges (id, conversation_id, project, timestamp)
+    VALUES (?, ?, ?, ?)`,
+  ).run(
+    id,
+    conversationId,
+    opts.project ?? "test",
+    opts.timestamp ?? new Date(NOW * 1000).toISOString(),
   );
 }
 
@@ -235,58 +257,82 @@ describe("Reflection Orchestration", () => {
   // ─── linkMemoriesToCommunities ──────────────────────────────
 
   describe("linkMemoriesToCommunities", () => {
-    it("updates topic_clusters.memory_ids from relationship source_memories", () => {
-      // Entities
+    // relationships.source_memories actually stores conversation ids
+    // (written by findOrCreateRelationship). Linking now joins those
+    // conversation ids through exchanges to memories.source_exchanges.
+
+    it("links memories via nested-array conversation ids (prod shape)", () => {
       insertEntity(t.db, "e1", "Alpha");
       insertEntity(t.db, "e2", "Beta");
 
-      // Memories
-      insertMemory(t.db, "mem-1");
-      insertMemory(t.db, "mem-2");
-
-      // Relationship with source_memories
+      // Nested one-element array, mimicking the mixed shape seen in prod
       insertRelationship(t.db, "rel-1", "e1", "e2", {
-        sourceMemories: ["mem-1", "mem-2"],
+        sourceMemories: [["conv-1"]],
       });
 
-      // Topic cluster containing these entities
-      insertCluster(t.db, "tc-1", "Test Cluster", ["e1", "e2"], 1);
+      insertExchange(t.db, "exch-1", "conv-1");
+      insertMemory(t.db, "mem-1", { sourceExchanges: ["exch-1"] });
+
+      insertCluster(t.db, "tc-1", "Test Cluster", ["e1"], 1);
 
       const result = linkMemoriesToCommunities(t.db, 1);
 
       expect(result.clustersUpdated).toBe(1);
-      expect(result.memoriesLinked).toBe(2);
+      expect(result.memoriesLinked).toBe(1);
+      expect(result.conversationsUnresolved).toBe(0);
 
-      // Verify the cluster was updated
       const cluster = t.db
         .prepare("SELECT memory_ids FROM topic_clusters WHERE id = ?")
         .get("tc-1") as { memory_ids: string };
       const memoryIds = JSON.parse(cluster.memory_ids);
-      expect(memoryIds).toContain("mem-1");
-      expect(memoryIds).toContain("mem-2");
+      expect(memoryIds).toEqual(["mem-1"]);
     });
 
-    it("deduplicates memory IDs across relationships", () => {
+    it("links memories via flat-string conversation ids", () => {
+      insertEntity(t.db, "e1", "Alpha");
+      insertEntity(t.db, "e2", "Beta");
+
+      insertRelationship(t.db, "rel-1", "e1", "e2", {
+        sourceMemories: ["conv-1"],
+      });
+
+      insertExchange(t.db, "exch-1", "conv-1");
+      insertMemory(t.db, "mem-1", { sourceExchanges: ["exch-1"] });
+
+      insertCluster(t.db, "tc-1", "Test Cluster", ["e1"], 1);
+
+      const result = linkMemoriesToCommunities(t.db, 1);
+
+      expect(result.memoriesLinked).toBe(1);
+      const cluster = t.db
+        .prepare("SELECT memory_ids FROM topic_clusters WHERE id = ?")
+        .get("tc-1") as { memory_ids: string };
+      expect(JSON.parse(cluster.memory_ids)).toEqual(["mem-1"]);
+    });
+
+    it("deduplicates memory IDs across relationships and conversations", () => {
       insertEntity(t.db, "e1", "Alpha");
       insertEntity(t.db, "e2", "Beta");
       insertEntity(t.db, "e3", "Gamma");
 
-      insertMemory(t.db, "mem-shared");
-      insertMemory(t.db, "mem-unique");
+      insertExchange(t.db, "exch-shared", "conv-shared");
+      insertMemory(t.db, "mem-shared", { sourceExchanges: ["exch-shared"] });
 
-      // Two relationships referencing the same memory
+      insertExchange(t.db, "exch-unique", "conv-unique");
+      insertMemory(t.db, "mem-unique", { sourceExchanges: ["exch-unique"] });
+
+      // Two relationships referencing the same conversation
       insertRelationship(t.db, "rel-1", "e1", "e2", {
-        sourceMemories: ["mem-shared", "mem-unique"],
+        sourceMemories: ["conv-shared", "conv-unique"],
       });
       insertRelationship(t.db, "rel-2", "e2", "e3", {
-        sourceMemories: ["mem-shared"],
+        sourceMemories: ["conv-shared"],
       });
 
       insertCluster(t.db, "tc-1", "Test Cluster", ["e1", "e2", "e3"], 1);
 
       const result = linkMemoriesToCommunities(t.db, 1);
 
-      // Deduplicated: mem-shared should appear only once
       const cluster = t.db
         .prepare("SELECT memory_ids FROM topic_clusters WHERE id = ?")
         .get("tc-1") as { memory_ids: string };
@@ -297,28 +343,61 @@ describe("Reflection Orchestration", () => {
       expect(result.memoriesLinked).toBe(2);
     });
 
-    it("filters out inactive memories", () => {
+    it("filters out inactive memories and counts their conversation as unresolved", () => {
       insertEntity(t.db, "e1", "Alpha");
       insertEntity(t.db, "e2", "Beta");
 
-      insertMemory(t.db, "mem-active", { isActive: 1 });
-      insertMemory(t.db, "mem-inactive", { isActive: 0 });
-
-      insertRelationship(t.db, "rel-1", "e1", "e2", {
-        sourceMemories: ["mem-active", "mem-inactive"],
+      insertExchange(t.db, "exch-3", "conv-3");
+      insertMemory(t.db, "mem-inactive", {
+        isActive: 0,
+        sourceExchanges: ["exch-3"],
       });
 
-      insertCluster(t.db, "tc-1", "Test Cluster", ["e1", "e2"], 1);
+      insertRelationship(t.db, "rel-1", "e1", "e2", {
+        sourceMemories: ["conv-3"],
+      });
 
-      linkMemoriesToCommunities(t.db, 1);
+      insertCluster(t.db, "tc-1", "Test Cluster", ["e1"], 1);
+
+      const result = linkMemoriesToCommunities(t.db, 1);
 
       const cluster = t.db
         .prepare("SELECT memory_ids FROM topic_clusters WHERE id = ?")
         .get("tc-1") as { memory_ids: string };
       const memoryIds: string[] = JSON.parse(cluster.memory_ids);
-      expect(memoryIds).toHaveLength(1);
-      expect(memoryIds).toContain("mem-active");
-      expect(memoryIds).not.toContain("mem-inactive");
+      expect(memoryIds).toHaveLength(0);
+      expect(result.memoriesLinked).toBe(0);
+      // The only active-memory candidate is inactive, so its conversation
+      // never resolves.
+      expect(result.conversationsUnresolved).toBe(1);
+    });
+
+    it("does not link memories with legacy index-style source_exchanges, without throwing", () => {
+      insertEntity(t.db, "e1", "Alpha");
+      insertEntity(t.db, "e2", "Beta");
+
+      // The conversation has a real exchange, but the memory's
+      // source_exchanges holds pre-2026-09-12 legacy exchange-index
+      // strings that don't correspond to any exchanges.id.
+      insertExchange(t.db, "exch-2", "conv-2");
+      insertMemory(t.db, "mem-legacy", { sourceExchanges: ["3", "4"] });
+
+      insertRelationship(t.db, "rel-1", "e1", "e2", {
+        sourceMemories: ["conv-2"],
+      });
+
+      insertCluster(t.db, "tc-1", "Test Cluster", ["e1"], 1);
+
+      // Should resolve to zero memories without throwing, despite the
+      // legacy index-style source_exchanges values.
+      const result = linkMemoriesToCommunities(t.db, 1);
+
+      const cluster = t.db
+        .prepare("SELECT memory_ids FROM topic_clusters WHERE id = ?")
+        .get("tc-1") as { memory_ids: string };
+      expect(JSON.parse(cluster.memory_ids)).toHaveLength(0);
+      expect(result.memoriesLinked).toBe(0);
+      expect(result.conversationsUnresolved).toBe(1);
     });
   });
 
