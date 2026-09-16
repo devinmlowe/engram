@@ -115,3 +115,98 @@ describe("Windows visualizer supervision scripts (issue #3)", () => {
     expect(readme).toContain("install-visualizer.ps1");
   });
 });
+
+describe("systemd nightly dream units (issue #6)", () => {
+  const SERVICE = "engram-dream.service";
+  const TIMER = "engram-dream.timer";
+  const INSTALLER = "scripts/install-daemon.sh";
+  const service = readFileSync(join(ROOT, "systemd", SERVICE), "utf-8");
+  const timer = readFileSync(join(ROOT, "systemd", TIMER), "utf-8");
+  const installer = readFileSync(join(ROOT, INSTALLER), "utf-8");
+
+  const directive = (unit: string, key: string) => unit.match(new RegExp(`^${key}=(.*)$`, "m"))?.[1];
+
+  it(`${SERVICE}: template carries no personal or installer-specific paths`, () => {
+    // Same contract as the plists: no developer home, clone location, or node manager.
+    expect(service).not.toMatch(/\/Users\/[A-Za-z]/);
+    expect(service).not.toMatch(/\/home\/[A-Za-z]/);
+    expect(service, "no node-manager-specific binary path").not.toMatch(/\/fnm\//);
+    expect(directive(service, "WorkingDirectory"), "WorkingDirectory is the checkout placeholder").toBe("__ENGRAM_DIR__");
+    const execStart = directive(service, "ExecStart")!.split(/\s+/);
+    expect(execStart[0], "node binary is a placeholder, not a hardcoded path").toBe("__NODE_BIN__");
+    expect(directive(service, "StandardOutput"), "stdout log lives under the log placeholder").toContain("__LOG_DIR__");
+    expect(directive(service, "StandardError"), "stderr log lives under the log placeholder").toContain("__LOG_DIR__");
+  });
+
+  it(`${SERVICE}: entry-point script resolves inside this checkout once rendered`, () => {
+    const rendered = render(service);
+    expect(rendered.match(PLACEHOLDER), "every placeholder is substituted").toBeNull();
+    const wd = directive(rendered, "WorkingDirectory")!;
+    expect(wd).toBe(ROOT);
+    const execStart = directive(rendered, "ExecStart")!.split(/\s+/);
+    expect(execStart[0]).toBe(process.execPath);
+    expect(execStart.at(-1), "runs the dream subcommand").toBe("dream");
+    const script = execStart.filter((s) => !s.startsWith("--")).find((s) => /\.(ts|js)$/.test(s));
+    expect(script, "entry-point script present").toBeTruthy();
+    const resolved = isAbsolute(script!) ? script! : join(wd, script!);
+    const srcCounterpart = resolved.replace(`${ROOT}/dist/`, `${ROOT}/src/`).replace(/\.js$/, ".ts");
+    expect(existsSync(resolved) || existsSync(srcCounterpart), `script ${resolved} exists (or its src/ source)`).toBe(true);
+  });
+
+  it(`${SERVICE}: its install script substitutes every placeholder the template uses`, () => {
+    const used = new Set(service.match(PLACEHOLDER) ?? []);
+    expect(used.size, "template uses at least one placeholder").toBeGreaterThan(0);
+    for (const ph of used) {
+      expect(installer, `${INSTALLER} substitutes ${ph}`).toContain(`s|${ph}|`);
+    }
+  });
+
+  it(`${TIMER}: daily 02:00 with catch-up, no placeholders, bound to the service`, () => {
+    expect(timer.match(PLACEHOLDER), "timer needs no rendering").toBeNull();
+    expect(directive(timer, "OnCalendar")).toMatch(/02:00/);
+    expect(directive(timer, "Persistent")).toBe("true");
+    expect(directive(timer, "Unit")).toBe(SERVICE);
+    expect(directive(timer, "WantedBy")).toBe("timers.target");
+  });
+
+  it(`${INSTALLER}: Linux branch enables the timer as a user unit and keeps the launchd path`, () => {
+    expect(installer, "OS detection").toContain("uname -s");
+    expect(installer).toContain("systemctl --user daemon-reload");
+    expect(installer).toContain(`systemctl --user enable --now "$TIMER_NAME"`);
+    expect(installer).toContain(`TIMER_NAME="${TIMER}"`);
+    expect(installer, "run-now starts the service directly").toContain(`systemctl --user start "$SERVICE_NAME"`);
+    expect(installer, "renders into the XDG user unit dir").toContain("${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user");
+    expect(installer, "macOS launchd path still present").toContain("launchctl load");
+    expect(installer, "macOS kickstart still present").toContain("launchctl kickstart");
+    expect(installer).not.toMatch(/\/Users\/[A-Za-z]/);
+    expect(installer).not.toMatch(/\/home\/[A-Za-z]/);
+  });
+});
+
+describe("Windows nightly dream Task Scheduler script (issue #6)", () => {
+  const installer = join(ROOT, "scripts", "install-daemon.ps1");
+
+  it("ships and registers a daily task running the compiled CLI with the resolved node", () => {
+    expect(existsSync(installer)).toBe(true);
+    const src = readFileSync(installer, "utf-8");
+    expect(src).toContain("Register-ScheduledTask");
+    expect(src, "daily trigger").toMatch(/New-ScheduledTaskTrigger\s+-Daily/);
+    expect(src, "02:00 default").toMatch(/\$At = '02:00'/);
+    expect(src, "compiled CLI entry point").toContain("dist\\interfaces\\cli\\index.js");
+    expect(src, "runs the dream subcommand").toMatch(/'dream'/);
+    expect(src, "resolves node from PATH unless overridden").toContain("Get-Command node.exe");
+    for (const verb of ["install", "uninstall", "status", "run-now"]) {
+      expect(src, `verb ${verb}`).toContain(`'${verb}'`);
+    }
+  });
+
+  it("resolves paths from its own location and env, never a personal layout", () => {
+    const src = readFileSync(installer, "utf-8");
+    expect(src, "derives RepoRoot from the script location").toContain("$MyInvocation.MyCommand.Path");
+    expect(src).not.toMatch(/C:\\Users\\[A-Za-z]/);
+    expect(src).not.toMatch(/\/Users\/[A-Za-z]/);
+    expect(src, "no node-manager-specific binary path").not.toMatch(/\\fnm\\|\/fnm\//);
+    expect(src, "honors ENGRAM_DATA_DIR like the CLI").toContain("ENGRAM_DATA_DIR");
+    expect(src, "honors ENGRAM_LOGS_DIR like the CLI").toContain("ENGRAM_LOGS_DIR");
+  });
+});
