@@ -22,9 +22,10 @@ from typing import Any, Dict, List, Optional
 
 from mcp_client import McpStdioClient, McpError
 
-# The plugin ships inside the engram checkout (integrations/hermes-plugin/), and the
-# documented install is a symlink into ~/.hermes/plugins, so realpath() lands back
-# in the repo: no assumption about where the user cloned it.
+# The plugin ships inside the engram checkout (interfaces/hermes-plugin/). When
+# installed as a symlink into ~/.hermes/plugins, realpath() lands back in the
+# repo: no assumption about where the user cloned it. (deploy.sh copies instead;
+# set repo_path in engram.json for copied installs.)
 DEFAULT_REPO_PATH = os.path.realpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 DEFAULT_PREFETCH_BUDGET = 1200
 DEFAULT_IDLE_KILL_S = 600.0

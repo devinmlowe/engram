@@ -1,12 +1,19 @@
 # Hermes memory-provider plugin for engram
 
-A user-lane Hermes memory provider (`$HERMES_HOME/plugins/engram/`) that wraps
-the engram streamable-HTTP MCP server. It makes `hermes memory status` report
-the provider as installed and plugs engram into Hermes' memory pipeline
-(prefetch, tool schemas, lifecycle) without touching the existing
-`mcp_servers.engram` MCP wiring.
+A user-lane Hermes memory provider (`$HERMES_HOME/plugins/engram/`) that plugs
+engram into Hermes' memory pipeline (prefetch, tool schemas, lifecycle) and
+makes `hermes memory status` report the provider as installed. It does not
+touch any `mcp_servers.engram` MCP wiring you may also have.
 
-## What it does
+This is the only Hermes plugin tree in the repo. Two transports live here and
+share one config file; pick with `"transport"` in `$HERMES_HOME/engram.json`.
+
+| Transport | Module | When to use |
+|-----------|--------|-------------|
+| `http` (default) | `__init__.py` | The engram HTTP MCP server is already running (LaunchAgent / `engram serve`). Thin and stateless: automatic recall plus one `engram_memory_save` tool. |
+| `stdio` | `provider.py`, `mcp_client.py` | No long-running server; the plugin spawns engram's MCP server as a lazy stdio child per primary agent context, with per-profile scoped writes and `engram_*` recall/explore/reflect/remember tools. |
+
+## What the http transport does
 
 | Hook | Behaviour |
 |------|-----------|
@@ -15,40 +22,60 @@ the provider as installed and plugs engram into Hermes' memory pipeline
 | `get_tool_schemas()` | Exactly one model tool: `engram_memory_save(content, type?, importance?)` |
 | `handle_tool_call()` | Proxies `engram_memory_save` to the `remember` MCP tool |
 | `system_prompt_block()` | A static, byte-stable instruction block (no timestamps, no counts) |
-| `sync_turn` / `on_session_end` / `on_memory_write` / `on_pre_compress` | No-ops in v1 — engram's dream pipeline owns ingestion |
+| `sync_turn` / `on_session_end` / `on_memory_write` / `on_pre_compress` | No-ops — engram's dream pipeline owns ingestion |
 | `backup_paths()` | `~/.local/share/engram/engram.db` |
 
 A five-failure circuit breaker (120 s cooldown) mirrors the bundled mem0
-provider so a down server never adds latency to every turn.
+provider so a down server never adds latency to every turn. The tool is named
+`engram_memory_save` (not `engram_*`-prefixed like the MCP tools) so it cannot
+collide when the MCP server is also configured.
 
-The tool is named `engram_memory_save` (not `engram_*`-prefixed like the MCP
-tools) so it cannot collide when the MCP server is also configured.
+## What the stdio transport does
 
-## Configuration
+Spawns `node dist/interfaces/mcp/server.js` from `repo_path` on first use in a
+primary agent context (cron, subagent, and flush contexts never pay the Node
+cost), scopes writes to `hermes:<profile>` via the child's environment, exposes
+`engram_recall` / `engram_explore` / `engram_reflect` / `engram_remember`, mirrors
+Hermes's built-in MEMORY.md writes into the graph on a background thread, and
+reaps the idle child after `idle_kill_s`. It also ships a `hermes engram
+{status|recall}` CLI (`cli.py`) and a dashboard config schema
+(`config_schema.py`); see Deploy for why those two files are opt-in.
 
-Non-secret, stored in `$HERMES_HOME/engram.json` (written by
-`hermes memory setup engram`, or by hand):
+## Configuration — `$HERMES_HOME/engram.json`
+
+Non-secret; written by `hermes memory setup engram` or by hand. All keys are
+optional.
+
+| Key | Transport | Default | Meaning |
+|-----|-----------|---------|---------|
+| `transport` | both | `http` | `http` or `stdio` |
+| `base_url` | http | `http://127.0.0.1:9907` | MCP server base URL (`/mcp` and `/health` hang off it) |
+| `timeout_secs` | http | `2` | HTTP timeout for health + per-turn recall |
+| `prefetch_token_budget` | http | `300` | recall token budget per turn |
+| `repo_path` | stdio | this checkout | engram checkout containing `dist/` |
+| `node_path` | stdio | PATH lookup | node >= 22 binary |
+| `db_path` | stdio | engram default | override the SQLite DB |
+| `budget` | stdio | `1200` | prefetch token budget |
+| `read_scopes` | stdio | `global,hermes:<profile>` | recall visibility |
+| `idle_kill_s` | stdio | `600` | reap the Node child after idle |
 
 ```json
-{
-  "base_url": "http://127.0.0.1:9907",
-  "timeout_secs": 2,
-  "prefetch_token_budget": 300
-}
+{ "base_url": "http://127.0.0.1:9907", "timeout_secs": 2, "prefetch_token_budget": 300 }
 ```
-
-All keys are optional; the values above are the defaults. There are no
-secrets.
 
 ## Layout
 
 ```
 interfaces/hermes-plugin/
-├── __init__.py            # provider + minimal MCP client (stdlib only)
-├── plugin.yaml            # manifest (name/version/description)
-├── README.md
-├── deploy.sh              # copies runtime files into $HERMES_HOME (and optional profiles)
-└── tests/test_provider.py # contract tests, HTTP mocked
+├── __init__.py              # entry point; http provider + minimal MCP client (stdlib only)
+├── provider.py              # stdio provider (EngramMemoryProvider)
+├── mcp_client.py            # stdio JSON-RPC client (McpStdioClient)
+├── cli.py                   # `hermes engram` CLI (stdio transport)
+├── config_schema.py         # Hermes dashboard schema (stdio transport)
+├── plugin.yaml              # manifest (name/version/description)
+├── deploy.sh                # copies runtime files into $HERMES_HOME (and optional profiles)
+├── README.md, SPEC.md
+└── tests/                   # http + stdio suites (see Tests)
 ```
 
 ## Deploy
@@ -57,17 +84,30 @@ interfaces/hermes-plugin/
 # default profile only ($HERMES_HOME, default ~/.hermes)
 interfaces/hermes-plugin/deploy.sh
 
-# also deploy to named profiles
-ENGRAM_PLUGIN_PROFILES="career pmp" interfaces/hermes-plugin/deploy.sh
+# also deploy to named profiles (space-separated; missing profiles are skipped)
+ENGRAM_PLUGIN_PROFILES="alpha beta" interfaces/hermes-plugin/deploy.sh
 ```
 
-Copies (not symlinks) `__init__.py`, `plugin.yaml`, and `README.md` into
-`$HERMES_HOME/plugins/engram/`. When `ENGRAM_PLUGIN_PROFILES` is set to a
-space-separated list of profile names, the same files are also copied into
-`$HERMES_HOME/profiles/<name>/plugins/engram/` for each name (profiles that
-do not exist are skipped). With the variable unset the script deploys to the
-default profile only and prints a hint. Restart the gateways afterwards so
-running agents pick up the new code.
+Copies (not symlinks) `__init__.py`, `provider.py`, `mcp_client.py`,
+`plugin.yaml`, and `README.md` into `$HERMES_HOME/plugins/engram/` and into
+`$HERMES_HOME/profiles/<name>/plugins/engram/` for each named profile. With the
+variable unset the script deploys to the default profile only and prints a
+hint. Restart the gateways afterwards so running agents pick up the new code.
+
+`cli.py` and `config_schema.py` are not copied: Hermes loads both automatically
+whenever they sit in the active provider's directory, and they describe the
+stdio transport. If you run `"transport": "stdio"`, copy them in (or symlink
+this directory instead of running `deploy.sh`) and set `repo_path`.
+
+Then, per profile:
+
+```yaml
+# $HERMES_HOME/config.yaml
+memory:
+  provider: engram
+```
+
+Rollback: `hermes memory off` (or delete the plugin directory).
 
 ## Tests
 
@@ -77,7 +117,9 @@ PYTHONPATH=~/.hermes/hermes-agent python3 -m pytest interfaces/hermes-plugin/tes
 ```
 
 The `agent` and `tools` packages only resolve inside the hermes-agent tree,
-hence the `PYTHONPATH`. HTTP is mocked by monkeypatching `urllib`.
+hence the `PYTHONPATH`. The http suite mocks `urllib`; the stdio suites drive
+`tests/fake_mcp_server.py`; `test_stdio_e2e_real_server.py` runs the real built
+server on a temp DB and skips when `dist/` is missing (`npm run build`).
 
 ## Validate
 

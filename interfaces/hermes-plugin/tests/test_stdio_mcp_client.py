@@ -43,11 +43,11 @@ def test_call_tool_returns_joined_text_content(client):
 
 
 def test_env_is_passed_to_child():
-    c = McpStdioClient([sys.executable, FAKE_SERVER], env={"ENGRAM_SCOPE": "hermes:career"})
+    c = McpStdioClient([sys.executable, FAKE_SERVER], env={"ENGRAM_SCOPE": "hermes:alpha"})
     try:
         c.start()
         payload = json.loads(c.call_tool("recall", {"query": "x"}))
-        assert payload["env_scope"] == "hermes:career"
+        assert payload["env_scope"] == "hermes:alpha"
     finally:
         c.stop()
 

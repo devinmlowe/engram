@@ -7,7 +7,7 @@
 # Usage:
 #   interfaces/hermes-plugin/deploy.sh
 #       -> deploys only to $HERMES_HOME/plugins/engram (default ~/.hermes)
-#   ENGRAM_PLUGIN_PROFILES="career pmp" interfaces/hermes-plugin/deploy.sh
+#   ENGRAM_PLUGIN_PROFILES="alpha beta" interfaces/hermes-plugin/deploy.sh
 #       -> additionally deploys to $HERMES_HOME/profiles/<name>/plugins/engram
 #          for each space-separated profile name (missing profiles are skipped)
 set -euo pipefail
@@ -15,7 +15,11 @@ set -euo pipefail
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # HERMES_ROOT is honoured for backwards compatibility with earlier rollouts.
 HERMES_HOME="${HERMES_HOME:-${HERMES_ROOT:-$HOME/.hermes}}"
-RUNTIME_FILES=(__init__.py plugin.yaml README.md)
+# __init__.py is the entry point (HTTP transport); provider.py + mcp_client.py
+# are the stdio transport it can select via engram.json. cli.py and
+# config_schema.py are stdio-only companions that Hermes auto-loads when
+# present, so they are deliberately NOT copied alongside the HTTP default.
+RUNTIME_FILES=(__init__.py provider.py mcp_client.py plugin.yaml README.md)
 # Space-separated profile names; empty/unset means "default profile only".
 PROFILES=(${ENGRAM_PLUGIN_PROFILES:-})
 

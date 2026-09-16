@@ -58,7 +58,7 @@ def test_prefetch_lazily_spawns_and_returns_recall_text(tmp_path):
     provider, home = make_provider(tmp_path)
     provider.initialize(
         "sess-p", hermes_home=home, platform="cli",
-        agent_context="primary", agent_identity="career",
+        agent_context="primary", agent_identity="alpha",
     )
     assert provider.child_pid is None  # lazy — no spawn at init
     text = provider.prefetch("kubernetes rollout")
@@ -73,10 +73,10 @@ def test_child_env_carries_profile_scope(tmp_path):
     provider, home = make_provider(tmp_path)
     provider.initialize(
         "sess-s", hermes_home=home, platform="cli",
-        agent_context="primary", agent_identity="career",
+        agent_context="primary", agent_identity="alpha",
     )
     payload = json.loads(provider.prefetch("anything"))
-    assert payload["env_scope"] == "hermes:career"
+    assert payload["env_scope"] == "hermes:alpha"
     provider.shutdown()
 
 
@@ -151,7 +151,7 @@ def test_on_memory_write_mirrors_into_graph(tmp_path):
     provider, home = make_provider(tmp_path, extra_env={"FAKE_LOG": str(log)})
     provider.initialize(
         "sess-w", hermes_home=home, platform="cli",
-        agent_context="primary", agent_identity="career",
+        agent_context="primary", agent_identity="alpha",
     )
     provider.prefetch("warm up")  # ensure child running
     provider.on_memory_write("add", "memory", "The operator prefers fish shell")

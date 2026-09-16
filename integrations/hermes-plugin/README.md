@@ -1,43 +1,5 @@
-# Hermes Memory Provider Plugin
+# Moved
 
-Engram as a [Hermes](https://github.com/NousResearch/hermes-agent) external
-memory provider: automatic recall from the shared knowledge graph before every
-turn, `engram_*` tools for deliberate recall/exploration, and profile-scoped
-curated writes. Design rationale: `../../decisions/adr-010-memory-provider-integration.md` (ADR-010).
-
-## Install
-
-```fish
-npm run build                                   # engram repo root — build dist/
-ln -s /path/to/your/engram/checkout/integrations/hermes-plugin ~/.hermes/plugins/engram
-```
-
-Then per profile (start with default only):
-
-```yaml
-# $HERMES_HOME/config.yaml
-memory:
-  provider: engram
-```
-
-Rollback: `hermes memory off` (or delete the symlink). Phase 1 behavior is
-read-mostly; nothing in the engram DB is migrated or rewritten.
-
-## Configuration — `$HERMES_HOME/engram.json`
-
-| Key | Default | Meaning |
-|---|---|---|
-| `repo_path` | `~/git/engram` | engram checkout containing `dist/` |
-| `node_path` | PATH lookup | node ≥22 binary |
-| `db_path` | engram default | override the SQLite DB |
-| `budget` | 1200 | prefetch token budget |
-| `read_scopes` | `global,hermes:<profile>` | recall visibility |
-| `idle_kill_s` | 600 | reap the Node child after idle |
-
-## Files
-
-- `__init__.py` — Hermes entry point (`register(ctx)`)
-- `provider.py` — `EngramMemoryProvider`
-- `mcp_client.py` — stdlib stdio JSON-RPC client
-- `plugin.yaml` — Hermes plugin metadata
-- `tests/` — pytest suite (run `pytest` here)
+The Hermes memory-provider plugin now lives in [`interfaces/hermes-plugin/`](../../interfaces/hermes-plugin/)
+(HTTP transport by default; the stdio provider that used to live here is selectable via `"transport": "stdio"`).
+If you symlinked this directory into `$HERMES_HOME/plugins/engram`, re-point the symlink or run `interfaces/hermes-plugin/deploy.sh`.

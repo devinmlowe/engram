@@ -45,11 +45,11 @@ def make_provider(tmp_path, profile):
 
 
 def test_full_write_read_scope_cycle(tmp_path):
-    career = make_provider(tmp_path, "career")
-    finance = make_provider(tmp_path, "finance")
+    alpha = make_provider(tmp_path, "alpha")
+    beta = make_provider(tmp_path, "beta")
     try:
-        # career writes a scoped memory through the real server
-        raw = career.handle_tool_call(
+        # alpha writes a scoped memory through the real server
+        raw = alpha.handle_tool_call(
             "engram_remember",
             {"content": "Interview with Acme Corp scheduled for next Tuesday", "type": "fact"},
         )
@@ -57,7 +57,7 @@ def test_full_write_read_scope_cycle(tmp_path):
         # retry once with a long timeout via the underlying client
         parsed = json.loads(raw)
         if not parsed["ok"]:
-            client = career._ensure_client()
+            client = alpha._ensure_client()
             result = client.call_tool(
                 "remember",
                 {"content": "Interview with Acme Corp scheduled for next Tuesday", "type": "fact"},
@@ -67,23 +67,23 @@ def test_full_write_read_scope_cycle(tmp_path):
         assert parsed["ok"], parsed
         assert "emember" in parsed["result"] or "Merged" in parsed["result"]
 
-        # career recalls it (global + hermes:career scopes).
+        # alpha recalls it (global + hermes:alpha scopes).
         # NB: the <engram_memory> envelope echoes the query attribute, so
         # assertions must target memory CONTENT, never the query terms.
-        career_recall = career._ensure_client().call_tool(
+        alpha_recall = alpha._ensure_client().call_tool(
             "recall", {"query": "Acme interview", "sources": ["semantic"]},
             timeout=CALL_TIMEOUT,
         )
-        assert "Acme Corp scheduled" in career_recall
-        assert 'total_results="0"' not in career_recall
+        assert "Acme Corp scheduled" in alpha_recall
+        assert 'total_results="0"' not in alpha_recall
 
-        # finance must NOT see career's scoped memory
-        finance_recall = finance._ensure_client().call_tool(
+        # beta must NOT see alpha's scoped memory
+        beta_recall = beta._ensure_client().call_tool(
             "recall", {"query": "Acme interview", "sources": ["semantic"]},
             timeout=CALL_TIMEOUT,
         )
-        assert "Acme Corp scheduled" not in finance_recall
-        assert 'total_results="0"' in finance_recall
+        assert "Acme Corp scheduled" not in beta_recall
+        assert 'total_results="0"' in beta_recall
     finally:
-        career.shutdown()
-        finance.shutdown()
+        alpha.shutdown()
+        beta.shutdown()
