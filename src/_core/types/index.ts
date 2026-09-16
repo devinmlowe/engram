@@ -94,7 +94,7 @@ export interface RerankerConfig {
 // ─── Configuration ──────────────────────────────────────────────
 
 export interface EngramConfig {
-  dataDir: string; // ~/.local/share/engram
+  dataDir: string; // resolved by loadConfig(): ENGRAM_DATA_DIR, else the platform default
   dbPath: string; // {dataDir}/engram.db
   archiveDir: string; // {dataDir}/archive
   logsDir: string; // {dataDir}/logs

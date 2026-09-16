@@ -15,12 +15,11 @@
 import Database from "better-sqlite3";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { watch, type FSWatcher } from "node:fs";
-import { join } from "node:path";
-import { homedir } from "node:os";
 
 // Data queries
 import { getStats, computeOptimalThreshold } from "./data/graph-queries.js";
 import { getBindHost } from "./bind.js";
+import { resolveWebDbPath } from "./paths.js";
 
 // Route handlers
 import {
@@ -53,9 +52,8 @@ import { terminalCommunitiesPage } from "./pages/terminal/communities.html.js";
 
 // ─── Configuration ──────────────────────────────────────────────
 
-const DB_PATH =
-  process.env.ENGRAM_DB_PATH ??
-  join(homedir(), ".local", "share", "engram", "engram.db");
+// Resolved through loadConfig() (ENGRAM_DATA_DIR / ENGRAM_DB_PATH aware).
+const DB_PATH = resolveWebDbPath();
 
 const PORT = parseInt(process.env.PORT ?? "3001", 10);
 // Bind to loopback by default; set ENGRAM_BIND=0.0.0.0 (or HOST) to expose on the network.
