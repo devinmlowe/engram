@@ -7,7 +7,7 @@
 # Usage:
 #   interfaces/hermes-plugin/deploy.sh
 #       -> deploys only to $HERMES_HOME/plugins/engram (default ~/.hermes)
-#   ENGRAM_PLUGIN_PROFILES="career pmp" interfaces/hermes-plugin/deploy.sh
+#   ENGRAM_PLUGIN_PROFILES="alpha beta" interfaces/hermes-plugin/deploy.sh
 #       -> additionally deploys to $HERMES_HOME/profiles/<name>/plugins/engram
 #          for each space-separated profile name (missing profiles are skipped)
 set -euo pipefail
