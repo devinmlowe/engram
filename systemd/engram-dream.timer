@@ -1,0 +1,19 @@
+# Engram nightly dream schedule — systemd *user* timer.
+#
+# Installed alongside engram-dream.service by scripts/install-daemon.sh on
+# Linux (no placeholders; copied verbatim). Enable with:
+#   systemctl --user enable --now engram-dream.timer
+#
+# Mirrors the launchd StartCalendarInterval (daily 02:00). Persistent=true
+# runs a missed cycle at next boot/login, which launchd does implicitly.
+
+[Unit]
+Description=Nightly engram dream consolidation at 02:00
+
+[Timer]
+OnCalendar=*-*-* 02:00:00
+Persistent=true
+Unit=engram-dream.service
+
+[Install]
+WantedBy=timers.target

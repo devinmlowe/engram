@@ -1,10 +1,10 @@
 # Scripts
 
-Installation, maintenance, and operational scripts. Bash remains the macOS/Linux path; PowerShell provides the Windows visualizer service path.
+Installation, maintenance, and operational scripts. Bash remains the macOS/Linux path (launchd or systemd user units, chosen by `uname -s`); PowerShell provides the Windows Task Scheduler paths.
 
 ## In Scope
 
-- Service installation and uninstallation (launchd and Windows Task Scheduler)
+- Service installation and uninstallation (launchd, systemd user units, and Windows Task Scheduler)
 - Operational wrappers for dream pipeline execution
 - Dependency checking and environment validation
 
@@ -15,7 +15,8 @@ Installation, maintenance, and operational scripts. Bash remains the macOS/Linux
 
 ## Contains
 
-- [install-daemon.sh](./install-daemon.sh) — Install dream state launchd agent
+- [install-daemon.sh](./install-daemon.sh) — Install the nightly dream scheduler: launchd agent on macOS, systemd user timer (`engram-dream.timer`) on Linux; `install|uninstall|status|run-now`
+- [install-daemon.ps1](./install-daemon.ps1) — Install and control the Windows Task Scheduler nightly dream task (`install|uninstall|status|run-now`)
 - [install-visualizer.sh](./install-visualizer.sh) — Install web visualizer launchd agent
 - [install-visualizer.ps1](./install-visualizer.ps1) — Install and control the Windows Task Scheduler visualizer task
 - [run-visualizer.ps1](./run-visualizer.ps1) — Run the compiled visualizer with explicit Windows paths and restart-on-child-exit behavior
@@ -26,5 +27,6 @@ Installation, maintenance, and operational scripts. Bash remains the macOS/Linux
 
 ## See Also
 
-- [launchd/](../launchd/) — Plist files installed by these scripts
+- [launchd/](../launchd/) — Plist files installed by these scripts (macOS)
+- [systemd/](../systemd/) — User unit + timer templates installed by these scripts (Linux)
 - [package.json](../package.json) — npm scripts for development workflows
