@@ -76,8 +76,9 @@ If you installed before that file existed, move the keys there and re-run `insta
 Every script checks its external tools up front and names what to install. The visualizer
 installer probes its port with `node` (or `curl` against `/api/health`), using `lsof` only as
 an optional fast path when it is installed; the Claude Code post-compaction hook
-(`scripts/compact-dream.sh`) needs only `node` (it honours `ENGRAM_DATA_DIR` / `ENGRAM_LOGS_DIR`),
-and `scripts/commitments-surface.sh` expects `python3`.
+(`scripts/compact-dream.sh`) and the Hermes heartbeat digest (`scripts/commitments-surface.sh`)
+need only `node`; the hook honours `ENGRAM_DATA_DIR` / `ENGRAM_LOGS_DIR`. No script needs `jq`
+or `python3`.
 
 **Supported platforms**
 

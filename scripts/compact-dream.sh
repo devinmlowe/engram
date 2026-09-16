@@ -9,7 +9,7 @@
 # Override ENGRAM_DIR (repo checkout) / NODE_BIN (node binary) if auto-detection is wrong.
 #
 # External tools: only `node` (already required by engram). The payload is parsed
-# with node so the hook does not need jq on the host.
+# with node, so no JSON command-line tool is needed on the host.
 set -euo pipefail
 
 INPUT=$(cat)

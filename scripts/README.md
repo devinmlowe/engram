@@ -19,7 +19,7 @@ Shell scripts for installation, maintenance, and operational tasks. All scripts 
 - [install-visualizer.sh](./install-visualizer.sh) — Install web visualizer launchd agent
 - [run-dream.sh](./run-dream.sh) — Dream-cycle launcher: interactive (`tsx`, tee'd log) or `--daemon` (what the launchd plist runs); sources the service environment file first
 - [compact-dream.sh](./compact-dream.sh) — Claude Code post-compaction hook: background ingest + extract for the compacted session (needs only `node`; honours `ENGRAM_DATA_DIR` / `ENGRAM_LOGS_DIR`)
-- [commitments-surface.sh](./commitments-surface.sh) — Heartbeat digest of the commitments ledger via the HTTP MCP `commitments` tool (count, overdue, due within 7 days; prints nothing when empty). Deployed copy: `~/.hermes/scripts/fleet/commitments-surface.sh`
+- [commitments-surface.sh](./commitments-surface.sh) — Heartbeat digest of the commitments ledger via the HTTP MCP `commitments` tool (count, overdue, due within 7 days; prints nothing when empty). Self-contained node program inside a bash wrapper (no python3). Deployed copy: `~/.hermes/scripts/fleet/commitments-surface.sh`
 - [check-deps.sh](./check-deps.sh) — Verify system dependencies are available
 
 ## Tool prerequisites
