@@ -155,6 +155,25 @@ describe("deduplicateFact", () => {
     expect(memory!.isActive).toBe(true);
   });
 
+  it("carries extractionBasis through to the inserted memory", async () => {
+    const embedding = randomEmbedding();
+    mockedEmbedDocument.mockResolvedValue(embedding);
+
+    const fact = createTestFact({
+      content: "User works remotely on Fridays",
+      extractionBasis: "inferred",
+    });
+
+    const result = await deduplicateFact(t.db, fact, "conv-001");
+
+    expect(result.action).toBe("insert");
+
+    const row = t.db
+      .prepare("SELECT extraction_basis FROM memories WHERE id = ?")
+      .get(result.memoryId) as { extraction_basis: string };
+    expect(row.extraction_basis).toBe("inferred");
+  });
+
   it("auto-merges near-duplicate (sim >= 0.95)", async () => {
     // Insert an existing memory with a known embedding
     const embedding = seededEmbedding(42);
