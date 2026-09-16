@@ -1,11 +1,13 @@
 import {
   pipeline,
   layer_norm,
+  env as transformersEnv,
   type FeatureExtractionPipeline,
   type Tensor,
 } from "@xenova/transformers";
 import type { EngramConfig } from "../types/index.js";
 import { LRUCache } from "../cache/index.js";
+import { applyModelCacheDir } from "./model-cache.js";
 
 let embeddingPipeline: FeatureExtractionPipeline | null = null;
 let initInFlight: Promise<void> | null = null;
@@ -30,12 +32,14 @@ const TARGET_DIMS = 256;
  * Initialize the embedding pipeline.
  * Tries nomic-embed-text-v1.5 first, falls back to all-MiniLM-L6-v2.
  */
-export async function initEmbeddings(_config?: EngramConfig): Promise<void> {
+export async function initEmbeddings(config?: EngramConfig): Promise<void> {
   if (embeddingPipeline) return;
 
   // Concurrent cold callers (parallel MCP tool calls) share one model load
   if (!initInFlight) {
     initInFlight = (async () => {
+      // Honour ENGRAM_MODEL_CACHE_DIR before the first download
+      applyModelCacheDir(transformersEnv, config?.modelCacheDir);
       try {
         embeddingPipeline = await pipeline("feature-extraction", NOMIC_MODEL);
         activeModel = "nomic";
