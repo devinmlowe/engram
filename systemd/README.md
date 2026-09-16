@@ -15,7 +15,7 @@ Linux systemd *user* unit templates for the nightly `engram dream` consolidation
 
 ## Contains
 
-- [engram-dream.service](./engram-dream.service) — Oneshot service running `node --max-old-space-size=2048 dist/interfaces/cli/index.js dream` from the checkout; reads optional provider keys from `~/.local/share/engram/dream.env`
+- [engram-dream.service](./engram-dream.service) — Oneshot service running `node --max-old-space-size=2048 dist/interfaces/cli/index.js dream` from the checkout; reads optional provider keys from `${XDG_CONFIG_HOME:-~/.config}/engram/env` (the same file `scripts/run-dream.sh` sources on macOS)
 - [engram-dream.timer](./engram-dream.timer) — `OnCalendar=*-*-* 02:00:00`, `Persistent=true` (missed runs fire at next login)
 
 ## Operating

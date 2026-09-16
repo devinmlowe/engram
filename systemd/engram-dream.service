@@ -23,10 +23,11 @@ WorkingDirectory=__ENGRAM_DIR__
 ExecStart=__NODE_BIN__ --max-old-space-size=2048 dist/interfaces/cli/index.js dream
 
 Environment=NODE_ENV=production
-# Optional provider keys (ANTHROPIC_API_KEY, OPENROUTER_API_KEY, ENGRAM_LOCAL_MODEL)
-# are written here by the installer when present in its environment. The leading
-# "-" makes the file optional so the service still runs without one.
-EnvironmentFile=-%h/.local/share/engram/dream.env
+# Provider keys (ANTHROPIC_API_KEY, OPENROUTER_API_KEY, ENGRAM_LOCAL_MODEL) live in
+# the same service environment file the macOS launcher sources:
+# ${XDG_CONFIG_HOME:-~/.config}/engram/env (mode 600, created by the installer).
+# %E is systemd's XDG_CONFIG_HOME specifier; the leading "-" keeps the file optional.
+EnvironmentFile=-%E/engram/env
 
 StandardOutput=append:__LOG_DIR__/dream.log
 StandardError=append:__LOG_DIR__/dream-error.log

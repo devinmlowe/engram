@@ -44,7 +44,8 @@ describe("deployment path integrity (ADR-010 Phase 0)", () => {
       const wd = rendered.match(/<key>WorkingDirectory<\/key>\s*<string>([^<]+)<\/string>/)![1];
       expect(wd).toBe(ROOT);
       const args = plistStrings(rendered).filter((s) => !s.startsWith("--"));
-      const script = args.filter((s) => /\.(ts|js)$/.test(s)).at(-1);
+      // The entry point is either a node script or a shell launcher (run-dream.sh --daemon).
+      const script = args.filter((s) => /\.(ts|js|sh)$/.test(s)).at(-1);
       expect(script, "entry-point script present").toBeTruthy();
       const resolved = isAbsolute(script!) ? script! : join(wd, script!);
       // dist/ may not be built in CI; the source counterpart must exist.
@@ -61,6 +62,32 @@ describe("deployment path integrity (ADR-010 Phase 0)", () => {
       }
     });
   }
+
+  it("no launchd template carries API keys (issue #10)", () => {
+    for (const name of PLISTS) {
+      const xml = readFileSync(join(ROOT, "launchd", name), "utf-8");
+      expect(xml, `${name} must not embed *_API_KEY`).not.toMatch(/API_KEY/);
+    }
+  });
+
+  it("dreamstate runs the launcher, and the launcher sources the XDG env file before exec'ing node", () => {
+    const xml = readFileSync(join(ROOT, "launchd", "com.engram.dreamstate.plist"), "utf-8");
+    const args = plistStrings(xml);
+    expect(args).toContain("__ENGRAM_DIR__/scripts/run-dream.sh");
+    expect(args).toContain("--daemon");
+    const launcher = readFileSync(join(ROOT, "scripts/run-dream.sh"), "utf-8");
+    expect(launcher, "sources ${XDG_CONFIG_HOME:-$HOME/.config}/engram/env").toMatch(
+      /\$\{XDG_CONFIG_HOME:-\$HOME\/\.config\}\/engram\/env/,
+    );
+    expect(launcher, "daemon mode execs the resolved node binary").toMatch(/exec "\$NODE_BIN"/);
+  });
+
+  it("install-daemon.sh never edits the rendered plist to inject secrets", () => {
+    const script = readFileSync(join(ROOT, "scripts/install-daemon.sh"), "utf-8");
+    expect(script).not.toMatch(/PlistBuddy/);
+    expect(script).not.toMatch(/EnvironmentVariables:(ANTHROPIC|OPENROUTER)/);
+    expect(script, "creates the env file with mode 600").toMatch(/chmod 600 "\$ENV_FILE"/);
+  });
 
   it(".mcp.json: server entry point resolves relative to the repo (no absolute cwd)", () => {
     const cfg = JSON.parse(readFileSync(join(ROOT, ".mcp.json"), "utf-8"));

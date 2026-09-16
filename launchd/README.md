@@ -14,8 +14,10 @@ macOS Launch Agent plist files for scheduled and persistent engram services. Ins
 
 ## Contains
 
-- [com.engram.dreamstate.plist](./com.engram.dreamstate.plist) — Nightly dream consolidation (2 AM schedule)
+- [com.engram.dreamstate.plist](./com.engram.dreamstate.plist) — Nightly dream consolidation (2 AM schedule). Runs `scripts/run-dream.sh --daemon`, which sources `~/.config/engram/env` for API keys; the plist itself carries no secrets.
 - [com.engram.visualizer.plist](./com.engram.visualizer.plist) — Web visualization server (keep-alive)
+
+Both files are templates: `__ENGRAM_DIR__`, `__NODE_BIN__`, and `__LOG_DIR__` are substituted by the install scripts, and [tests/deployment/paths.test.ts](../tests/deployment/paths.test.ts) enforces that no personal paths or API keys are committed here.
 
 ## See Also
 

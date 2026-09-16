@@ -93,10 +93,19 @@ and write logs under the engram data directory; all dream paths run
 `node dist/interfaces/cli/index.js dream` and log to `<data dir>/logs/dream.log`.
 
 The installers render `launchd/*.plist` (macOS) or `systemd/engram-dream.service` (Linux)
-from the checkout you run them in, whatever its location, and use whichever `node` they
-find (fnm, Homebrew, nvm, or system). They expect `lsof` for port checks; the Claude Code
-post-compaction hook (`scripts/compact-dream.sh`) expects `jq`, and
-`scripts/commitments-surface.sh` expects `python3`.
+from the checkout you run them in, whatever its
+location, and use whichever `node` they find (fnm, Homebrew, nvm, or system). The dream daemon
+takes its API keys from `~/.config/engram/env` (mode 600, created by the installer with a
+commented template; `$XDG_CONFIG_HOME` is honoured) — the plist itself never contains secrets.
+If you installed before that file existed, move the keys there and re-run `install`; see
+[scripts/README.md](./scripts/README.md#service-environment-file-api-keys) for the steps.
+
+Every script checks its external tools up front and names what to install. The visualizer
+installer probes its port with `node` (or `curl` against `/api/health`), using `lsof` only as
+an optional fast path when it is installed; the Claude Code post-compaction hook
+(`scripts/compact-dream.sh`) and the Hermes heartbeat digest (`scripts/commitments-surface.sh`)
+need only `node`; the hook honours `ENGRAM_DATA_DIR` / `ENGRAM_LOGS_DIR`. No script needs `jq`
+or `python3`.
 
 **Supported platforms**
 
@@ -107,7 +116,7 @@ post-compaction hook (`scripts/compact-dream.sh`) expects `jq`, and
 | Web visualizer (`node dist/interfaces/web/server.js`) | yes | yes | yes |
 | Visualizer keep-alive service | launchd (`scripts/install-visualizer.sh`) | run under your own supervisor (systemd user unit, pm2) | Task Scheduler (`scripts/install-visualizer.ps1`) |
 | Nightly dream daemon | launchd (`scripts/install-daemon.sh`) | systemd user timer `engram-dream.timer` (`scripts/install-daemon.sh`) | Task Scheduler (`scripts/install-daemon.ps1`) |
-| Claude Code hooks (`scripts/*.sh`) | yes | yes (bash, `jq`) | WSL or Git Bash only |
+| Claude Code hooks (`scripts/*.sh`) | yes | yes (bash, node) | WSL or Git Bash only |
 
 **Supported platform/arch set**
 
@@ -406,7 +415,9 @@ the default location and caches `node_modules/@xenova/transformers/.cache` betwe
 
 ## Configuration
 
-All settings are environment variables; nothing is read from a config file.
+All settings are environment variables; the CLI and MCP server read nothing from a config file.
+The one exception is the launchd dream daemon, whose launcher (`scripts/run-dream.sh`) sources
+`~/.config/engram/env` so API keys stay out of the plist — any variable below can be set there.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
