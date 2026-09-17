@@ -9,6 +9,7 @@
  */
 
 import type Database from "better-sqlite3";
+import { widenScope } from "../_core/db/scope.js";
 import type { ExtractedEntity, EntityResolution } from "./types.js";
 import {
   getEntity,
@@ -35,20 +36,26 @@ export async function resolveEntity(
   db: Database.Database,
   extracted: ExtractedEntity,
   conversationId?: string,
+  scope?: string,
 ): Promise<EntityResolution> {
+  // #25: a merge from a different tenant scope widens the entity to global.
+  const merged = (id: string) => {
+    recordEntityMention(db, id);
+    if (conversationId) recordEntityConversation(db, id, conversationId);
+    widenScope(db, "entities", id, scope);
+  };
+
   // Stage 1: Exact Name Match (free)
   const byName = getEntityByName(db, extracted.name);
   if (byName) {
-    recordEntityMention(db, byName.id);
-    if (conversationId) recordEntityConversation(db, byName.id, conversationId);
+    merged(byName.id);
     return { action: "merge", entityId: byName.id, stage: "exact_name" };
   }
 
   // Stage 2: Alias Lookup (free)
   const byAlias = getEntityByAlias(db, extracted.name);
   if (byAlias) {
-    recordEntityMention(db, byAlias.id);
-    if (conversationId) recordEntityConversation(db, byAlias.id, conversationId);
+    merged(byAlias.id);
     return { action: "merge", entityId: byAlias.id, stage: "alias" };
   }
 
@@ -62,8 +69,7 @@ export async function resolveEntity(
 
     if (similarity >= 0.95) {
       // High confidence: auto-merge regardless of type
-      recordEntityMention(db, neighbor.id);
-      if (conversationId) recordEntityConversation(db, neighbor.id, conversationId);
+      merged(neighbor.id);
       addAliasIfNew(db, neighbor.id, extracted.name);
       return {
         action: "merge",
@@ -77,8 +83,7 @@ export async function resolveEntity(
       // Medium confidence: merge only if types match
       const existing = getEntity(db, neighbor.id);
       if (existing && existing.type === extracted.type) {
-        recordEntityMention(db, neighbor.id);
-        if (conversationId) recordEntityConversation(db, neighbor.id, conversationId);
+        merged(neighbor.id);
         addAliasIfNew(db, neighbor.id, extracted.name);
         return {
           action: "merge",
@@ -106,6 +111,7 @@ export async function resolveEntity(
       lastSeen: now,
       mentionCount: 1,
       createdAt: now,
+      scope: scope ?? "global",
     },
     embedding,
   );
@@ -125,6 +131,7 @@ export async function resolveEntities(
   db: Database.Database,
   extractedEntities: ExtractedEntity[],
   conversationId?: string,
+  scope?: string,
 ): Promise<
   Array<{ extracted: ExtractedEntity; resolution: EntityResolution }>
 > {
@@ -134,7 +141,7 @@ export async function resolveEntities(
   }> = [];
 
   for (const extracted of extractedEntities) {
-    const resolution = await resolveEntity(db, extracted, conversationId);
+    const resolution = await resolveEntity(db, extracted, conversationId, scope);
     results.push({ extracted, resolution });
   }
 

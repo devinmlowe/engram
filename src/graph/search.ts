@@ -9,6 +9,7 @@
  */
 
 import type Database from "better-sqlite3";
+import { scopeVisible } from "../_core/db/scope.js";
 import type {
   SearchOptions,
   SearchResult,
@@ -59,7 +60,7 @@ export async function searchGraph(
   db: Database.Database,
   options: SearchOptions,
 ): Promise<SearchResult[]> {
-  const { query, limit = 10 } = options;
+  const { query, limit = 10, scopes } = options;
 
   if (!query || query.trim().length === 0) {
     return [];
@@ -97,12 +98,15 @@ export async function searchGraph(
   // 6. Build SearchResult[] with entity content and relationships
   const results: SearchResult[] = [];
 
-  for (const item of fused.slice(0, limit)) {
+  // #25: scope filter is applied post-fusion (vec0 cannot filter); walk
+  // further down the fused list so a scoped caller still gets `limit` hits.
+  for (const item of fused) {
+    if (results.length >= limit) break;
     const entity = getEntity(db, item.id);
-    if (!entity) continue;
+    if (!entity || !scopeVisible(entity.scope, scopes)) continue;
 
     // Build content string with entity info and relationships
-    const content = buildEntityContent(db, entity);
+    const content = buildEntityContent(db, entity, scopes);
 
     results.push({
       id: entity.id,
@@ -113,6 +117,7 @@ export async function searchGraph(
         entityName: entity.name,
         entityType: entity.type,
         mentionCount: entity.mentionCount,
+        scope: entity.scope ?? "global",
       },
       tokenEstimate: Math.ceil(content.length / 4) + 10,
     });
@@ -125,12 +130,12 @@ export async function searchGraph(
  * Build a content string for a graph search result, including
  * the entity description and its connected relationships.
  */
-function buildEntityContent(db: Database.Database, entity: Entity): string {
+function buildEntityContent(db: Database.Database, entity: Entity, scopes?: string[]): string {
   const parts: string[] = [];
 
   parts.push(`${entity.name} (${entity.type}): ${entity.description ?? "No description"}`);
 
-  const rels = getRelationshipsForEntity(db, entity.id);
+  const rels = getRelationshipsForEntity(db, entity.id).filter((r) => scopeVisible(r.scope, scopes));
   if (rels.length > 0) {
     const shown = rels.slice(0, 10);
     const otherIds = [...new Set(shown.map((rel) =>
@@ -168,11 +173,11 @@ export function exploreEntity(
   db: Database.Database,
   options: ExploreOptions,
 ): ExploreResult {
-  const { entity: entityQuery, depth = 1, relationshipTypes, limit = 25 } = options;
+  const { entity: entityQuery, depth = 1, relationshipTypes, limit = 25, scopes } = options;
 
-  // Find the center entity
+  // Find the center entity (#25: an entity outside the caller's scopes does not exist for it)
   const centerEntity = findEntityByNameOrAlias(db, entityQuery);
-  if (!centerEntity) {
+  if (!centerEntity || !scopeVisible(centerEntity.scope, scopes)) {
     throw new Error(`Entity not found: ${entityQuery}`);
   }
 
@@ -196,7 +201,7 @@ export function exploreEntity(
   const neighbors: ExploreResult["neighbors"] = [];
   for (const n of trimmed) {
     const neighborEntity = getEntity(db, n.entityId);
-    if (!neighborEntity) continue;
+    if (!neighborEntity || !scopeVisible(neighborEntity.scope, scopes)) continue;
 
     neighbors.push({
       entity: {
@@ -364,6 +369,8 @@ export interface SelectiveExploreOptions {
   maxNodes?: number;
   relevanceThreshold?: number;
   relationshipTypes?: RelationshipType[];
+  /** Only entities in these scopes are visible (#25); unset = every scope. */
+  scopes?: string[];
 }
 
 /**
@@ -422,11 +429,12 @@ export async function exploreSelective(
     maxNodes = 50,
     relevanceThreshold = 0.3,
     relationshipTypes,
+    scopes,
   } = options;
 
-  // 1. Find center entity
+  // 1. Find center entity (#25: invisible outside the caller's scopes)
   const centerEntity = findEntityByNameOrAlias(db, entityName);
-  if (!centerEntity) {
+  if (!centerEntity || !scopeVisible(centerEntity.scope, scopes)) {
     throw new Error(`Entity not found: ${entityName}`);
   }
 
@@ -491,7 +499,7 @@ export async function exploreSelective(
         visited.add(neighbor.entityId);
 
         const neighborEntity = getEntity(db, neighbor.entityId);
-        if (!neighborEntity) continue;
+        if (!neighborEntity || !scopeVisible(neighborEntity.scope, scopes)) continue;
 
         // Score against criteria
         let relevanceScore: number;

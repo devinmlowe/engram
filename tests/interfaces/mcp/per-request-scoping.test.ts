@@ -32,6 +32,7 @@ vi.mock("../../../src/_core/embeddings/index.js", () => {
     embedQuery: vi.fn().mockImplementation((text: string) => Promise.resolve(deterministicVector(`query:${text}`))),
     embedDocument: vi.fn().mockImplementation((text: string) => Promise.resolve(deterministicVector(`doc:${text}`))),
     embedDocumentBatch: vi.fn().mockImplementation((texts: string[]) => Promise.resolve(texts.map((t) => deterministicVector(`doc:${t}`)))),
+    embedExchange: vi.fn().mockImplementation((u: string, a: string) => Promise.resolve(deterministicVector(`ex:${u}|${a}`))),
     getActiveModel: vi.fn().mockReturnValue("mock-model"),
     resetEmbeddings: vi.fn(),
   };
@@ -131,6 +132,46 @@ describe("per-request scope / read_scopes params", () => {
     expect(scopeOf("Strict batch item")).toBeUndefined();
   });
 
+  it("episodic recall honours read_scopes: a turn ingested under a profile is hidden from others (#25)", async () => {
+    const turn = await handleToolCall("ingest_turn", {
+      session_id: "sess-scoped", turn_index: 0, scope: "hermes:career",
+      user_text: "Rehearse the Databricks system design interview on Thursday",
+      assistant_text: "Noted: Thursday rehearsal for the Databricks interview.",
+    });
+    expect(turn.isError, turn.content[0].text as string).toBeFalsy();
+    const visible = await handleToolCall("recall", { query: "Databricks rehearsal Thursday", sources: ["episodic"], read_scopes: ["global", "hermes:career"] });
+    // the header echoes the query, so assert on the assistant text only
+    expect(visible.content[0].text as string).toContain("Noted: Thursday rehearsal");
+    const hidden = await handleToolCall("recall", { query: "Databricks rehearsal Thursday", sources: ["episodic"], read_scopes: ["global", "hermes:finance"] });
+    expect(hidden.content[0].text as string).not.toContain("Noted: Thursday rehearsal");
+    const unscoped = await handleToolCall("recall", { query: "Databricks rehearsal Thursday", sources: ["episodic"] });
+    expect(unscoped.content[0].text as string).toContain("Noted: Thursday rehearsal");
+  });
+
+  it("explore and commitments honour read_scopes (#25)", async () => {
+    const { insertEntity } = await import("../../../src/graph/entity.js");
+    const { findOrCreateRelationship } = await import("../../../src/graph/relationship.js");
+    const { insertCommitments } = await import("../../../src/semantic/commitments.js");
+    const { getDatabase } = await import("../../../src/_core/db/index.js");
+    const db = getDatabase();
+    const vec = (n: number) => { const v = Array.from({ length: 256 }, (_, i) => Math.cos(n + i)); const l = Math.sqrt(v.reduce((s, x) => s + x * x, 0)); return v.map((x) => x / l); };
+    insertEntity(db, { id: "ent-hub", name: "ScopeHub", type: "concept", aliases: [], firstSeen: 1, lastSeen: 1, mentionCount: 1, createdAt: 1 }, vec(1));
+    insertEntity(db, { id: "ent-career", name: "CareerOnly", type: "concept", aliases: [], firstSeen: 1, lastSeen: 1, mentionCount: 1, createdAt: 1, scope: "hermes:career" }, vec(2));
+    findOrCreateRelationship(db, "ent-hub", "ent-career", "related_to", undefined, undefined, "hermes:career");
+    const career = await handleToolCall("explore", { entity: "ScopeHub", read_scopes: ["global", "hermes:career"] });
+    expect(career.content[0].text as string).toContain("CareerOnly");
+    const finance = await handleToolCall("explore", { entity: "ScopeHub", read_scopes: ["global", "hermes:finance"] });
+    expect(finance.content[0].text as string).not.toContain("CareerOnly");
+    const direct = await handleToolCall("explore", { entity: "CareerOnly", read_scopes: ["global", "hermes:finance"] });
+    expect(direct.isError).toBe(true);
+
+    insertCommitments(db, [{ content: "Book the PMP exam slot", origin: "stated", subject: "devin", sourceExchangeIds: [], dueHint: null }], new Map(), "hermes:pmp");
+    const pmp = await handleToolCall("commitments", { read_scopes: ["global", "hermes:pmp"] });
+    expect(pmp.content[0].text as string).toContain("PMP exam");
+    const notPmp = await handleToolCall("commitments", { read_scopes: ["global", "hermes:career"] });
+    expect(notPmp.content[0].text as string).not.toContain("PMP exam");
+  });
+
   it("params absent → env-derived scoping still applies", async () => {
     process.env.ENGRAM_SCOPE = "hermes:finance";
     try {
@@ -180,7 +221,7 @@ describe("per-request scope params are advertised in the tool schemas", () => {
     };
   });
 
-  it.each(["recall", "recall_session"])("%s declares scope and read_scopes inside properties", (tool) => {
+  it.each(["recall", "recall_session", "explore", "explore_selective", "commitments"])("%s declares scope and read_scopes inside properties", (tool) => {
     const props = properties(tool);
     expect(props.scope).toBeDefined();
     expect(props.read_scopes).toBeDefined();

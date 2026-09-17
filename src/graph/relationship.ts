@@ -9,6 +9,7 @@
  */
 
 import type Database from "better-sqlite3";
+import { widenScope } from "../_core/db/scope.js";
 import type { Relationship, RelationshipType } from "./types.js";
 import type { EdgeWeightFactors } from "./types.js";
 
@@ -24,6 +25,7 @@ interface RelationshipRow {
   source_memories: string | null;
   created_at: number;
   updated_at: number | null;
+  scope?: string | null;
 }
 
 function rowToRelationship(row: RelationshipRow): Relationship {
@@ -39,6 +41,7 @@ function rowToRelationship(row: RelationshipRow): Relationship {
       : [],
     createdAt: row.created_at,
     updatedAt: row.updated_at ?? undefined,
+    scope: row.scope ?? "global",
   };
 }
 
@@ -55,8 +58,8 @@ export function insertRelationship(
   db.prepare(`
     INSERT OR IGNORE INTO relationships
       (id, source_entity_id, target_entity_id, type, weight, context,
-       source_memories, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       source_memories, created_at, updated_at, scope)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     rel.id,
     rel.sourceEntityId,
@@ -67,6 +70,7 @@ export function insertRelationship(
     JSON.stringify(rel.sourceMemories),
     rel.createdAt,
     rel.updatedAt ?? null,
+    rel.scope ?? "global",
   );
 }
 
@@ -177,6 +181,7 @@ export function findOrCreateRelationship(
   type: RelationshipType,
   context?: string,
   memoryId?: string,
+  scope?: string,
 ): Relationship {
   const run = db.transaction(() => {
     // Check for existing edge
@@ -205,6 +210,8 @@ export function findOrCreateRelationship(
           "UPDATE relationships SET updated_at = unixepoch() WHERE id = ?",
         ).run(existing.id);
       }
+      // #25: an edge seen from a second profile is shared knowledge
+      widenScope(db, "relationships", existing.id, scope);
 
       // Return the updated relationship
       return db
@@ -220,8 +227,8 @@ export function findOrCreateRelationship(
     db.prepare(`
       INSERT INTO relationships
         (id, source_entity_id, target_entity_id, type, weight, context,
-         source_memories, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         source_memories, created_at, updated_at, scope)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       sourceId,
@@ -232,6 +239,7 @@ export function findOrCreateRelationship(
       JSON.stringify(sourceMemories),
       now,
       null,
+      scope ?? "global",
     );
 
     return db

@@ -251,7 +251,7 @@ describe("Commitments schema migration", () => {
     const names = cols.map((c) => c.name);
     expect(names).toEqual([
       "id", "content", "status", "origin", "subject", "source_exchanges",
-      "due_at", "created_at", "resolved_at", "superseded_by",
+      "due_at", "created_at", "resolved_at", "superseded_by", "scope", // scope: #25
     ]);
     const dflt = Object.fromEntries(cols.map((c) => [c.name, c.dflt_value]));
     expect(dflt.status).toBe("'pending'");

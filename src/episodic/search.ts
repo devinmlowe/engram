@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { scopeInClause } from "../_core/db/scope.js";
 import type {
   SearchOptions,
   SearchResult,
@@ -41,6 +42,7 @@ function vectorSearch(
   queryEmbedding: number[],
   limit: number,
   dateFilter: DateFilterInput = {},
+  scopes?: string[],
 ): RankedItem[] {
   const embeddingBuf = Buffer.from(new Float32Array(queryEmbedding).buffer);
 
@@ -57,21 +59,23 @@ function vectorSearch(
     )
     .all(embeddingBuf, fetchLimit) as { id: string; distance: number }[];
 
-  // Post-filter by date if needed
+  // Post-filter by date / scope if needed (#25: scope rides the same query)
   let filtered = rows;
-  if (hasDateFilter(dateFilter)) {
+  const scopeFilter = scopeInClause("e.scope", scopes);
+  if (hasDateFilter(dateFilter) || scopeFilter) {
     const ids = rows.map((r) => r.id);
     if (ids.length === 0) return [];
 
     const placeholders = ids.map(() => "?").join(",");
     const { clause, params } = buildDateFilter(dateFilter);
+    const scopeSql = scopeFilter ? ` AND ${scopeFilter.sql}` : "";
 
     const dateFiltered = db
       .prepare(
         `SELECT id FROM exchanges AS e
-         WHERE e.id IN (${placeholders}) ${clause}`,
+         WHERE e.id IN (${placeholders}) ${clause}${scopeSql}`,
       )
-      .all(...ids, ...params) as { id: string }[];
+      .all(...ids, ...params, ...(scopeFilter?.params ?? [])) as { id: string }[];
 
     const validIds = new Set(dateFiltered.map((r) => r.id));
     filtered = rows.filter((r) => validIds.has(r.id));
@@ -91,6 +95,7 @@ function ftsSearch(
   query: string,
   limit: number,
   dateFilter: DateFilterInput = {},
+  scopes?: string[],
 ): RankedItem[] {
   // Bounded, de-noised OR query (stop words dropped, term count capped) —
   // see _core/search/fts-query.ts for why an unbounded OR is catastrophic.
@@ -99,6 +104,7 @@ function ftsSearch(
   if (!sanitized) return [];
 
   const { clause, params } = buildDateFilter(dateFilter);
+  const scopeFilter = scopeInClause("e.scope", scopes);
 
   try {
     const rows = db
@@ -108,10 +114,11 @@ function ftsSearch(
          CROSS JOIN exchanges AS e ON e.rowid = fts.rowid
          WHERE exchanges_fts MATCH ?
          ${clause}
+         ${scopeFilter ? `AND ${scopeFilter.sql}` : ""}
          ORDER BY fts.rank
          LIMIT ?`,
       )
-      .all(sanitized, ...params, limit) as { id: string; rank: number }[];
+      .all(sanitized, ...params, ...(scopeFilter?.params ?? []), limit) as { id: string; rank: number }[];
 
     return rows.map((row, idx) => ({
       id: row.id,
@@ -168,6 +175,7 @@ function fetchExchanges(
           conversationId: row.conversation_id as string,
           sessionId: row.session_id,
           gitBranch: row.git_branch,
+          scope: (row.scope as string | null) ?? "global",
         },
         tokenEstimate: (row.token_estimate as number) || 50,
       };
@@ -189,6 +197,7 @@ export async function searchEpisodic(
     after,
     before,
     anniversary,
+    scopes,
   } = options;
   const dateFilter: DateFilterInput = { after, before, anniversary };
 
@@ -199,12 +208,12 @@ export async function searchEpisodic(
   // 1. Vector search
   if (mode === "vector" || mode === "hybrid") {
     const queryEmbedding = await embedQuery(query);
-    vectorResults = vectorSearch(db, queryEmbedding, fetchK, dateFilter);
+    vectorResults = vectorSearch(db, queryEmbedding, fetchK, dateFilter, scopes);
   }
 
   // 2. FTS search
   if (mode === "text" || mode === "hybrid") {
-    ftsResults = ftsSearch(db, query, fetchK, dateFilter);
+    ftsResults = ftsSearch(db, query, fetchK, dateFilter, scopes);
   }
 
   // 3. Fuse results

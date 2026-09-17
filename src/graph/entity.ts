@@ -30,6 +30,7 @@ interface EntityRow {
   last_seen: number | null;
   mention_count: number;
   created_at: number;
+  scope?: string | null;
 }
 
 function rowToEntity(row: EntityRow): Entity {
@@ -43,6 +44,7 @@ function rowToEntity(row: EntityRow): Entity {
     lastSeen: row.last_seen ?? row.created_at,
     mentionCount: row.mention_count,
     createdAt: row.created_at,
+    scope: row.scope ?? "global",
   };
 }
 
@@ -79,8 +81,8 @@ export function insertEntity(
     db.prepare(`
       INSERT INTO entities
         (id, name, type, description, aliases, first_seen, last_seen,
-         mention_count, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         mention_count, created_at, scope)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       entity.id,
       entity.name,
@@ -91,6 +93,7 @@ export function insertEntity(
       entity.lastSeen,
       entity.mentionCount,
       entity.createdAt,
+      entity.scope ?? "global",
     );
 
     // 2. Insert into FTS5 if the table exists

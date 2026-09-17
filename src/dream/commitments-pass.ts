@@ -156,8 +156,9 @@ export async function extractCommitmentsForConversation(
   }
 
   const conv = db
-    .prepare("SELECT project FROM conversations WHERE id = ?")
-    .get(conversationId) as { project?: string } | undefined;
+    .prepare("SELECT project, scope FROM conversations WHERE id = ?")
+    .get(conversationId) as { project?: string; scope?: string | null } | undefined;
+  const scope = conv?.scope ?? "global"; // #25: commitments inherit the conversation's tenant scope
   const first = exchanges[0].timestamp?.split("T")[0] ?? "unknown";
   const last = exchanges[exchanges.length - 1].timestamp?.split("T")[0] ?? "unknown";
   const metadata = { project: conv?.project ?? "unknown", dateRange: `${first} to ${last}` };
@@ -184,7 +185,7 @@ export async function extractCommitmentsForConversation(
 
   const { kept, rejected } = filterByCue(candidates, userTextById, assistantTextById);
   const { fresh, duplicates, lexicalOnly } = await dedupeCandidates(db, kept, { embed });
-  const items = insertCommitments(db, fresh, timestamps);
+  const items = insertCommitments(db, fresh, timestamps, scope);
   options.log?.(
     `Commitments for ${conversationId}: ${candidates.length} candidates, ${rejected} rejected (no cue), ` +
       `${items.length} inserted, ${duplicates} duplicates`,

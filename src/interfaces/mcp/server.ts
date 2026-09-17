@@ -122,11 +122,21 @@ const VALID_MEMORY_SOURCES = ["user", "dream", "rlm", "import", "hermes-mirror"]
 
 // ─── Input Schemas ─────────────────────────────────────────────
 
+const ScopeParamSchema = z
+  .string()
+  .trim()
+  .min(1, "scope must be a non-empty scope string (e.g. \"hermes:career\")");
+const ReadScopesParamSchema = z
+  .array(z.string().trim().min(1, "read_scopes entries must be non-empty scope strings"))
+  .min(1, "read_scopes must contain at least one scope");
+
 const CommitmentsInputSchema = z.object({
   status: z.enum(["pending", "done", "dropped", "superseded", "all"]).optional(),
   include_due_within_days: z.number().min(0).max(3650).optional(),
   limit: z.number().int().min(1).max(500).optional(),
   budget: z.number().int().min(100).max(10000).optional(),
+  scope: ScopeParamSchema.optional(),
+  read_scopes: ReadScopesParamSchema.optional(),
 });
 
 const CommitmentsUpdateInputSchema = z.object({
@@ -137,14 +147,6 @@ const CommitmentsUpdateInputSchema = z.object({
 
 // Per-request tenant scoping (ADR-010 / W1). Same rules as the env path:
 // trimmed, non-empty. Absent → env defaults apply.
-const ScopeParamSchema = z
-  .string()
-  .trim()
-  .min(1, "scope must be a non-empty scope string (e.g. \"hermes:career\")");
-const ReadScopesParamSchema = z
-  .array(z.string().trim().min(1, "read_scopes entries must be non-empty scope strings"))
-  .min(1, "read_scopes must contain at least one scope");
-
 const IngestTurnInputSchema = z.object({
   session_id: z.string().trim().min(1, "session_id is required"),
   turn_index: z.number().int("turn_index must be an integer").min(0, "turn_index must be >= 0"),
@@ -256,6 +258,8 @@ const ExploreInputSchema = z.object({
       ]),
     )
     .optional(),
+  scope: ScopeParamSchema.optional(),
+  read_scopes: ReadScopesParamSchema.optional(),
 });
 
 const RecallSessionInputSchema = z.object({
@@ -294,6 +298,8 @@ const ExploreSelectiveInputSchema = z.object({
       ]),
     )
     .optional(),
+  scope: ScopeParamSchema.optional(),
+  read_scopes: ReadScopesParamSchema.optional(),
 });
 
 const ReflectInputSchema = z.object({
@@ -680,6 +686,19 @@ export const MCP_TOOL_DEFINITIONS: Tool[] = [
           },
           description: "Filter by relationship types",
         },
+        scope: {
+          type: "string",
+          minLength: 1,
+          description: "Tenant identity for this call (e.g. \"hermes:career\"); derives the read default global + own",
+        },
+        read_scopes: {
+          type: "array",
+          items: { type: "string", minLength: 1 },
+          minItems: 1,
+          description:
+            "Explicit scopes to read from (e.g. [\"global\", \"hermes:career\"]). " +
+            "Overrides ENGRAM_READ_SCOPES for this call only (#25).",
+        },
       },
       required: ["entity"],
       additionalProperties: false,
@@ -890,6 +909,19 @@ export const MCP_TOOL_DEFINITIONS: Tool[] = [
           },
           description: "Filter by relationship types",
         },
+        scope: {
+          type: "string",
+          minLength: 1,
+          description: "Tenant identity for this call (e.g. \"hermes:career\"); derives the read default global + own",
+        },
+        read_scopes: {
+          type: "array",
+          items: { type: "string", minLength: 1 },
+          minItems: 1,
+          description:
+            "Explicit scopes to read from (e.g. [\"global\", \"hermes:career\"]). " +
+            "Overrides ENGRAM_READ_SCOPES for this call only (#25).",
+        },
       },
       required: ["entity", "criteria"],
       additionalProperties: false,
@@ -1076,6 +1108,19 @@ export const MCP_TOOL_DEFINITIONS: Tool[] = [
           maximum: 10000,
           default: 1500,
           description: "Token budget for the XML response",
+        },
+        scope: {
+          type: "string",
+          minLength: 1,
+          description: "Tenant identity for this call (e.g. \"hermes:career\"); derives the read default global + own",
+        },
+        read_scopes: {
+          type: "array",
+          items: { type: "string", minLength: 1 },
+          minItems: 1,
+          description:
+            "Explicit scopes to read from (e.g. [\"global\", \"hermes:career\"]). " +
+            "Overrides ENGRAM_READ_SCOPES for this call only (#25).",
         },
       },
       additionalProperties: false,
@@ -1364,6 +1409,7 @@ export async function handleToolCall(name: string, args: unknown): Promise<ToolR
         relationshipTypes: params.relationship_types as
           | RelationshipType[]
           | undefined,
+        scopes: resolveCallScoping(process.env, params).readScopes,
       });
 
       // Format as XML with token budget
@@ -1514,6 +1560,7 @@ export async function handleToolCall(name: string, args: unknown): Promise<ToolR
         relationshipTypes: params.relationship_types as
           | RelationshipType[]
           | undefined,
+        scopes: resolveCallScoping(process.env, params).readScopes,
       });
 
       // Format as JSON (selective explore results are richer than XML can cleanly express)
@@ -1657,6 +1704,7 @@ export async function handleToolCall(name: string, args: unknown): Promise<ToolR
         status: (params.status ?? "pending") as CommitmentQueryStatus,
         dueWithinDays: params.include_due_within_days,
         limit: params.limit ?? 20,
+        scopes: resolveCallScoping(process.env, params).readScopes,
       });
       return {
         content: [{ type: "text", text: formatCommitmentsXml(result, { budget: params.budget ?? 1500 }) }],

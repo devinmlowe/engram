@@ -19,6 +19,8 @@ export interface Exchange {
   lastAccessed?: number;
   /** JSON `{id?, name?, is_bot?}` of who authored the user side (ingest_turn only). */
   authorJson?: string;
+  /** Tenant scope (denormalised from the conversation, #25). Column default 'global'. */
+  scope?: string;
 }
 
 export interface ToolCall {

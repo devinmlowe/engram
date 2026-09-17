@@ -31,6 +31,8 @@ export interface Entity {
   lastSeen: number;
   mentionCount: number;
   createdAt: number;
+  /** Tenant scope (#25): 'global' or the profile that first saw it; widened to 'global' when seen from another. */
+  scope?: string;
 }
 
 export interface Relationship {
@@ -43,6 +45,8 @@ export interface Relationship {
   sourceMemories: string[];
   createdAt: number;
   updatedAt?: number;
+  /** Tenant scope (#25), same widening rule as entities. */
+  scope?: string;
 }
 
 export interface TopicCluster {
@@ -242,6 +246,8 @@ export interface ExploreOptions {
   relationshipTypes?: RelationshipType[];
   includeMemories?: boolean;
   limit?: number; // max neighbors to return (default 25, max 50)
+  /** Only entities in these scopes are visible (#25); unset = every scope. */
+  scopes?: string[];
 }
 
 export interface ExploreResult {

@@ -878,8 +878,11 @@ async function processConversation(
   try {
     const entityResult = await extractEntities(exchanges, metadata);
 
-    // 3. Entity resolution (creates/merges entities in graph)
-    const resolved = await resolveEntities(db, entityResult.entities, conversationId);
+    // 3. Entity resolution (creates/merges entities in graph). #25: new
+    // entities/edges inherit the conversation's tenant scope; ones already
+    // known from another scope widen to global.
+    const graphScope = getConversationScope(db, conversationId);
+    const resolved = await resolveEntities(db, entityResult.entities, conversationId, graphScope);
 
     entitiesCreated = resolved.filter(
       (r: { resolution: { action: string } }) => r.resolution.action === "create",
@@ -905,7 +908,7 @@ async function processConversation(
         if (sourceId && targetId) {
           findOrCreateRelationship(
             db, sourceId, targetId, rel.type,
-            rel.context, conversationId,
+            rel.context, conversationId, graphScope,
           );
           relationshipsCreated++;
         }
