@@ -308,6 +308,7 @@ program
         merge: 0,
         conflict: 0,
         skip: 0,
+        error: 0,
       };
       for (const cr of consolidationResults) {
         actions[cr.action]++;
@@ -318,6 +319,7 @@ program
       console.log(`  Merged:   ${actions.merge}`);
       console.log(`  Conflicts: ${actions.conflict}`);
       console.log(`  Skipped:  ${actions.skip}`);
+      if (actions.error > 0) console.log(`  Failed:   ${actions.error}`);
     } finally {
       closeDatabase();
     }

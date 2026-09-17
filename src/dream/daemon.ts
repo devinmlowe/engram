@@ -549,8 +549,23 @@ async function runConsolidatePhase(
         if (r.collapsed) report.collapsedCandidates = (report.collapsedCandidates ?? 0) + 1;
       }
 
-      recordCheckpoint(db, runId, "consolidate", batch.conversationId);
-      processed++;
+      // #36: the consolidator continues past a failing fact; the survivors
+      // are stored and counted above, and the batch gets one error checkpoint.
+      const failures = results.filter((r) => r.action === "error");
+      if (failures.length > 0) {
+        const err = failures[0].error;
+        const errorMessage = `${failures.length} of ${results.length} facts failed: ${checkpointErrorMessage(err)}`;
+        logEntry(logPath, "consolidate", `Error consolidating facts for ${batch.conversationId}: ${errorMessage}`);
+        recordFailure(db, runId, "consolidate", batch.conversationId, {
+          provider: "auto",
+          errorClass: classifyError(err),
+          errorMessage,
+        });
+        errors++;
+      } else {
+        recordCheckpoint(db, runId, "consolidate", batch.conversationId);
+        processed++;
+      }
 
       options.onProgress?.("consolidate", processed, pendingFacts.length, errors);
     } catch (err) {

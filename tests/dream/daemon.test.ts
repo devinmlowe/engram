@@ -635,6 +635,57 @@ describe("Phase runners", () => {
     });
   });
 
+  describe("Consolidate phase partial-batch failure (#36)", () => {
+    it("stores and counts the surviving facts, records one error checkpoint for the batch, and still processes the next batch", async () => {
+      seedConversation("conv-001");
+      seedConversation("conv-002");
+      vi.mocked(extractFromConversation).mockImplementation(async (convId: string) => ({
+        facts: [1, 2, 3].map((i) => ({
+          type: "fact" as const,
+          content: `${convId} fact ${i}`,
+          importance: 0.7,
+          sourceExchangeIds: [],
+        })),
+        model: "test-model",
+        tier: "haiku",
+        confidence: 8,
+        durationMs: 100,
+      }));
+
+      const cascade = new CascadeError([
+        { tier: "ollama", errorClass: "config", message: "skipped: Ollama not reachable at http://localhost:11434" },
+        { tier: "openrouter", errorClass: "config", message: "skipped: OPENROUTER_API_KEY not set" },
+        { tier: "anthropic", errorClass: "unknown", message: "No tool_use block in API response" },
+      ]);
+      // conv-001: the consolidator continues past fact 2 and reports it in place.
+      vi.mocked(consolidateFacts).mockImplementation(async (_db, facts, conversationId) =>
+        facts.map((_f, i) =>
+          conversationId === "conv-001" && i === 1
+            ? { action: "error", memoryId: "", error: cascade }
+            : { action: "insert", memoryId: `mem-${conversationId}-${i}` },
+        ),
+      );
+
+      const report = await runDream(t.db, t.config, { phases: ["extract", "consolidate"] });
+
+      expect(vi.mocked(consolidateFacts).mock.calls.map((c) => c[2])).toEqual(["conv-001", "conv-002"]);
+      expect(report.newMemories).toBe(5); // 2 survivors from conv-001 + 3 from conv-002
+      const phase = report.phases.find((p) => p.phase === "consolidate")!;
+      expect(phase.errors).toBe(1);
+      expect(phase.itemsProcessed).toBe(1);
+
+      const rows = t.db
+        .prepare(
+          "SELECT item_id, status, error_class, error_message, attempt_count FROM dream_checkpoints WHERE phase = 'consolidate' ORDER BY item_id",
+        )
+        .all() as Array<Record<string, unknown>>;
+      expect(rows).toHaveLength(2); // one row per batch: no success row alongside the error row
+      expect(rows[0]).toMatchObject({ item_id: "conv-001", status: "error", error_class: "transient", attempt_count: 1 });
+      expect(String(rows[0].error_message)).toMatch(/^1 of 3 facts failed: .*anthropic \(unknown\): No tool_use block in API response/);
+      expect(rows[1]).toMatchObject({ item_id: "conv-002", status: "success" });
+    });
+  });
+
   describe("Consolidate phase collapse counter (#23)", () => {
     it("reports collapsedCandidates from intra-batch and cross-batch collapse, and prints it in the CLI summary", async () => {
       seedConversation("conv-001");

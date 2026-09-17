@@ -418,6 +418,54 @@ describe("consolidateFacts", () => {
   });
 });
 
+describe("consolidateFacts continues past a failing fact (#36)", () => {
+  it("stores facts 1 and 3 when fact 2's conflict resolution throws, and reports the failure in place", async () => {
+    // Existing memory A; fact 2 lands in the NLI band against it with a
+    // contradiction verdict, so conflict resolution (the LLM) is consulted.
+    const base = seededEmbedding(3600);
+    insertMemory(
+      t.db,
+      createTestMemory({ id: "mem-A", content: "The service listens on port 8080." }),
+      base,
+    );
+    const embeddings: Record<string, number[]> = {
+      "Fact one": seededEmbedding(3601),
+      "The service now listens on port 9090.": perturbEmbedding(base, 0.35, 3602),
+      "Fact three": seededEmbedding(3603),
+    };
+    mockedEmbedDocument.mockImplementation(async (content: string) => embeddings[content]);
+    mockedClassifyNli.mockResolvedValue({ entailment: 0.05, contradiction: 0.85, neutral: 0.1 });
+    const boom = new Error("conflict resolution exploded");
+    setConsolidatorClient({
+      messages: { create: vi.fn().mockRejectedValue(boom) },
+    } as unknown as import("@anthropic-ai/sdk").default);
+
+    const facts = [
+      createTestFact({ content: "Fact one" }),
+      createTestFact({ content: "The service now listens on port 9090." }),
+      createTestFact({ content: "Fact three" }),
+    ];
+
+    const results = await consolidateFacts(t.db, facts, "conv-036");
+
+    expect(results).toHaveLength(3);
+    expect(results[0].action).toBe("insert");
+    expect(results[2].action).toBe("insert");
+    expect(getMemory(t.db, results[0].memoryId)?.content).toBe("Fact one");
+    expect(getMemory(t.db, results[2].memoryId)?.content).toBe("Fact three");
+
+    const failures = results.filter((r) => r.action === "error");
+    expect(failures).toHaveLength(1);
+    expect(results[1]).toMatchObject({ action: "error", memoryId: "" });
+    expect(results[1].error).toBeInstanceOf(Error);
+    expect(results[1].error!.message).toMatch(/conflict resolution exploded/);
+
+    // Nothing was stored for the failed fact; A is untouched.
+    expect(countMemories()).toBe(3);
+    expect(getMemory(t.db, "mem-A")?.isActive).toBe(true);
+  });
+});
+
 // ─── W9: dream noise reduction ──────────────────────────────────
 
 /** A unit vector within `noise` of `base` (cosine stays above 0.95). */

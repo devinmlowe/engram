@@ -98,13 +98,16 @@ export interface ExtractionConfig {
 // ─── Deduplication & Conflict Resolution ────────────────────────
 
 export interface DeduplicationResult {
-  action: "insert" | "merge" | "conflict" | "skip";
+  action: "insert" | "merge" | "conflict" | "skip" | "error";
+  /** Empty string for `error`: nothing was stored for that fact. */
   memoryId: string;
   mergedWithId?: string;
   conflictId?: string;
   similarity?: number;
   /** True for a batch member folded into a sibling candidate before any DB lookup (W9a). */
   collapsed?: boolean;
+  /** Set for `error`: why this fact could not be consolidated (#36). */
+  error?: Error;
 }
 
 export interface ConflictResolution {
