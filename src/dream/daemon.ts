@@ -1013,22 +1013,57 @@ export function formatDreamSummary(report: DreamReport): string[] {
  * the wrapper's prefix.
  */
 function checkpointErrorMessage(err: unknown): string {
-  const cascade = err instanceof CascadeError
-    ? err
-    : err instanceof Error && err.cause instanceof CascadeError
-      ? err.cause
-      : null;
+  const cascade = findCascadeError(err);
   const msg = cascade ? cascade.message : err instanceof Error ? err.message : String(err);
   return msg.slice(0, 500);
 }
 
-function classifyError(err: unknown): "transient" | "provider" | "permanent" | "unknown" {
+type ErrorClass = "transient" | "provider" | "permanent" | "unknown";
+
+/** Higher wins when a cascade's tiers disagree: permanent/provider mean a retry cannot help. */
+const ERROR_CLASS_SEVERITY: Record<ErrorClass, number> = { unknown: 0, transient: 1, provider: 2, permanent: 3 };
+
+/** The CascadeError thrown directly or carried in the `cause` chain (the extractor wraps it, #15). */
+function findCascadeError(err: unknown): CascadeError | null {
+  let e: unknown = err;
+  for (let hops = 0; hops < 5 && e instanceof Error; hops++) {
+    if (e instanceof CascadeError) return e;
+    e = e.cause;
+  }
+  return null;
+}
+
+function classifyError(err: unknown): ErrorClass {
   if (err instanceof OpenRouterError) {
     return err.errorClass;
   }
 
-  const msg = err instanceof Error ? err.message : String(err);
+  // #34: a cascade message lists every tier, so regexing it lets any tier's
+  // status digits (or any number in a clipped body) win. Classify from the
+  // per-tier verdicts instead.
+  const cascade = findCascadeError(err);
+  if (cascade) return classifyCascade(cascade);
 
+  return classifyErrorMessage(err instanceof Error ? err.message : String(err));
+}
+
+function classifyCascade(cascade: CascadeError): ErrorClass {
+  let worst: ErrorClass | null = null;
+  for (const tier of cascade.tierErrors) {
+    // A config skip made no request; it says nothing about the failure.
+    if (tier.errorClass === "config") continue;
+    // A tier that could not classify its own failure (no HTTP status, e.g. a
+    // tool_use-less response, #30) falls back to its own message — never another tier's.
+    const cls = tier.errorClass === "unknown" ? classifyErrorMessage(tier.message) : tier.errorClass;
+    if (worst === null || ERROR_CLASS_SEVERITY[cls] > ERROR_CLASS_SEVERITY[worst]) worst = cls;
+  }
+  // Every tier was skipped before a request (no key, model not pulled):
+  // retrying within the run cannot help.
+  return worst ?? "permanent";
+}
+
+/** Message-pattern fallback for errors that carry no structured class. */
+function classifyErrorMessage(msg: string): ErrorClass {
   // HTTP status patterns
   if (/\b(429|500|502|503|504)\b/.test(msg)) return "transient";
   if (/\b(401|402)\b/.test(msg) || /credit|balance|unauthorized/i.test(msg)) return "provider";

@@ -635,6 +635,52 @@ describe("Phase runners", () => {
     });
   });
 
+  describe("checkpoint error_class from CascadeError tierErrors (#34)", () => {
+    // The consolidate phase has no retry pass, so the recorded class is the
+    // classifier's verdict, not a retry escalation.
+    async function consolidateErrorClass(err: unknown): Promise<string> {
+      seedConversation("conv-001");
+      vi.mocked(consolidateFacts).mockRejectedValue(err);
+      await runDream(t.db, t.config, { phases: ["extract", "consolidate"] });
+      const row = t.db
+        .prepare("SELECT error_class FROM dream_checkpoints WHERE phase = 'consolidate' AND status = 'error' AND item_id = 'conv-001'")
+        .get() as { error_class: string };
+      return row.error_class;
+    }
+
+    it("takes the most severe attempted tier: ollama 500 + openrouter 401 → provider, not the first status in the message", async () => {
+      const cascade = new CascadeError([
+        { tier: "ollama", errorClass: "transient", message: "Ollama HTTP 500: internal error" },
+        { tier: "openrouter", errorClass: "provider", message: "OpenRouter API error 401: {\"error\":{\"message\":\"User not found.\",\"code\":401}}" },
+        { tier: "anthropic", errorClass: "config", message: "skipped: ANTHROPIC_API_KEY not set" },
+      ]);
+      expect(await consolidateErrorClass(cascade)).toBe("provider");
+    });
+
+    it("an all-config-skipped cascade is permanent (retrying within the run cannot help)", async () => {
+      const cascade = new CascadeError([
+        { tier: "ollama", errorClass: "config", message: "skipped: Ollama not reachable at http://localhost:11434" },
+        { tier: "openrouter", errorClass: "config", message: "skipped: OPENROUTER_API_KEY not set" },
+        { tier: "anthropic", errorClass: "config", message: "skipped: ANTHROPIC_API_KEY not set" },
+      ]);
+      expect(await consolidateErrorClass(cascade)).toBe("permanent");
+    });
+
+    it("a non-cascade error still falls back to the message regex: a 500 is transient", async () => {
+      expect(await consolidateErrorClass(new Error("Request failed with status 500"))).toBe("transient");
+    });
+
+    it("a cascade wrapped as `cause` (the extractor's wrapper, #15) classifies the same as the bare cascade", async () => {
+      const cascade = new CascadeError([
+        { tier: "ollama", errorClass: "transient", message: "Ollama HTTP 500: internal error" },
+        { tier: "openrouter", errorClass: "provider", message: "OpenRouter API error 401: User not found." },
+        { tier: "anthropic", errorClass: "config", message: "skipped: ANTHROPIC_API_KEY not set" },
+      ]);
+      const wrapped = new Error(`All extraction tiers failed for conversation conv-001: ${cascade.message}`, { cause: cascade });
+      expect(await consolidateErrorClass(wrapped)).toBe("provider");
+    });
+  });
+
   describe("Consolidate phase partial-batch failure (#36)", () => {
     it("stores and counts the surviving facts, records one error checkpoint for the batch, and still processes the next batch", async () => {
       seedConversation("conv-001");
