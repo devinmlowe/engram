@@ -482,7 +482,7 @@ async function runConsolidatePhase(
   const { initEmbeddings } = await import("../_core/embeddings/index.js");
 
   await initEmbeddings(config);
-  initConsolidator();
+  await initConsolidator();
 
   // Retrieve pending facts from the extract phase
   const pendingFacts = loadPendingFacts(db, runId);

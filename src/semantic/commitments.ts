@@ -18,7 +18,6 @@ import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type Database from "better-sqlite3";
-import type Anthropic from "@anthropic-ai/sdk";
 import { escapeXml } from "../_core/search/format.js";
 import { estimateTokens } from "../_core/search/budget.js";
 import { parseDateHint, isoDayToEpochSeconds, toIsoDay } from "../_core/search/dates.js";
@@ -713,61 +712,42 @@ export function formatCommitmentsXml(
 
 // ─── Default LLM caller ─────────────────────────────────────────
 
-/** True when at least one extraction provider is configured. */
+const COMMITMENTS_SYSTEM_PROMPT =
+  "You are a commitment extraction system. Return only the JSON object described.";
+const COMMITMENTS_MAX_TOKENS = 2048;
+
+/**
+ * True when a cloud extraction provider or an explicit local model pin is
+ * configured. Synchronous by design (CLI preflight); the dream pass
+ * additionally probes Ollama reachability so a running local model counts
+ * on its own (SPEC.md INV-3).
+ */
 export function hasCommitmentsProvider(): boolean {
   return Boolean(process.env.OPENROUTER_API_KEY || process.env.ANTHROPIC_API_KEY || process.env.ENGRAM_LOCAL_MODEL);
 }
 
 /**
- * Route the extraction call the same way the fact extractor does: OpenRouter
- * (cheap, preferred when configured) → Anthropic API → local model via the
- * intelligence layer. Throws when no provider is configured; callers log and
- * skip — the dream run never breaks on extraction errors.
+ * Route the extraction call through the _core/llm factory cascade
+ * (Ollama → OpenRouter → Anthropic primary → fallback), exactly like the
+ * fact extractor. Throws when every tier fails; callers log and skip — the
+ * dream run never breaks on extraction errors.
+ *
+ * Imports lazily so the MCP server (which imports this module for the
+ * ledger API) does not load LLM SDKs at startup.
  */
 export const defaultCommitmentsLlm: CommitmentsLlm = async (prompt) => {
-  const { isOpenRouterAvailable, callOpenRouterTool } = await import("../_core/llm/providers/openrouter.js");
-  if (isOpenRouterAvailable()) {
-    const { result, model } = await callOpenRouterTool<Record<string, unknown>>(
-      [{ role: "user", content: prompt }],
-      EXTRACT_COMMITMENTS_TOOL,
-      { maxTokens: 2048 },
-    );
-    return { raw: result, model };
-  }
-
-  if (process.env.ANTHROPIC_API_KEY) {
-    const { default: Anthropic } = await import("@anthropic-ai/sdk");
-    const { loadConfig } = await import("../_core/config/index.js");
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-    const model = loadConfig().dream.apiModel;
-    const response = await client.messages.create({
-      model,
-      max_tokens: 2048,
-      tools: [{
-        name: EXTRACT_COMMITMENTS_TOOL.name,
-        description: EXTRACT_COMMITMENTS_TOOL.description,
-        input_schema: EXTRACT_COMMITMENTS_TOOL.parameters as Anthropic.Tool["input_schema"],
-      }],
-      tool_choice: { type: "tool", name: EXTRACT_COMMITMENTS_TOOL.name },
-      messages: [{ role: "user", content: prompt }],
-    });
-    const block = response.content.find((b) => b.type === "tool_use");
-    return { raw: block && block.type === "tool_use" ? block.input : { commitments: [] }, model };
-  }
-
-  if (process.env.ENGRAM_LOCAL_MODEL) {
-    const { generateStructured, buildIntelligenceConfig } = await import("../_core/llm/index.js");
-    const { loadConfig } = await import("../_core/config/index.js");
-    const result = await generateStructured<Record<string, unknown>>(
-      "You are a commitment extraction system. Return only the JSON object described.",
-      prompt,
-      EXTRACT_COMMITMENTS_TOOL.parameters,
-      buildIntelligenceConfig(loadConfig()),
-    );
-    return { raw: result.result, model: result.model };
-  }
-
-  throw new Error(
-    "No commitments extraction provider configured (set OPENROUTER_API_KEY, ANTHROPIC_API_KEY or ENGRAM_LOCAL_MODEL)",
+  const { generateStructured, buildIntelligenceConfig } = await import("../_core/llm/index.js");
+  const { loadConfig } = await import("../_core/config/index.js");
+  const result = await generateStructured<Record<string, unknown>>(
+    COMMITMENTS_SYSTEM_PROMPT,
+    prompt,
+    EXTRACT_COMMITMENTS_TOOL.parameters,
+    buildIntelligenceConfig(loadConfig()),
+    {
+      toolName: EXTRACT_COMMITMENTS_TOOL.name,
+      toolDescription: EXTRACT_COMMITMENTS_TOOL.description,
+      maxTokens: COMMITMENTS_MAX_TOKENS,
+    },
   );
+  return { raw: result.result, model: result.model };
 };

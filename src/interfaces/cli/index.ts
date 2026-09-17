@@ -282,7 +282,7 @@ program
 
       // Consolidate
       console.log("\nConsolidating...");
-      initConsolidator();
+      await initConsolidator();
 
       // W2: extracted facts inherit the conversation's tenant scope (ADR-010)
       const convScope = (

@@ -3,7 +3,7 @@
  * error isolation, and the no-provider skip.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createTestDb, type TestDb } from "../helpers.js";
 import { createRun } from "../../src/dream/scheduler.js";
 import {
@@ -49,10 +49,19 @@ describe("commitments pass", () => {
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.ENGRAM_LOCAL_MODEL;
     delete process.env.ENGRAM_COMMITMENTS_MAX_CONVERSATIONS;
+    // Isolate from a developer's live Ollama: the pass probes it when no
+    // cloud provider is configured and no LLM is injected
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("network disabled in test");
+      }),
+    );
   });
 
   afterEach(() => {
     t.cleanup();
+    vi.unstubAllGlobals();
     process.env = { ...savedEnv };
   });
 

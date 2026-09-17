@@ -194,13 +194,22 @@ export async function extractCommitmentsForConversation(
 }
 
 /**
+ * A reachable local Ollama model is a valid provider on its own (SPEC.md
+ * INV-3) even without any cloud key or ENGRAM_LOCAL_MODEL pin.
+ */
+async function localModelReachable(config: EngramConfig): Promise<boolean> {
+  const { isOllamaAvailable, buildIntelligenceConfig } = await import("../_core/llm/index.js");
+  return isOllamaAvailable(buildIntelligenceConfig(config));
+}
+
+/**
  * Run the commitments pass over the selected conversations. Never throws for
  * per-conversation failures; returns `disabledReason` (and does nothing) when
- * no extraction provider is configured and no LLM was injected.
+ * no extraction provider is configured or reachable and no LLM was injected.
  */
 export async function runCommitmentsPass(
   db: Database.Database,
-  _config: EngramConfig,
+  config: EngramConfig,
   options: CommitmentsPassOptions = {},
 ): Promise<CommitmentsPassResult> {
   const log = options.log ?? (() => {});
@@ -208,8 +217,8 @@ export async function runCommitmentsPass(
     conversations: 0, skipped: 0, candidates: 0, rejected: 0, duplicates: 0, inserted: 0, errors: 0, items: [],
   };
 
-  if (!options.callLlm && !hasCommitmentsProvider()) {
-    result.disabledReason = "no extraction provider configured (OPENROUTER_API_KEY / ANTHROPIC_API_KEY / ENGRAM_LOCAL_MODEL)";
+  if (!options.callLlm && !hasCommitmentsProvider() && !(await localModelReachable(config))) {
+    result.disabledReason = "no extraction provider configured (OPENROUTER_API_KEY / ANTHROPIC_API_KEY / ENGRAM_LOCAL_MODEL, or a running Ollama)";
     log(`Commitments pass skipped: ${result.disabledReason}`);
     return result;
   }

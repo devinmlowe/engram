@@ -12,10 +12,20 @@
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import Anthropic from "@anthropic-ai/sdk";
+import type Anthropic from "@anthropic-ai/sdk";
 import type Database from "better-sqlite3";
 import type { Memory, MemoryType } from "./types.js";
-import { isOpenRouterAvailable, callOpenRouterTool } from "../_core/llm/providers/openrouter.js";
+import {
+  buildIntelligenceConfig,
+  generateStructured,
+  isAnthropicAvailable,
+  isOllamaAvailable,
+  isOpenRouterAvailable,
+  resetIntelligence,
+  setClient as setIntelligenceClient,
+  type IntelligenceConfig,
+} from "../_core/llm/index.js";
+import { loadConfig } from "../_core/config/index.js";
 import type {
   ExtractedFact,
   DeduplicationResult,
@@ -38,9 +48,8 @@ import { classifyNli } from "./nli.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-let client: Anthropic | null = null;
-
-const CONFLICT_MODEL = "claude-haiku-4-5-20251001";
+/** Output budget for a conflict resolution (short structured verdict). */
+const CONFLICT_MAX_TOKENS = 1024;
 
 // ─── Similarity Thresholds ──────────────────────────────────────
 
@@ -57,65 +66,63 @@ const CONTRADICTION_THRESHOLD = 0.7;
 // ─── Initialization ─────────────────────────────────────────────
 
 /**
- * Initialize the conflict resolution clients.
+ * Verify that at least one tier of the LLM cascade can resolve conflicts.
  *
- * Creates the Anthropic client if an API key is available.
- * OpenRouter is used via the shared client when OPENROUTER_API_KEY is set.
- * At least one provider must be configured.
+ * Credentials and clients are owned by the _core/llm factory; this only
+ * checks reachability so callers fail fast with a clear message. Per
+ * SPEC.md INV-3 a reachable local Ollama model is sufficient on its own.
  */
-export function initConsolidator(anthropicApiKey?: string): void {
-  if (client) return;
-
-  const apiKey = anthropicApiKey ?? process.env.ANTHROPIC_API_KEY;
-  if (apiKey) {
-    client = new Anthropic({ apiKey });
-  }
-
-  if (!client && !isOpenRouterAvailable()) {
-    throw new Error(
-      "No conflict resolution provider configured. " +
-        "Set ANTHROPIC_API_KEY or OPENROUTER_API_KEY environment variable.",
-    );
-  }
+export async function initConsolidator(): Promise<void> {
+  if (isAnthropicAvailable() || isOpenRouterAvailable()) return;
+  if (await isOllamaAvailable(intelligenceConfig())) return;
+  throw new Error(
+    "No conflict resolution provider configured. " +
+      "Set ANTHROPIC_API_KEY or OPENROUTER_API_KEY, or run Ollama with the configured local model.",
+  );
 }
 
 /**
- * Reset the consolidator state (for testing).
+ * Reset the consolidator state (for testing). Clears the factory's client.
  */
 export function resetConsolidator(): void {
-  client = null;
+  resetIntelligence();
 }
 
 /**
- * Set a custom Anthropic client (for testing with mocks).
+ * Inject a custom Anthropic client into the factory (for testing with mocks).
  */
 export function setConsolidatorClient(customClient: Anthropic): void {
-  client = customClient;
+  setIntelligenceClient(customClient);
+}
+
+/** Cascade configuration derived from the application config. */
+function intelligenceConfig(): IntelligenceConfig {
+  return buildIntelligenceConfig(loadConfig());
 }
 
 // ─── Conflict Resolution Tool Schema ────────────────────────────
 
-const RESOLVE_CONFLICT_TOOL: Anthropic.Tool = {
-  name: "resolve_conflict",
-  description: "Resolve a memory conflict between two contradictory memories",
-  input_schema: {
-    type: "object" as const,
-    properties: {
-      action: {
-        type: "string",
-        enum: ["update", "keep_both", "noop"],
-      },
-      reasoning: {
-        type: "string",
-        description: "Explanation for the chosen resolution",
-      },
-      updated_content: {
-        type: "string",
-        description: "Updated content for the memory (only for update action)",
-      },
+const RESOLVE_CONFLICT_TOOL_NAME = "resolve_conflict";
+const RESOLVE_CONFLICT_TOOL_DESCRIPTION =
+  "Resolve a memory conflict between two contradictory memories";
+
+/** JSON schema for the resolution verdict (factory adds `type: object`). */
+const RESOLVE_CONFLICT_SCHEMA: Record<string, unknown> = {
+  properties: {
+    action: {
+      type: "string",
+      enum: ["update", "keep_both", "noop"],
     },
-    required: ["action", "reasoning"],
+    reasoning: {
+      type: "string",
+      description: "Explanation for the chosen resolution",
+    },
+    updated_content: {
+      type: "string",
+      description: "Updated content for the memory (only for update action)",
+    },
   },
+  required: ["action", "reasoning"],
 };
 
 // ─── Core Functions ─────────────────────────────────────────────
@@ -398,8 +405,10 @@ async function resolveMemoryConflict(
 
 /**
  * Call the LLM to resolve a memory conflict.
- * Reads the conflict resolution prompt and uses tool_use for structured output.
- * Prefers OpenRouter when available, falls back to Anthropic API.
+ *
+ * Reads the conflict resolution prompt and runs it through the _core/llm
+ * factory cascade (Ollama → OpenRouter → Anthropic primary → fallback) for
+ * structured output. Model ids come from config (dream.apiModel).
  */
 async function callConflictResolution(
   existingMemory: Memory,
@@ -408,70 +417,24 @@ async function callConflictResolution(
   const systemPrompt = loadConflictPrompt();
   const userMessage = formatConflictInput(existingMemory, newFact);
 
-  // OpenRouter path
-  if (!client && isOpenRouterAvailable()) {
-    try {
-      const { result } = await callOpenRouterTool<Record<string, unknown>>(
-        [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userMessage },
-        ],
-        {
-          name: RESOLVE_CONFLICT_TOOL.name,
-          description: RESOLVE_CONFLICT_TOOL.description ?? "",
-          parameters: RESOLVE_CONFLICT_TOOL.input_schema as Record<string, unknown>,
-        },
-        { maxTokens: 1024 },
-      );
-
-      const action = normalizeAction(result.action as string);
-      return {
-        action,
-        reasoning: (result.reasoning as string) || "No reasoning provided.",
-        updatedContent:
-          action === "update" ? (result.updated_content as string) : undefined,
-      };
-    } catch {
-      // Fall through to Anthropic if OpenRouter fails
-    }
-  }
-
-  // Anthropic path
-  if (!client) {
-    throw new Error(
-      "No conflict resolution provider available. Set ANTHROPIC_API_KEY or OPENROUTER_API_KEY.",
-    );
-  }
-
-  const response = await client.messages.create({
-    model: CONFLICT_MODEL,
-    max_tokens: 1024,
-    tools: [RESOLVE_CONFLICT_TOOL],
-    tool_choice: { type: "tool", name: "resolve_conflict" },
-    system: systemPrompt,
-    messages: [{ role: "user", content: userMessage }],
-  });
-
-  // Extract tool_use block
-  const toolUseBlock = response.content.find(
-    (block) => block.type === "tool_use",
+  const { result } = await generateStructured<Record<string, unknown>>(
+    systemPrompt,
+    userMessage,
+    RESOLVE_CONFLICT_SCHEMA,
+    intelligenceConfig(),
+    {
+      toolName: RESOLVE_CONFLICT_TOOL_NAME,
+      toolDescription: RESOLVE_CONFLICT_TOOL_DESCRIPTION,
+      maxTokens: CONFLICT_MAX_TOKENS,
+    },
   );
 
-  if (!toolUseBlock || toolUseBlock.type !== "tool_use") {
-    return {
-      action: "noop",
-      reasoning: "LLM did not return a structured resolution.",
-    };
-  }
-
-  const input = toolUseBlock.input as Record<string, unknown>;
-  const action = normalizeAction(input.action as string);
-
+  const action = normalizeAction(result.action as string);
   return {
     action,
-    reasoning: (input.reasoning as string) || "No reasoning provided.",
+    reasoning: (result.reasoning as string) || "No reasoning provided.",
     updatedContent:
-      action === "update" ? (input.updated_content as string) : undefined,
+      action === "update" ? (result.updated_content as string) : undefined,
   };
 }
 
