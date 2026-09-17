@@ -1302,20 +1302,14 @@ program
     const config = loadConfig();
     const db = getDatabase(config);
     try {
-      if (opts.refresh) {
-        const { runReflection } = await import("../../graph/reflection.js");
-        console.log("Running fresh reflection analysis...\n");
-        const result = await runReflection(db, config);
-        printReflectResult(result, opts.mode);
-      } else {
-        const { buildReflectResultFromCache } = await import("../../graph/reflection.js");
-        const result = buildReflectResultFromCache(db);
-        if (!result) {
-          console.log("No reflection data. Run 'engram dream --phase reflect' first.");
-          return;
-        }
-        printReflectResult(result, opts.mode);
+      const { reflect } = await import("../shared/reflect.js");
+      if (opts.refresh) console.log("Running fresh reflection analysis...\n");
+      const result = await reflect(db, { mode: opts.mode, refresh: Boolean(opts.refresh) }, config);
+      if (!result) {
+        console.log("No reflection data. Run 'engram dream --phase reflect' first.");
+        return;
       }
+      printReflectResult(result, opts.mode);
     } finally {
       closeDatabase();
     }

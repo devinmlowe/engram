@@ -150,12 +150,21 @@ function vectorSearchMemories(
  * Driving from the FTS index costs single-digit milliseconds. Exported so
  * a test can assert the query plan.
  */
+/**
+ * BM25 column weights for memories_fts (content, context). `context` is a
+ * provenance note — since #19 the Hermes mirror writes the same constant
+ * string on every mirrored memory — so a hit there must not outrank a hit in
+ * the content itself (#42). Exported so the plan test can pin it.
+ */
+export const MEMORIES_FTS_WEIGHTS = { content: 1.0, context: 0.25 } as const;
+
 export function buildMemoriesFtsSql(clauses: readonly string[]): string {
-  return `SELECT m.id, fts.rank
+  const { content, context } = MEMORIES_FTS_WEIGHTS;
+  return `SELECT m.id, bm25(memories_fts, ${content}, ${context}) AS rank
          FROM memories_fts AS fts
          CROSS JOIN memories AS m ON m.rowid = fts.rowid
          WHERE ${clauses.join(" AND ")}
-         ORDER BY fts.rank
+         ORDER BY rank
          LIMIT ?`;
 }
 

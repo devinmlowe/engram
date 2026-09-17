@@ -122,6 +122,15 @@ describe("per-request scope / read_scopes params", () => {
     expect(scopeOf("PMBOK 8 replaced the sixth edition")).toBe("hermes:pmp");
   });
 
+  it("remember_batch rejects an unknown key on an item instead of ignoring it (#43)", async () => {
+    const res = await handleToolCall("remember_batch", {
+      memories: [{ content: "Strict batch item", bogus_field: "ignored before #43" }],
+    });
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text as string).toMatch(/bogus_field|unrecognized/i);
+    expect(scopeOf("Strict batch item")).toBeUndefined();
+  });
+
   it("params absent → env-derived scoping still applies", async () => {
     process.env.ENGRAM_SCOPE = "hermes:finance";
     try {
@@ -181,6 +190,13 @@ describe("per-request scope params are advertised in the tool schemas", () => {
     const props = properties(tool);
     expect(props.scope).toBeDefined();
     expect(props.read_scopes).toBeUndefined();
+  });
+
+  it("remember_batch items are closed like remember itself (#43)", () => {
+    const props = properties("remember_batch");
+    const items = (props.memories as { items: { additionalProperties?: boolean; required: string[] } }).items;
+    expect(items.additionalProperties).toBe(false);
+    expect(items.required).toEqual(["content"]);
   });
 
   it("recall_drill is untouched (drills an already-scoped session result)", () => {

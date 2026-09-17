@@ -227,7 +227,7 @@ const RememberBatchInputSchema = z.object({
     source: z.enum(VALID_MEMORY_SOURCES).optional(),
     context: z.string().trim().max(500, "context must be at most 500 characters").optional(),
     relates_to_entities: z.array(z.string()).max(10).optional(),
-  })).min(1, "At least one memory is required").max(50, "Maximum batch size is 50"),
+  }).strict()).min(1, "At least one memory is required").max(50, "Maximum batch size is 50"),
   scope: ScopeParamSchema.optional(),
 });
 
@@ -578,6 +578,7 @@ export const MCP_TOOL_DEFINITIONS: Tool[] = [
               },
             },
             required: ["content"],
+            additionalProperties: false,
           },
           minItems: 1,
           maxItems: 50,
@@ -1575,13 +1576,10 @@ export async function handleToolCall(name: string, args: unknown): Promise<ToolR
 
       let result: ReflectResult | null;
 
-      if (params.refresh) {
-        if (!config) config = loadConfig();
-        const { runReflection } = await import("../../graph/reflection.js");
-        result = await runReflection(database, config);
-      } else {
-        const { buildReflectResultFromCache } = await import("../../graph/reflection.js");
-        result = buildReflectResultFromCache(database);
+      {
+        const { reflect } = await import("../shared/reflect.js");
+        if (params.refresh && !config) config = loadConfig();
+        result = await reflect(database, { mode: params.mode, refresh: params.refresh }, config ?? undefined);
       }
 
       if (!result) {
