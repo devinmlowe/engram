@@ -86,6 +86,12 @@ const EXTRACT_MEMORIES_SCHEMA: Record<string, unknown> = {
           content: { type: "string" },
           context: { type: "string" },
           importance: { type: "number", minimum: 0, maximum: 1 },
+          confidence: {
+            type: "number",
+            minimum: 0,
+            maximum: 1,
+            description: "How certain you are that this fact is accurate and correctly categorised (distinct from importance)",
+          },
           source_exchange_indexes: {
             type: "array",
             items: { type: "integer" },
@@ -247,6 +253,7 @@ interface RawFact {
   content?: string;
   context?: string;
   importance?: number;
+  confidence?: number;
   source_exchange_indexes?: number[];
   extraction_basis?: string;
 }
@@ -309,6 +316,13 @@ export function parseExtractionResponse(
       continue;
     }
 
+    // Model-supplied confidence (W9c): keep when numeric, clamped to [0, 1];
+    // leave absent otherwise so the consolidator applies its 0.5 fallback.
+    const confidence =
+      typeof raw.confidence === "number" && Number.isFinite(raw.confidence)
+        ? Math.max(0, Math.min(1, raw.confidence))
+        : undefined;
+
     // Convert source_exchange_indexes to string array for sourceExchangeIds
     const sourceExchangeIds: string[] = Array.isArray(raw.source_exchange_indexes)
       ? raw.source_exchange_indexes.map((idx) => String(idx))
@@ -325,6 +339,7 @@ export function parseExtractionResponse(
       content: raw.content.trim(),
       context: raw.context && typeof raw.context === "string" ? raw.context.trim() : undefined,
       importance,
+      ...(confidence !== undefined ? { confidence } : {}),
       sourceExchangeIds,
       extractionBasis,
     });

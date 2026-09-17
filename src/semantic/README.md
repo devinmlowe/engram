@@ -21,7 +21,9 @@ Extracts, consolidates, and retrieves structured knowledge from conversations �
 
 - `extractor` — LLM-powered fact extraction with prompt templates
 - `commitments` — Commitments ledger: extraction prompt/schema, due-date resolution, dedupe (lexical overlap or embedding cosine ≥ 0.85), store, lifecycle and XML for the `commitments` tools
-- `consolidator` — Deduplication, merge, and conflict detection
+- `consolidator` — Deduplication, merge, and conflict detection; applies model confidence and the transient policy at insert
+- `collapse` — Intra-batch / intra-run near-duplicate collapse (normalised content, embedding cosine) before insert (W9a)
+- `transient` — Regex classifier for transient status facts; short stability tier + importance cap (W9b)
 - `memory` — Memory CRUD, similarity search, access tracking
 - `search` — Hybrid vector + FTS5 search with RRF fusion; honors after/before on both candidate paths under a `filed` (created_at) or `event` (event_ts → earliest source exchange) basis
 - `nli` — NLI contradiction detection via DeBERTa

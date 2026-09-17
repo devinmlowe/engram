@@ -648,3 +648,19 @@ describe("Run lifecycle", () => {
     expect(progressCalls[0].processed).toBe(1);
   });
 });
+
+// ─── W9: persisted stability reaches the decay model in prune ───
+
+describe("Prune phase honours persisted stability (W9b)", () => {
+  it("passes memories.stability through to isPruneEligible", async () => {
+    insertActiveMemory("mem-transient");
+    insertActiveMemory("mem-durable");
+    t.db.prepare("UPDATE memories SET stability = 7 WHERE id = 'mem-transient'").run();
+
+    await runDream(t.db, t.config, { phases: ["prune"] });
+
+    const seen = vi.mocked(isPruneEligible).mock.calls.map((c) => c[0] as { id: string; stability?: number });
+    expect(seen.find((m) => m.id === "mem-transient")?.stability).toBe(7);
+    expect(seen.find((m) => m.id === "mem-durable")?.stability).toBeUndefined();
+  });
+});

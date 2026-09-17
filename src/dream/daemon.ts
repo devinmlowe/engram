@@ -479,13 +479,19 @@ async function runConsolidatePhase(
   }
 
   const { initConsolidator, consolidateFacts } = await import("../semantic/consolidator.js");
+  const { collapseAcrossBatches } = await import("../semantic/collapse.js");
   const { initEmbeddings } = await import("../_core/embeddings/index.js");
 
   await initEmbeddings(config);
   await initConsolidator();
 
-  // Retrieve pending facts from the extract phase
-  const pendingFacts = loadPendingFacts(db, runId);
+  // Retrieve pending facts from the extract phase. W9a: the same statement
+  // extracted from several conversations in one run is collapsed here (sources
+  // unioned into the first occurrence) before per-batch consolidation.
+  const { batches: pendingFacts, collapsed } = collapseAcrossBatches(loadPendingFacts(db, runId));
+  if (collapsed > 0) {
+    logEntry(logPath, "consolidate", `Collapsed ${collapsed} cross-conversation duplicate candidates before consolidation`);
+  }
   let processed = 0;
   let errors = 0;
 
@@ -612,7 +618,7 @@ async function runPrunePhase(
   // Fetch all active memories
   const memRows = db
     .prepare(
-      "SELECT id, type, content, confidence, importance, access_count, created_at, last_accessed, source_exchanges, is_active FROM memories WHERE is_active = 1",
+      "SELECT id, type, content, confidence, importance, access_count, created_at, last_accessed, source_exchanges, is_active, stability FROM memories WHERE is_active = 1",
     )
     .all() as Array<{
       id: string;
@@ -625,6 +631,7 @@ async function runPrunePhase(
       last_accessed: number | null;
       source_exchanges: string | null;
       is_active: number;
+      stability: number | null;
     }>;
 
   logEntry(logPath, "prune", `Scanning ${memRows.length} active memories for pruning`);
@@ -647,6 +654,8 @@ async function runPrunePhase(
       lastAccessed: row.last_accessed ?? undefined,
       sourceExchanges: row.source_exchanges ? JSON.parse(row.source_exchanges) : [],
       isActive: row.is_active === 1,
+      // Persisted FSRS tier (W9b transient facts decay on their own schedule)
+      stability: row.stability ?? undefined,
     };
 
     if (isPruneEligible(memory)) {

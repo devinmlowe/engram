@@ -56,6 +56,7 @@ Not all dimensions apply to every fact — use them as a lens to ensure comprehe
    - Generic technical explanations available in public documentation
    - Speculative discussion that didn't lead to a concrete action or decision
 7. If nothing in the conversation is extractable, return an **empty array**.
+8. **Prefer durable knowledge over transient status, and emit your own confidence.** Progress reports and point-in-time state ("Phase 3 is complete", "added 12 tests", "currently blocked on X", "the run ID is ...", "version bumped to 1.2") are rarely worth remembering — extract the underlying decision, convention, or solution instead, or skip them; if a status fact must be kept, score its importance at 0.3 or lower. For every fact also set `confidence` (0-1): how certain you are that the statement is accurate and correctly categorised, independent of its importance.
 
 ## Few-Shot Examples
 

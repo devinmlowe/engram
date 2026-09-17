@@ -568,3 +568,73 @@ describe("extractFromConversation (mocked API)", () => {
     expect(result.confidence).toBe(1);
   });
 });
+
+// ─── W9: model-supplied confidence + durable-over-status prompt ─
+
+describe("parseExtractionResponse — confidence (W9c)", () => {
+  const base = {
+    type: "fact",
+    content: "The project uses Node.js 22.",
+    importance: 0.5,
+    source_exchange_indexes: [1],
+  };
+
+  it("preserves the model's confidence when present", () => {
+    const facts = parseExtractionResponse({ facts: [{ ...base, confidence: 0.83 }] });
+    expect(facts[0].confidence).toBe(0.83);
+  });
+
+  it("leaves confidence undefined when the model omits it (consolidator falls back to 0.5)", () => {
+    const facts = parseExtractionResponse({ facts: [base] });
+    expect(facts[0].confidence).toBeUndefined();
+    expect("confidence" in facts[0]).toBe(false);
+  });
+
+  it("clamps out-of-range confidence into [0, 1] and ignores non-numeric values", () => {
+    const facts = parseExtractionResponse({
+      facts: [
+        { ...base, confidence: 1.7 },
+        { ...base, confidence: -0.2 },
+        { ...base, confidence: "high" },
+        { ...base, confidence: Number.NaN },
+      ],
+    });
+    expect(facts.map((f) => f.confidence)).toEqual([1, 0, undefined, undefined]);
+  });
+});
+
+describe("extraction schema and prompt (W9b/c)", () => {
+  let savedOpenRouterKey: string | undefined;
+
+  beforeEach(() => {
+    resetExtractor();
+    savedOpenRouterKey = process.env.OPENROUTER_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("network disabled in test"); }));
+  });
+
+  afterEach(() => {
+    resetExtractor();
+    vi.unstubAllGlobals();
+    if (savedOpenRouterKey !== undefined) process.env.OPENROUTER_API_KEY = savedOpenRouterKey;
+  });
+
+  it("asks the model for a per-fact confidence in the structured schema", async () => {
+    const mockCreate = vi.fn().mockResolvedValue({
+      content: [{ type: "tool_use", id: "toolu_schema", name: "extract_memories", input: { facts: [] } }],
+    });
+    setClient({ messages: { create: mockCreate } } as unknown as import("@anthropic-ai/sdk").default);
+
+    await extractFromConversation("conv-schema", makeExchanges(1), defaultMetadata);
+
+    const schema = mockCreate.mock.calls[0][0].tools[0].input_schema;
+    const factProps = schema.properties.facts.items.properties;
+    expect(factProps.confidence).toMatchObject({ type: "number", minimum: 0, maximum: 1 });
+  });
+
+  it("tells the model to prefer durable facts over status updates and to emit confidence", () => {
+    const prompt = buildExtractionPrompt(makeExchanges(1), defaultMetadata);
+    expect(prompt).toMatch(/prefer durable knowledge over transient status/i);
+    expect(prompt).toMatch(/confidence/);
+  });
+});

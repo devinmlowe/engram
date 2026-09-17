@@ -42,6 +42,8 @@ import {
   applyContradiction,
 } from "./memory.js";
 import { classifyNli } from "./nli.js";
+import { collapseExact, collapseByEmbedding } from "./collapse.js";
+import { applyTransientPolicy } from "./transient.js";
 
 // ─── Module State ───────────────────────────────────────────────
 
@@ -147,7 +149,13 @@ export interface ConsolidateOptions {
 
 /**
  * Process a batch of extracted facts through consolidation.
- * Facts are processed sequentially — order matters for within-batch dedup.
+ *
+ * W9a: candidates in the same batch are collapsed against each other before
+ * any of them touches the store — first on normalised content, then on
+ * embedding cosine at the auto-merge threshold. Survivors are then
+ * deduplicated against the DB sequentially (order matters). The result list
+ * has one entry per input fact, in input order: a collapsed member reports
+ * a `merge` into whatever memory its survivor resolved to.
  */
 export async function consolidateFacts(
   db: Database.Database,
@@ -155,11 +163,44 @@ export async function consolidateFacts(
   conversationId: string,
   options: ConsolidateOptions = {},
 ): Promise<DeduplicationResult[]> {
-  const results: DeduplicationResult[] = [];
+  if (facts.length === 0) return [];
 
-  for (const fact of facts) {
-    const result = await deduplicateFact(db, fact, conversationId, options);
-    results.push(result);
+  const exact = collapseExact(facts);
+  const embeddings: number[][] = [];
+  for (const fact of exact.survivors) {
+    embeddings.push(await embedDocument(fact.content));
+  }
+  const near = collapseByEmbedding(exact.survivors, embeddings, AUTO_MERGE_THRESHOLD);
+
+  const survivorResults: DeduplicationResult[] = [];
+  for (let i = 0; i < near.survivors.length; i++) {
+    survivorResults.push(
+      await deduplicateEmbeddedFact(
+        db,
+        near.survivors[i],
+        near.embeddings[i],
+        conversationId,
+        options,
+      ),
+    );
+  }
+
+  const results: DeduplicationResult[] = [];
+  const reported = new Set<number>();
+  for (let i = 0; i < facts.length; i++) {
+    const survivor = near.memberOf[exact.memberOf[i]];
+    const base = survivorResults[survivor];
+    if (!reported.has(survivor)) {
+      reported.add(survivor);
+      results.push(base);
+    } else {
+      results.push({
+        action: "merge",
+        memoryId: base.memoryId,
+        mergedWithId: base.memoryId,
+        similarity: 1,
+      });
+    }
   }
 
   return results;
@@ -182,10 +223,20 @@ export async function deduplicateFact(
   conversationId: string,
   options: ConsolidateOptions = {},
 ): Promise<DeduplicationResult> {
-  const scope = options.scope ?? "global";
-
   // 1. Embed the fact content
   const embedding = await embedDocument(fact.content);
+  return deduplicateEmbeddedFact(db, fact, embedding, conversationId, options);
+}
+
+/** Steps 2–4 of `deduplicateFact` for a fact whose embedding is already known. */
+async function deduplicateEmbeddedFact(
+  db: Database.Database,
+  fact: ExtractedFact,
+  embedding: number[],
+  conversationId: string,
+  options: ConsolidateOptions,
+): Promise<DeduplicationResult> {
+  const scope = options.scope ?? "global";
 
   // 2. Find nearest neighbors — within the conversation's own scope only:
   // a memory in one tenant scope must never absorb, reinforce, or be
@@ -252,6 +303,48 @@ export async function deduplicateFact(
 
 // ─── Novel Memory Insertion ─────────────────────────────────────
 
+/** Confidence stored when the extractor did not supply one (W9c). */
+const DEFAULT_CONFIDENCE = 0.5;
+
+/** Model-supplied confidence clamped to [0, 1]; 0.5 only when absent. */
+function effectiveConfidence(fact: ExtractedFact): number {
+  const c = fact.confidence;
+  if (typeof c !== "number" || Number.isNaN(c)) return DEFAULT_CONFIDENCE;
+  return Math.max(0, Math.min(1, c));
+}
+
+/**
+ * Build the Memory row for a fact about to be written. Single place where
+ * confidence (W9c) and the transient-status policy (W9b: importance cap +
+ * short stability tier) are applied, so every insert path agrees.
+ */
+function memoryFromFact(
+  id: string,
+  fact: ExtractedFact,
+  content: string,
+  scope: string,
+  now: number,
+): Memory {
+  const policy = applyTransientPolicy({ content, importance: fact.importance });
+  const memory: Memory = {
+    id,
+    type: fact.type,
+    content,
+    context: fact.context,
+    confidence: effectiveConfidence(fact),
+    importance: policy.importance,
+    accessCount: 0,
+    createdAt: now,
+    sourceExchanges: fact.sourceExchangeIds,
+    isActive: true,
+    source: "dream",
+    scope,
+    extractionBasis: fact.extractionBasis,
+  };
+  if (policy.stability !== undefined) memory.stability = policy.stability;
+  return memory;
+}
+
 /**
  * Insert a new memory from a novel fact (no existing match).
  */
@@ -265,21 +358,7 @@ function insertNovelMemory(
   const newId = crypto.randomUUID();
   const now = Math.floor(Date.now() / 1000);
 
-  const memory: Memory = {
-    id: newId,
-    type: fact.type,
-    content: fact.content,
-    context: fact.context,
-    confidence: 0.5,
-    importance: fact.importance,
-    accessCount: 0,
-    createdAt: now,
-    sourceExchanges: fact.sourceExchangeIds,
-    isActive: true,
-    source: "dream",
-    scope,
-    extractionBasis: fact.extractionBasis,
-  };
+  const memory = memoryFromFact(newId, fact, fact.content, scope, now);
 
   insertMemory(db, memory, embedding);
 
@@ -313,21 +392,13 @@ async function resolveMemoryConflict(
   switch (resolution.action) {
     case "update": {
       // New memory supersedes old
-      const newMemory: Memory = {
-        id: newId,
-        type: newFact.type,
-        content: resolution.updatedContent ?? newFact.content,
-        context: newFact.context,
-        confidence: 0.5,
-        importance: newFact.importance,
-        accessCount: 0,
-        createdAt: now,
-        sourceExchanges: newFact.sourceExchangeIds,
-        isActive: true,
-        source: "dream",
+      const newMemory = memoryFromFact(
+        newId,
+        newFact,
+        resolution.updatedContent ?? newFact.content,
         scope,
-        extractionBasis: newFact.extractionBasis,
-      };
+        now,
+      );
 
       applyContradiction(db, existingMemory.id);
       deactivateMemory(db, existingMemory.id, newId);
@@ -353,21 +424,7 @@ async function resolveMemoryConflict(
 
     case "keep_both": {
       // Insert new alongside existing
-      const newMemory: Memory = {
-        id: newId,
-        type: newFact.type,
-        content: newFact.content,
-        context: newFact.context,
-        confidence: 0.5,
-        importance: newFact.importance,
-        accessCount: 0,
-        createdAt: now,
-        sourceExchanges: newFact.sourceExchangeIds,
-        isActive: true,
-        source: "dream",
-        scope,
-        extractionBasis: newFact.extractionBasis,
-      };
+      const newMemory = memoryFromFact(newId, newFact, newFact.content, scope, now);
 
       // Both stay active, but the existing memory was contradicted: persist
       // the FSRS penalty so its retrievability decays faster

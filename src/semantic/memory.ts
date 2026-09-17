@@ -126,8 +126,8 @@ export function insertMemory(
       INSERT INTO memories
         (id, type, content, context, confidence, importance, access_count,
          last_accessed, created_at, updated_at, source_exchanges, superseded_by, is_active, source, scope,
-         event_ts, extraction_basis)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         event_ts, extraction_basis, stability)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       memory.id,
       memory.type,
@@ -146,6 +146,9 @@ export function insertMemory(
       memory.scope ?? "global",
       memory.eventTs ?? resolveEventTs(db, memory.sourceExchanges),
       memory.extractionBasis ?? "observed",
+      // NULL = derive from the type's initial stability; a value pins the
+      // FSRS tier at insert (W9b transient facts).
+      memory.stability ?? null,
     );
 
     // 2. Get rowid and insert into FTS5
