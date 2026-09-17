@@ -24,6 +24,7 @@ All notable changes to engram are documented here. The format follows
 - Hermes plugin log messages point at `scripts/install-mcp-daemon.sh status` instead of the hand-written `ai.hermes.engram-mcp` LaunchAgent.
 
 ### Fixed
+- `engram update` pulls with an explicit `origin <branch>` (a branch without upstream tracking made the bare pull fail), and any failure restarts the services it stopped before printing the rollback steps, so an aborted run never leaves the MCP daemon or visualizer down (#46).
 - `remember_batch` items are closed (`additionalProperties: false`, zod `.strict()`) like `remember`; an unknown key on an item is rejected instead of ignored (#43).
 - `memories_fts` ranks the `context` column at 0.25 of `content` (`bm25(memories_fts, 1.0, 0.25)`), so the constant Hermes mirror context note can no longer outrank a real content match (#42).
 - `reflect` is routed through `interfaces/shared/reflect.ts` on both the CLI and MCP surfaces; the interface-parity test asserts it (#38).

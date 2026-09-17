@@ -242,8 +242,13 @@ export async function runUpdate(plan: UpdatePlan, deps: UpdateDeps, opts: { dryR
   // 5. code
   const inst = plan.install;
   if (inst.kind === "git") {
-    say(`git pull --ff-only (${inst.root})`);
-    const pull = await exec("git", ["-C", inst.root, "pull", "--ff-only"]);
+    // Name the remote and branch explicitly: a checkout whose branch has no
+    // upstream (common after `git checkout -b main origin/main` variants)
+    // makes a bare `git pull` fail with "no tracking information".
+    const pullArgs = ["-C", inst.root, "pull", "--ff-only"];
+    if (inst.branch && inst.branch !== "HEAD") pullArgs.push("origin", inst.branch);
+    say(`git ${pullArgs.slice(2).join(" ")} (${inst.root})`);
+    const pull = await exec("git", pullArgs);
     if (pull.status !== 0) { say(`  !! git pull failed: ${(pull.stderr || pull.stdout).trim()}`); return finish(false); }
     rollback.push(`code: git -C ${inst.root} checkout ${inst.headSha ?? "<previous sha>"} && npm ci`);
     say("npm ci (rebuilds dist/)");
@@ -316,14 +321,34 @@ export async function runUpdate(plan: UpdatePlan, deps: UpdateDeps, opts: { dryR
   say(`updated to ${plan.target ?? "the latest build"}; verification passed${plan.backupDir ? ` (backup kept at ${plan.backupDir})` : ""}`);
   return { ok: true, lines };
 
-  function finish(ok: boolean): RunResult {
+  async function finish(ok: boolean): Promise<RunResult> {
     if (!ok) {
       say("");
-      say("UPDATE FAILED. Rollback steps, in order:");
+      say("UPDATE FAILED.");
+      // Never leave the machine without its services: bring back whatever
+      // was running, on whatever code is on disk now, and say so.
+      for (const l of await restartAfterFailure()) say(l);
+      say("Rollback steps, in order (services were restarted on the code currently on disk):");
       for (const s of STOP_ORDER) { const r = running.find((x) => x.id === s); if (r) say(`  stop ${r.id}: ${r.stopCommand}`); }
       for (const r of rollback) say(`  ${r}`);
       say("  then: engram doctor && engram stats");
     }
     return { ok, lines };
+  }
+
+  async function restartAfterFailure(): Promise<string[]> {
+    const out: string[] = [];
+    for (const id of [...START_ORDER, "dream" as const]) {
+      const s = running.find((r) => r.id === id);
+      if (!s) continue;
+      try {
+        await startService(s, sdeps);
+        const up = await waitForPort(s, sdeps, true, 30_000);
+        out.push(`  restarted ${s.id}${up ? "" : " (port not answering yet)"}`);
+      } catch (err) {
+        out.push(`  !! could not restart ${s.id}: ${err instanceof Error ? err.message : String(err)} — run: ${s.startCommand}`);
+      }
+    }
+    return out;
   }
 }
