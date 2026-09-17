@@ -22,6 +22,7 @@ import {
   setConsolidatorClient,
 } from "../../src/semantic/consolidator.js";
 import { insertMemory, getMemory } from "../../src/semantic/memory.js";
+import { CascadeError } from "../../src/_core/llm/index.js";
 import { classifyNli } from "../../src/semantic/nli.js";
 import { embedDocument } from "../../src/_core/embeddings/index.js";
 import type { Memory, ExtractedFact } from "../../src/semantic/types.js";
@@ -256,6 +257,29 @@ describe("consolidator conflict resolution routes through the LLM factory", () =
     expect(args.tools[0].name).toBe("resolve_conflict");
     expect(args.tool_choice).toEqual({ type: "tool", name: "resolve_conflict" });
     expect(String(args.system)).toContain("conflict");
+  });
+
+  it("throws a CascadeError naming the Anthropic tier when neither model returns a tool_use block (#30)", async () => {
+    stubFetch({ ollamaUp: false });
+    // Text-only responses from both the primary and the fallback model.
+    const mockCreate = vi.fn().mockResolvedValue({
+      content: [{ type: "text", text: "I would keep the existing memory." }],
+      stop_reason: "end_turn",
+    });
+    setConsolidatorClient({ messages: { create: mockCreate } } as unknown as Anthropic);
+
+    const promise = deduplicateFact(t.db, newFact(), "conv-001");
+
+    await expect(promise).rejects.toBeInstanceOf(CascadeError);
+    await expect(promise).rejects.toThrow(/anthropic \(unknown\): No tool_use block in API response/);
+    expect(mockCreate).toHaveBeenCalledTimes(2);
+    expect(mockCreate.mock.calls.map((c) => c[0].model)).toEqual([
+      "claude-haiku-4-5-20251001",
+      "claude-sonnet-4-6",
+    ]);
+    // Nothing was written: the existing memory is untouched and no new one exists.
+    expect(getMemory(t.db, "mem-existing")?.isActive).toBe(true);
+    expect((t.db.prepare("SELECT COUNT(*) AS c FROM memories").get() as { c: number }).c).toBe(1);
   });
 
   it("initConsolidator rejects when no tier is reachable", async () => {

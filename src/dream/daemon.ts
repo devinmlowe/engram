@@ -551,8 +551,15 @@ async function runConsolidatePhase(
 
       options.onProgress?.("consolidate", processed, pendingFacts.length, errors);
     } catch (err) {
+      // Per-batch: record the failure and move on to the next conversation's
+      // facts; one LLM hiccup must not abort the phase.
       const errorMsg = err instanceof Error ? err.message : String(err);
       logEntry(logPath, "consolidate", `Error consolidating facts for ${batch.conversationId}: ${errorMsg}`);
+      recordFailure(db, runId, "consolidate", batch.conversationId, {
+        provider: "auto",
+        errorClass: classifyError(err),
+        errorMessage: checkpointErrorMessage(err),
+      });
       errors++;
     }
   }
@@ -982,8 +989,11 @@ function classifyError(err: unknown): "transient" | "provider" | "permanent" | "
   if (/\b(401|402)\b/.test(msg) || /credit|balance|unauthorized/i.test(msg)) return "provider";
   if (/\b(400|422)\b/.test(msg)) return "permanent";
 
-  // Content patterns
+  // Content patterns. A structured-output response without its tool block
+  // (OpenRouter tool_calls, Anthropic tool_use) is model nondeterminism or
+  // output truncation — a retry can succeed.
   if (/no tool_calls or content/i.test(msg)) return "transient";
+  if (/no tool_use block/i.test(msg)) return "transient";
   if (/parse error|validation error|invalid json/i.test(msg)) return "permanent";
 
   return "unknown";

@@ -591,6 +591,48 @@ describe("Phase runners", () => {
 
       expect(consolidateFacts).toHaveBeenCalledTimes(1);
     });
+
+    it("a tool_use-less LLM response is a transient per-batch error: one checkpoint, next batch still consolidated (#30)", async () => {
+      seedConversation("conv-001");
+      seedConversation("conv-002");
+      vi.mocked(extractFromConversation).mockResolvedValue({
+        facts: [{ type: "fact", content: "test fact", importance: 0.7, sourceExchangeIds: [] }],
+        model: "test-model",
+        tier: "haiku",
+        confidence: 8,
+        durationMs: 100,
+      });
+
+      // What the factory throws when neither Anthropic model returns a tool_use block.
+      const cascade = new CascadeError([
+        { tier: "ollama", errorClass: "config", message: "skipped: Ollama not reachable at http://localhost:11434" },
+        { tier: "openrouter", errorClass: "config", message: "skipped: OPENROUTER_API_KEY not set" },
+        { tier: "anthropic", errorClass: "unknown", message: "No tool_use block in API response" },
+      ]);
+      const consolidated: string[] = [];
+      vi.mocked(consolidateFacts).mockImplementation(async (_db, _facts, conversationId) => {
+        if (conversationId === "conv-001") throw cascade;
+        consolidated.push(conversationId);
+        return [{ action: "insert", memoryId: "mem-002" }];
+      });
+
+      const report = await runDream(t.db, t.config, { phases: ["extract", "consolidate"] });
+
+      const phase = report.phases.find((p) => p.phase === "consolidate")!;
+      expect(phase.errors).toBe(1);
+      expect(phase.itemsProcessed).toBe(1);
+      expect(consolidated).toEqual(["conv-002"]);
+
+      const rows = t.db
+        .prepare(
+          "SELECT item_id, status, error_class, error_message, attempt_count FROM dream_checkpoints WHERE phase = 'consolidate' ORDER BY item_id",
+        )
+        .all() as Array<Record<string, unknown>>;
+      expect(rows).toHaveLength(2);
+      expect(rows[0]).toMatchObject({ item_id: "conv-001", status: "error", error_class: "transient", attempt_count: 1 });
+      expect(String(rows[0].error_message)).toMatch(/anthropic \(unknown\): No tool_use block in API response/);
+      expect(rows[1]).toMatchObject({ item_id: "conv-002", status: "success" });
+    });
   });
 
   describe("Reflect phase", () => {
