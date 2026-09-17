@@ -325,7 +325,7 @@ const IndexFileStructureInputSchema = z.object({
 // ─── Server Setup ──────────────────────────────────────────────
 
 const server = new Server(
-  { name: "engram", version: "0.2.0" },
+  { name: "engram", version: "0.3.0" },
   { capabilities: { tools: {} } },
 );
 

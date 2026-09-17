@@ -1,6 +1,6 @@
 {
   "name": "engram",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "Cognitive memory system — episodic storage, semantic extraction, knowledge graph, and dream-state consolidation for Claude Code",
   "author": {
     "name": "Devin Lowe"

@@ -13,6 +13,13 @@ For the full vision and technical specification, see [SPEC.md](../SPEC.md).
 
 ## Installation
 
+### Via npm
+
+```bash
+npm install -g @devinmlowe/engram
+# `engram` is now on your PATH
+```
+
 ### From Source
 
 ```bash
@@ -29,16 +36,10 @@ npm link
 # Now `engram` is available globally
 ```
 
-### Via npm (future)
-
-```bash
-npm install -g engram
-```
-
 ### Via npx
 
 ```bash
-npx -y engram mcp
+npx -y @devinmlowe/engram mcp
 ```
 
 ---
