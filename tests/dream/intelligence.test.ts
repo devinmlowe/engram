@@ -6,6 +6,7 @@ import {
   generate,
   resetIntelligence,
   setClient,
+  CascadeError,
   type IntelligenceConfig,
 } from "../../src/_core/llm/index.js";
 import { loadConfig } from "../../src/_core/config/index.js";
@@ -709,5 +710,97 @@ describe("edge cases", () => {
 
     expect(result.source).toBe("api");
     expect(result.result).toEqual({ facts: [{ content: "Recovered" }] });
+  });
+});
+
+// ─── Cascade diagnostics (#15) ───────────────────────────────────
+
+describe("cascade diagnostics", () => {
+  const schema = { properties: { facts: { type: "array" } }, required: ["facts"] };
+  const savedEnv: Record<string, string | undefined> = {};
+
+  beforeEach(() => {
+    for (const key of ["OPENROUTER_API_KEY", "ANTHROPIC_API_KEY"]) {
+      savedEnv[key] = process.env[key];
+      delete process.env[key];
+    }
+  });
+
+  afterEach(() => {
+    for (const [key, value] of Object.entries(savedEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+
+  /** Ollama down, OpenRouter rejects the key with 401. */
+  function mockOllamaDownOpenRouter401(): void {
+    mockFetch(async (url: string) => {
+      if (url.includes("openrouter.ai")) {
+        return new Response(
+          JSON.stringify({ error: { message: "User not found.", code: 401 } }),
+          { status: 401 },
+        );
+      }
+      throw new TypeError("fetch failed");
+    });
+  }
+
+  it("OpenRouter 401 with no Anthropic key throws a CascadeError naming OpenRouter and 401", async () => {
+    process.env.OPENROUTER_API_KEY = "sk-or-rejected";
+    mockOllamaDownOpenRouter401();
+
+    const config = makeConfig({ openrouterModel: "google/gemini-2.5-flash-lite" });
+    const promise = generateStructured("System", "User", schema, config);
+
+    await expect(promise).rejects.toBeInstanceOf(CascadeError);
+    await expect(promise).rejects.toThrow(/openrouter/i);
+    await expect(promise).rejects.toThrow(/401/);
+
+    const err = await promise.catch((e: unknown) => e as CascadeError);
+    expect(err.tierErrors.map((t) => t.tier)).toEqual(["ollama", "openrouter", "anthropic"]);
+    expect(err.tierErrors[0].errorClass).toBe("config");
+    expect(err.tierErrors[1]).toMatchObject({ errorClass: "provider" });
+    expect(err.tierErrors[1].message).toMatch(/401/);
+    expect(err.tierErrors[2]).toMatchObject({ errorClass: "config" });
+    expect(err.tierErrors[2].message).toMatch(/ANTHROPIC_API_KEY/);
+  });
+
+  it("generate() reports the same per-tier failures", async () => {
+    process.env.OPENROUTER_API_KEY = "sk-or-rejected";
+    mockOllamaDownOpenRouter401();
+
+    const config = makeConfig({ openrouterModel: "google/gemini-2.5-flash-lite" });
+    const err = await generate("System", "User", config).catch((e: unknown) => e as CascadeError);
+
+    expect(err).toBeInstanceOf(CascadeError);
+    expect(err.message).toMatch(/openrouter \(provider\): OpenRouter API error 401/);
+  });
+
+  it("warns 'skipped' for config-skipped tiers and 'failed' for runtime failures", async () => {
+    process.env.OPENROUTER_API_KEY = "sk-or-rejected";
+    mockOllamaDownOpenRouter401();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const config = makeConfig({ openrouterModel: "google/gemini-2.5-flash-lite" });
+    await generateStructured("System", "User", schema, config).catch(() => {});
+
+    const lines = warn.mock.calls.map((c) => String(c[0]));
+    expect(lines.some((l) => /openrouter tier failed \(provider\)/.test(l))).toBe(true);
+    expect(lines.some((l) => /anthropic tier skipped \(config\)/.test(l))).toBe(true);
+    expect(lines.some((l) => /openrouter tier skipped/.test(l))).toBe(false);
+  });
+
+  it("a later tier's success still returns a result after an earlier runtime failure", async () => {
+    process.env.OPENROUTER_API_KEY = "sk-or-rejected";
+    mockOllamaDownOpenRouter401();
+    setClient(makeMockClient(vi.fn().mockResolvedValue({
+      content: [{ type: "tool_use", id: "t1", name: "structured_output", input: { facts: [] } }],
+    })));
+
+    const config = makeConfig({ openrouterModel: "google/gemini-2.5-flash-lite" });
+    const result = await generateStructured("System", "User", schema, config);
+
+    expect(result.provider).toBe("anthropic");
   });
 });

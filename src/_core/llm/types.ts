@@ -41,6 +41,52 @@ export interface GenerationOptions {
   skipLocal?: boolean;
 }
 
+// ─── Cascade Diagnostics ─────────────────────────────────────────
+
+/**
+ * Why a tier produced no result. `config` means the tier was skipped
+ * before any request was made (missing key, model not pulled, explicit
+ * skipLocal pin); the rest mirror OpenRouterError's runtime classes.
+ */
+export type TierErrorClass = "config" | "transient" | "provider" | "permanent" | "unknown";
+
+/** One tier's failure, collected as the cascade falls through. */
+export interface TierError {
+  tier: LlmProvider;
+  errorClass: TierErrorClass;
+  message: string;
+}
+
+/** What a fallible tier returns: a result, or the reason it produced none. */
+export type TierOutcome<T> = GenerationResult<T> | { failure: TierError };
+
+/**
+ * Thrown by generateStructured()/generate() when every tier failed. The
+ * message names each tier and its reason so a caller that only keeps the
+ * message (dream checkpoints, logs) still sees the real failure instead of
+ * only the last tier's.
+ */
+export class CascadeError extends Error {
+  readonly tierErrors: TierError[];
+
+  constructor(tierErrors: TierError[]) {
+    super(
+      "All LLM tiers failed — " +
+        tierErrors.map((t) => `${t.tier} (${t.errorClass}): ${t.message}`).join("; "),
+    );
+    this.name = "CascadeError";
+    this.tierErrors = tierErrors;
+  }
+}
+
+/** Per-tier messages are clipped so the cascade message survives the 500-char checkpoint column. */
+export const TIER_ERROR_MESSAGE_MAX = 120;
+
+export function tierErrorMessage(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg.length > TIER_ERROR_MESSAGE_MAX ? `${msg.slice(0, TIER_ERROR_MESSAGE_MAX)}…` : msg;
+}
+
 export const DEFAULT_MAX_TOKENS = 4096;
 export const DEFAULT_TOOL_NAME = "structured_output";
 export const DEFAULT_TOOL_DESCRIPTION = "Return structured data matching the schema";

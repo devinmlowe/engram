@@ -9,10 +9,22 @@
  */
 
 import type { EngramConfig } from "../types/index.js";
-import type { IntelligenceConfig, GenerationResult, GenerationOptions } from "./types.js";
+import type {
+  IntelligenceConfig,
+  GenerationResult,
+  GenerationOptions,
+  TierError,
+  TierOutcome,
+} from "./types.js";
+import { CascadeError, tierErrorMessage } from "./types.js";
 import { isOllamaAvailable, ollamaGenerateStructured, ollamaGenerate } from "./providers/ollama.js";
-import { openrouterGenerateStructured, openrouterGenerate } from "./providers/openrouter.js";
-import { apiGenerateStructured, apiGenerate, setClient, resetIntelligence } from "./providers/anthropic.js";
+import { openrouterGenerateStructured, openrouterGenerate, classifyHttpStatus } from "./providers/openrouter.js";
+import {
+  apiGenerateStructured,
+  apiGenerate,
+  resetIntelligence as resetAnthropic,
+  isAnthropicAvailable,
+} from "./providers/anthropic.js";
 
 // ─── Re-export types ─────────────────────────────────────────────
 
@@ -21,12 +33,21 @@ export type {
   GenerationResult,
   GenerationOptions,
   LlmProvider,
+  TierError,
+  TierErrorClass,
 } from "./types.js";
+export { CascadeError } from "./types.js";
 
 // ─── Re-export provider functions for external use ───────────────
 
 export { isOllamaAvailable } from "./providers/ollama.js";
-export { setClient, resetIntelligence, isAnthropicAvailable } from "./providers/anthropic.js";
+export { setClient, isAnthropicAvailable } from "./providers/anthropic.js";
+
+/** Reset module state (for testing): injected client and once-per-process warnings. */
+export function resetIntelligence(): void {
+  resetAnthropic();
+  warnedConfigSkips.clear();
+}
 export {
   isOpenRouterAvailable,
   callOpenRouterTool,
@@ -65,6 +86,83 @@ export function buildIntelligenceConfig(
   };
 }
 
+// ─── Cascade Diagnostics ─────────────────────────────────────────
+
+/**
+ * Config skips (no key, model not pulled) repeat identically on every call
+ * of a dream run, so each distinct reason is warned once per process.
+ * Runtime failures are warned every time — each one is a real event.
+ */
+const warnedConfigSkips = new Set<string>();
+
+function noteTierFailure(tierErrors: TierError[], failure: TierError): void {
+  tierErrors.push(failure);
+  const line = `[llm] ${failure.tier} tier ${failure.errorClass === "config" ? "skipped" : "failed"} (${failure.errorClass}): ${failure.message}`;
+  if (failure.errorClass === "config") {
+    if (warnedConfigSkips.has(line)) return;
+    warnedConfigSkips.add(line);
+  }
+  console.warn(line);
+}
+
+/** Ollama's tier-1 outcome, or the config reason it was not tried. */
+async function ollamaTier<T>(
+  config: IntelligenceConfig,
+  skipLocal: boolean,
+  run: () => Promise<TierOutcome<T>>,
+): Promise<TierOutcome<T>> {
+  if (skipLocal) {
+    return { failure: { tier: "ollama", errorClass: "config", message: "skipped: caller pinned a cloud tier (skipLocal)" } };
+  }
+  if (!(await isOllamaAvailable(config))) {
+    return {
+      failure: {
+        tier: "ollama",
+        errorClass: "config",
+        message: `skipped: Ollama unavailable at ${config.ollamaUrl} or model ${config.ollamaModel} not pulled`,
+      },
+    };
+  }
+  return run();
+}
+
+/**
+ * Run the Anthropic tier, converting a config skip or a runtime error into
+ * a TierError so the cascade can report it alongside the other tiers.
+ */
+async function anthropicTier<T>(run: () => Promise<GenerationResult<T>>): Promise<TierOutcome<T>> {
+  if (!isAnthropicAvailable()) {
+    return { failure: { tier: "anthropic", errorClass: "config", message: "skipped: ANTHROPIC_API_KEY not set" } };
+  }
+  try {
+    return await run();
+  } catch (err) {
+    const status = typeof err === "object" && err !== null && "status" in err
+      ? (err as { status?: number }).status
+      : undefined;
+    return {
+      failure: { tier: "anthropic", errorClass: classifyHttpStatus(status), message: tierErrorMessage(err) },
+    };
+  }
+}
+
+/**
+ * Walk the tiers in order; return the first result, or throw a CascadeError
+ * carrying every tier's failure once all of them have been exhausted.
+ */
+async function runCascade<T>(tiers: Array<() => Promise<TierOutcome<T>>>): Promise<GenerationResult<T>> {
+  const tierErrors: TierError[] = [];
+  for (const tier of tiers) {
+    const outcome = await tier();
+    if ("failure" in outcome) {
+      noteTierFailure(tierErrors, outcome.failure);
+      continue;
+    }
+    return outcome;
+  }
+  throw new CascadeError(tierErrors);
+}
+
 // ─── Public Generation Functions ─────────────────────────────────
 
 /**
@@ -72,6 +170,8 @@ export function buildIntelligenceConfig(
  *
  * Tier cascade: Ollama (local) → OpenRouter (cheap cloud) → Anthropic API.
  * `options.skipLocal` bypasses the Ollama probe for explicit cloud pins.
+ *
+ * @throws CascadeError naming every tier's failure when no tier succeeds.
  */
 export async function generateStructured<T>(
   systemPrompt: string,
@@ -80,70 +180,29 @@ export async function generateStructured<T>(
   config: IntelligenceConfig,
   options: GenerationOptions = {},
 ): Promise<GenerationResult<T>> {
-  // Tier 1: Try Ollama (local, free)
-  const available = !options.skipLocal && (await isOllamaAvailable(config));
-  if (available) {
-    const localResult = await ollamaGenerateStructured<T>(
-      systemPrompt,
-      userPrompt,
-      schema,
-      config,
-      options,
-    );
-    if (localResult) {
-      return localResult;
-    }
-  }
-
-  // Tier 2: Try OpenRouter (cheap cloud)
-  const openrouterResult = await openrouterGenerateStructured<T>(
-    systemPrompt,
-    userPrompt,
-    schema,
-    config,
-    options,
-  );
-  if (openrouterResult) {
-    return openrouterResult;
-  }
-
-  // Tier 3: Fall back to Anthropic API
-  return apiGenerateStructured<T>(systemPrompt, userPrompt, schema, config, options);
+  return runCascade<T>([
+    () => ollamaTier<T>(config, options.skipLocal ?? false, () =>
+      ollamaGenerateStructured<T>(systemPrompt, userPrompt, schema, config, options)),
+    () => openrouterGenerateStructured<T>(systemPrompt, userPrompt, schema, config, options),
+    () => anthropicTier<T>(() => apiGenerateStructured<T>(systemPrompt, userPrompt, schema, config, options)),
+  ]);
 }
 
 /**
  * Generate a free-text response.
  *
  * Tier cascade: Ollama (local) → OpenRouter (cheap cloud) → Anthropic API.
+ *
+ * @throws CascadeError naming every tier's failure when no tier succeeds.
  */
 export async function generate(
   systemPrompt: string,
   userPrompt: string,
   config: IntelligenceConfig,
 ): Promise<GenerationResult<string>> {
-  // Tier 1: Try Ollama (local, free)
-  const available = await isOllamaAvailable(config);
-  if (available) {
-    const localResult = await ollamaGenerate(
-      systemPrompt,
-      userPrompt,
-      config,
-    );
-    if (localResult) {
-      return localResult;
-    }
-  }
-
-  // Tier 2: Try OpenRouter (cheap cloud)
-  const openrouterResult = await openrouterGenerate(
-    systemPrompt,
-    userPrompt,
-    config,
-  );
-  if (openrouterResult) {
-    return openrouterResult;
-  }
-
-  // Tier 3: Fall back to Anthropic API
-  return apiGenerate(systemPrompt, userPrompt, config);
+  return runCascade<string>([
+    () => ollamaTier<string>(config, false, () => ollamaGenerate(systemPrompt, userPrompt, config)),
+    () => openrouterGenerate(systemPrompt, userPrompt, config),
+    () => anthropicTier<string>(() => apiGenerate(systemPrompt, userPrompt, config)),
+  ]);
 }

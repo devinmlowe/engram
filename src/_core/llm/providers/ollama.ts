@@ -5,8 +5,8 @@
  * and free-text generation against a locally-running Ollama instance.
  */
 
-import type { IntelligenceConfig, GenerationResult, GenerationOptions } from "../types.js";
-import { DEFAULT_MAX_TOKENS } from "../types.js";
+import type { IntelligenceConfig, GenerationOptions, TierOutcome, TierError } from "../types.js";
+import { DEFAULT_MAX_TOKENS, tierErrorMessage } from "../types.js";
 
 // ─── Configuration ───────────────────────────────────────────────
 
@@ -60,13 +60,40 @@ export async function isOllamaAvailable(
   }
 }
 
+// ─── Failure Reporting ───────────────────────────────────────────
+
+function ollamaFailure(err: unknown): { failure: TierError } {
+  const aborted = err instanceof Error && err.name === "AbortError";
+  return {
+    failure: {
+      tier: "ollama",
+      errorClass: aborted ? "transient" : "unknown",
+      message: aborted ? "Ollama request timed out" : `Ollama: ${tierErrorMessage(err)}`,
+    },
+  };
+}
+
+function ollamaHttpFailure(response: Response): { failure: TierError } {
+  return {
+    failure: {
+      tier: "ollama",
+      errorClass: response.status >= 500 ? "transient" : "unknown",
+      message: `Ollama HTTP ${response.status}`,
+    },
+  };
+}
+
+const EMPTY_RESPONSE: { failure: TierError } = {
+  failure: { tier: "ollama", errorClass: "unknown", message: "Ollama returned an empty response" },
+};
+
 // ─── Structured Generation ───────────────────────────────────────
 
 /**
  * Attempt structured generation via Ollama's JSON schema mode.
  *
  * Uses POST /api/generate with `format` set to the JSON schema.
- * Returns null if the call fails for any reason (caller will fallback).
+ * Returns a `failure` outcome if the call fails for any reason (caller will fallback).
  */
 export async function ollamaGenerateStructured<T>(
   systemPrompt: string,
@@ -74,7 +101,7 @@ export async function ollamaGenerateStructured<T>(
   schema: Record<string, unknown>,
   config: IntelligenceConfig,
   options: GenerationOptions = {},
-): Promise<GenerationResult<T> | null> {
+): Promise<TierOutcome<T>> {
   try {
     const startMs = Date.now();
     const controller = new AbortController();
@@ -99,12 +126,12 @@ export async function ollamaGenerateStructured<T>(
     clearTimeout(timeout);
 
     if (!response.ok) {
-      return null;
+      return ollamaHttpFailure(response);
     }
 
     const data = (await response.json()) as { response?: string };
     if (!data.response) {
-      return null;
+      return EMPTY_RESPONSE;
     }
 
     const parsed = JSON.parse(data.response) as T;
@@ -117,8 +144,8 @@ export async function ollamaGenerateStructured<T>(
       model: config.ollamaModel,
       durationMs,
     };
-  } catch {
-    return null;
+  } catch (err) {
+    return ollamaFailure(err);
   }
 }
 
@@ -128,13 +155,13 @@ export async function ollamaGenerateStructured<T>(
  * Attempt free-text generation via Ollama.
  *
  * Uses POST /api/generate without the `format` parameter.
- * Returns null if the call fails for any reason.
+ * Returns a `failure` outcome if the call fails for any reason.
  */
 export async function ollamaGenerate(
   systemPrompt: string,
   userPrompt: string,
   config: IntelligenceConfig,
-): Promise<GenerationResult<string> | null> {
+): Promise<TierOutcome<string>> {
   try {
     const startMs = Date.now();
     const controller = new AbortController();
@@ -158,12 +185,12 @@ export async function ollamaGenerate(
     clearTimeout(timeout);
 
     if (!response.ok) {
-      return null;
+      return ollamaHttpFailure(response);
     }
 
     const data = (await response.json()) as { response?: string };
     if (!data.response) {
-      return null;
+      return EMPTY_RESPONSE;
     }
 
     const durationMs = Date.now() - startMs;
@@ -175,7 +202,7 @@ export async function ollamaGenerate(
       model: config.ollamaModel,
       durationMs,
     };
-  } catch {
-    return null;
+  } catch (err) {
+    return ollamaFailure(err);
   }
 }

@@ -575,6 +575,7 @@ export async function extractFromConversation(
     } catch (err) {
       throw new Error(
         `All extraction tiers failed for conversation ${conversationId}: ${err instanceof Error ? err.message : String(err)}`,
+        { cause: err },
       );
     }
   }

@@ -34,6 +34,7 @@ Unified LLM client factory with tiered provider cascade. Owns execution mechanic
 - **POST-1**: Successful calls shall return `GenerationResult<T>` with source provider, model used, and duration.
 - **POST-2**: Permanent errors (401, 400) shall throw immediately without retry.
 - **POST-3**: Transient errors shall be retried up to 3 times before propagating.
+- **POST-4**: When every tier fails, the module shall throw a `CascadeError` whose `tierErrors` and message name each tier and its reason, distinguishing a configuration skip (`config`: missing key, model not pulled) from a runtime failure. Config skips are warned once per process; runtime failures are warned on every call.
 
 ### Invariants
 

@@ -22,6 +22,7 @@ import type { EngramConfig } from "../_core/types/index.js";
 import { loadConfig } from "../_core/config/index.js";
 import type { ExtractedFact } from "../semantic/types.js";
 import { OpenRouterError } from "../_core/llm/providers/openrouter.js";
+import { CascadeError } from "../_core/llm/index.js";
 import {
   createRun,
   completeRun,
@@ -402,7 +403,7 @@ async function runExtractPhase(
       recordFailure(db, runId, "extract", convId, {
         provider: "auto",
         errorClass: classifyError(err),
-        errorMessage: errorMsg.slice(0, 500),
+        errorMessage: checkpointErrorMessage(err),
       });
       errors++;
       // Skip and continue to next conversation
@@ -452,7 +453,7 @@ async function runExtractPhase(
           recordFailure(db, runId, "extract", item.itemId, {
             provider: "auto",
             errorClass: classifyError(retryErr) === item.errorClass ? "permanent" : classifyError(retryErr),
-            errorMessage: retryMsg.slice(0, 500),
+            errorMessage: checkpointErrorMessage(retryErr),
           });
         }
       }
@@ -955,6 +956,23 @@ function updatePhasesCompleted(
  * Maps HTTP status codes, OpenRouterError classes, and error message patterns
  * to one of: transient, provider, permanent, unknown.
  */
+/**
+ * Error text persisted on an extract checkpoint (500-char column). When the
+ * failure was an LLM cascade — thrown directly or wrapped by the extractor —
+ * the cascade's own message is used so the per-tier reasons (e.g. an
+ * OpenRouter 401) lead the text instead of being pushed past the cutoff by
+ * the wrapper's prefix.
+ */
+function checkpointErrorMessage(err: unknown): string {
+  const cascade = err instanceof CascadeError
+    ? err
+    : err instanceof Error && err.cause instanceof CascadeError
+      ? err.cause
+      : null;
+  const msg = cascade ? cascade.message : err instanceof Error ? err.message : String(err);
+  return msg.slice(0, 500);
+}
+
 function classifyError(err: unknown): "transient" | "provider" | "permanent" | "unknown" {
   if (err instanceof OpenRouterError) {
     return err.errorClass;

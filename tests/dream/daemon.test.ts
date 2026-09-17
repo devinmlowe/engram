@@ -132,6 +132,7 @@ vi.mock("../../src/semantic/decay.js", () => ({
 // ─── Imports (after mocks) ───────────────────────────────────────
 
 import { runDream } from "../../src/dream/daemon.js";
+import { CascadeError } from "../../src/_core/llm/index.js";
 import { syncConversations } from "../../src/episodic/sync.js";
 import { extractFromConversation } from "../../src/semantic/extractor.js";
 import { consolidateFacts } from "../../src/semantic/consolidator.js";
@@ -400,6 +401,37 @@ describe("Error handling", () => {
     expect(checkpoints.length).toBeGreaterThanOrEqual(1);
     expect(checkpoints[0].item_id).toBe("conv-001");
     expect(checkpoints[0].error_class).toBeTruthy();
+  });
+
+  it("extract checkpoint error_message names the failing LLM tier, not only the Anthropic one (#15)", async () => {
+    seedConversation("conv-001");
+
+    const cascade = new CascadeError([
+      { tier: "ollama", errorClass: "config", message: "skipped: Ollama unavailable at http://localhost:11434 or model qwen2.5:7b not pulled" },
+      { tier: "openrouter", errorClass: "provider", message: "OpenRouter API error 401: {\"error\":{\"message\":\"User not found.\",\"code\":401}}" },
+      { tier: "anthropic", errorClass: "config", message: "skipped: ANTHROPIC_API_KEY not set" },
+    ]);
+    // The extractor wraps the cascade with a per-conversation prefix and keeps it as `cause`.
+    vi.mocked(extractFromConversation).mockRejectedValue(
+      new Error(`All extraction tiers failed for conversation conv-001: ${cascade.message}`, { cause: cascade }),
+    );
+
+    await runDream(t.db, t.config);
+
+    const rows = t.db
+      .prepare(
+        "SELECT error_class, error_message FROM dream_checkpoints WHERE phase = 'extract' AND item_id = 'conv-001' AND status = 'error' ORDER BY attempt_count",
+      )
+      .all() as Array<{ error_class: string; error_message: string }>;
+
+    expect(rows.length).toBeGreaterThanOrEqual(1);
+    for (const row of rows) {
+      expect(row.error_message).toMatch(/openrouter \(provider\): OpenRouter API error 401/);
+      expect(row.error_message).toMatch(/anthropic \(config\): skipped: ANTHROPIC_API_KEY not set/);
+      expect(row.error_message.length).toBeLessThanOrEqual(500);
+    }
+    // A rejected key is a provider error — not retried as "unknown".
+    expect(rows[0].error_class).toBe("provider");
   });
 });
 
