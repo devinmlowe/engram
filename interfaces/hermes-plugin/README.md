@@ -50,7 +50,7 @@ optional.
 |-----|-----------|---------|---------|
 | `transport` | both | `http` | `http` or `stdio` |
 | `base_url` | http | `http://127.0.0.1:9907` | MCP server base URL (`/mcp` and `/health` hang off it) |
-| `timeout_secs` | http | `2` | HTTP timeout for health + per-turn recall |
+| `timeout_secs` | http | `4` | HTTP timeout for health + per-turn recall (cold recall ≈ 2 s on a large store; timeouts are logged and shown as a miss) |
 | `prefetch_token_budget` | http | `300` | recall token budget per turn |
 | `repo_path` | stdio | this checkout | engram checkout containing `dist/` |
 | `node_path` | stdio | PATH lookup | node >= 22 binary |
@@ -60,7 +60,7 @@ optional.
 | `idle_kill_s` | stdio | `600` | reap the Node child after idle |
 
 ```json
-{ "base_url": "http://127.0.0.1:9907", "timeout_secs": 2, "prefetch_token_budget": 300 }
+{ "base_url": "http://127.0.0.1:9907", "timeout_secs": 4, "prefetch_token_budget": 300 }
 ```
 
 ## Layout

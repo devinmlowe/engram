@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import logging
 import sys
 import threading
 import time
@@ -160,6 +161,13 @@ def server(monkeypatch):
     return srv
 
 
+@pytest.fixture(autouse=True)
+def no_warmup(plugin, monkeypatch):
+    """initialize() fires a background warm-up recall (#17); keep call
+    sequences deterministic here. The warm-up has its own tests below."""
+    monkeypatch.setattr(plugin, "_WARMUP_ENABLED", False)
+
+
 @pytest.fixture
 def provider(plugin, tmp_path, monkeypatch, server):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
@@ -249,9 +257,105 @@ def test_prefetch_reuses_session(provider, server):
 
 
 def test_prefetch_exception_returns_empty(provider, server):
-    server.fail["recall"] = urllib.error.URLError("timed out")
+    server.fail["recall"] = urllib.error.URLError("connection refused")
     assert provider.prefetch("anything") == ""
     assert provider.recall_status() is None
+
+
+# ---------------------------------------------------------------------------
+# #17 — timeouts are not silent; warm-up on initialize
+# ---------------------------------------------------------------------------
+
+def test_prefetch_timeout_warns_once_and_recall_status_marks_the_miss(provider, server, caplog):
+    server.fail["recall"] = TimeoutError("timed out")
+    with caplog.at_level(logging.WARNING, logger=provider.__class__.__module__):
+        assert provider.prefetch("first") == ""
+        assert provider.prefetch("second") == ""
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING and "timed out" in r.getMessage()]
+    assert len(warnings) == 1                                   # rate-limited across consecutive misses
+    assert "4.0s" in warnings[0].getMessage() and "engram.json" in warnings[0].getMessage()
+
+    status = provider.recall_status()
+    assert status is not None and status.count == 0
+    assert "timed out" in status.provider_label and "no memory this turn" in status.provider_label
+    assert status.glyph != "🧠"                                  # visibly not a recall
+
+    # urlopen-wrapped timeouts count too, and a later success clears the miss.
+    server.fail["recall"] = urllib.error.URLError(TimeoutError("timed out"))
+    assert provider.prefetch("third") == "" and provider.recall_status().count == 0
+    del server.fail["recall"]
+    assert "port 9907" in provider.prefetch("engram HTTP MCP server")
+    assert provider.recall_status().provider_label == "Engram"
+
+    # a non-timeout failure is still quiet (debug only) and reports no status
+    server.fail["recall"] = urllib.error.URLError("connection refused")
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger=provider.__class__.__module__):
+        assert provider.prefetch("x") == ""
+    assert not [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert provider.recall_status() is None
+
+
+def test_prefetch_timeout_warning_repeats_after_the_interval(plugin, provider, server, caplog, monkeypatch):
+    monkeypatch.setattr(plugin, "_TIMEOUT_WARN_INTERVAL_SECS", 0.0)
+    server.fail["recall"] = TimeoutError("timed out")
+    with caplog.at_level(logging.WARNING, logger=plugin.__name__):
+        provider.prefetch("a")
+        provider.prefetch("b")
+    assert len([r for r in caplog.records if "timed out" in r.getMessage()]) == 2
+
+
+def test_save_config_defaults_write_timeout_4s(plugin, provider, tmp_path):
+    defaults = {f["key"]: f["default"] for f in provider.get_config_schema()}
+    provider.save_config(defaults, str(tmp_path))
+    data = json.loads((tmp_path / "engram.json").read_text())
+    assert data["timeout_secs"] == 4.0
+    assert plugin._load_config(str(tmp_path))["timeout_secs"] == 4.0
+    assert plugin.DEFAULT_TIMEOUT_SECS == 4.0
+
+
+def _init_with_warmup(plugin, server, tmp_path, monkeypatch, **kwargs):
+    monkeypatch.setattr(plugin, "_WARMUP_ENABLED", True)
+    p = plugin.EngramMemoryProvider()
+    p.initialize("s", hermes_home=str(tmp_path), **kwargs)
+    if p._warmup_thread is not None:
+        p._warmup_thread.join(timeout=5)
+        assert not p._warmup_thread.is_alive()
+    return p
+
+
+def test_initialize_issues_one_cheap_non_reinforcing_warmup_recall(plugin, server, tmp_path, monkeypatch):
+    p = _init_with_warmup(plugin, server, tmp_path, monkeypatch)
+    recalls = [c[4] for c in server.calls if c[2] == "tools/call"]
+    assert recalls == [{"query": "session warm-up", "limit": 1, "budget": 100, "reinforce": False}]
+    assert p.recall_status() is None                            # warm-up is not a turn
+    assert p.unavailable_reason() == ""
+    assert "port 9907" in p.prefetch("engram HTTP MCP server")   # session reused
+    assert [c[2] for c in server.calls].count("initialize") == 1
+    p.shutdown()
+
+
+@pytest.mark.parametrize("failure", [TimeoutError("timed out"), urllib.error.URLError("refused"), 500])
+def test_initialize_survives_a_failing_or_slow_warmup(plugin, server, tmp_path, monkeypatch, failure, caplog):
+    server.fail["recall"] = failure
+    with caplog.at_level(logging.WARNING, logger=plugin.__name__):
+        p = _init_with_warmup(plugin, server, tmp_path, monkeypatch)
+    assert p.unavailable_reason() == ""
+    assert p._consecutive_failures == 0                         # never feeds the breaker
+    assert p.recall_status() is None
+    assert not [r for r in caplog.records if r.levelno == logging.WARNING]
+    del server.fail["recall"]
+    assert "port 9907" in p.prefetch("engram HTTP MCP server")
+    p.shutdown()
+
+
+def test_no_warmup_when_prefetch_is_off_for_the_context_or_daemon_is_down(plugin, server, tmp_path, monkeypatch):
+    p = _init_with_warmup(plugin, server, tmp_path, monkeypatch, agent_context="cron")
+    assert p._warmup_thread is None and [c[2] for c in server.calls if c[2] == "tools/call"] == []
+    server.calls.clear()
+    server.fail["health"] = urllib.error.URLError("connection refused")
+    q = _init_with_warmup(plugin, server, tmp_path, monkeypatch)
+    assert q._warmup_thread is None and [c[:2] for c in server.calls] == [("GET", "/health")]
 
 
 def test_prefetch_http_error_returns_empty_and_resets_session(provider, server):
@@ -375,7 +479,7 @@ def test_system_prompt_block_is_byte_stable(provider, server):
 
 def test_config_defaults_and_schema(plugin, provider):
     cfg = plugin._load_config()
-    assert cfg == {"base_url": "http://127.0.0.1:9907", "timeout_secs": 2.0,
+    assert cfg == {"base_url": "http://127.0.0.1:9907", "timeout_secs": 4.0,
                    "prefetch_token_budget": 300, "sync_turns": True, "mirror_memory_writes": True,
                    "prefetch_contexts": ["primary"]}
     keys = [f["key"] for f in provider.get_config_schema()]

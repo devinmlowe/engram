@@ -64,7 +64,9 @@ Configuration (non-secret, lives in ``$HERMES_HOME/engram.json``, written by
 
   transport              — "http" (default) or "stdio"
   base_url               — MCP server base URL   (default http://127.0.0.1:9907)
-  timeout_secs           — HTTP timeout for health + prefetch (default 2)
+  timeout_secs           — HTTP timeout for health + prefetch (default 4; cold recall on a
+                           ~17K-memory store measured ~2 s, warm 0.7–1.1 s; Hermes caps
+                           external prefetch at 8 s)
   prefetch_token_budget  — recall token budget per turn (default 300)
   sync_turns             — post each turn to ingest_turn (default true)
   mirror_memory_writes   — mirror MEMORY.md/USER.md adds+replaces to remember (default true)
@@ -110,7 +112,7 @@ TRANSPORTS = (TRANSPORT_HTTP, TRANSPORT_STDIO)
 DEFAULT_TRANSPORT = TRANSPORT_HTTP
 
 DEFAULT_BASE_URL = "http://127.0.0.1:9907"
-DEFAULT_TIMEOUT_SECS = 2.0
+DEFAULT_TIMEOUT_SECS = 4.0
 DEFAULT_PREFETCH_TOKEN_BUDGET = 300
 DEFAULT_SYNC_TURNS = True
 DEFAULT_MIRROR_MEMORY_WRITES = True
@@ -123,6 +125,14 @@ _SYNC_QUEUE_MAX = 16
 _SYNC_DRAIN_POLL_SECS = 0.25
 # shutdown() waits at most this long for queued turns to post before closing.
 _SHUTDOWN_DRAIN_SECS = 2.0
+# prefetch timeouts are logged at WARNING at most once per this interval
+# (each miss is still visible in recall_status()).
+_TIMEOUT_WARN_INTERVAL_SECS = 600.0
+# initialize(): one best-effort recall so the daemon's embedder/reranker are
+# hot before the first real turn. Reinforcement off — it must not touch FSRS.
+_WARMUP_RECALL_ARGS = {"query": "session warm-up", "limit": 1, "budget": 100, "reinforce": False}
+# Tests flip this off so call sequences after initialize() stay deterministic.
+_WARMUP_ENABLED = True
 # Tool input/output embedded in an ingest_turn payload are clipped client-side
 # (the server clips to 1000 chars anyway; this keeps the POST small).
 _TOOL_IO_MAX_CHARS = 1000
@@ -415,6 +425,23 @@ class EngramMcpError(RuntimeError):
     """Raised for transport, protocol, or tool-level failures."""
 
 
+def _is_timeout(exc: BaseException) -> bool:
+    """True when *exc* (or what it wraps) is a socket/urlopen timeout."""
+    seen = 0
+    cur: Optional[BaseException] = exc
+    while cur is not None and seen < 5:
+        if isinstance(cur, TimeoutError):
+            return True
+        reason = getattr(cur, "reason", None)
+        if isinstance(reason, TimeoutError):
+            return True
+        if "timed out" in str(cur).lower():
+            return True
+        cur = cur.__cause__ or cur.__context__
+        seen += 1
+    return False
+
+
 def _http(method: str, url: str, body: Optional[bytes], headers: Dict[str, str],
           timeout: float):
     """One HTTP round-trip. Returns (status, header_getter, body_bytes).
@@ -598,6 +625,9 @@ class EngramMemoryProvider(MemoryProvider):
         self._client: Optional[EngramMcpClient] = None
         self._unavailable_reason = ""
         self._last_recall_count: Optional[int] = None
+        self._last_recall_timed_out = False
+        self._last_timeout_warn_at = 0.0
+        self._warmup_thread: Optional[threading.Thread] = None
         # Circuit breaker state
         self._consecutive_failures = 0
         self._breaker_open_until = 0.0
@@ -717,6 +747,23 @@ class EngramMemoryProvider(MemoryProvider):
         self._writes_enabled = context == PRIMARY_CONTEXT          # stdio transport's rule
         self._prefetch_enabled = context in self._config["prefetch_contexts"]
         self._probe_health()
+        if _WARMUP_ENABLED and self._prefetch_enabled and not self._unavailable_reason:
+            self._start_warmup()
+
+    def _start_warmup(self) -> None:
+        """One cheap recall in the background so the embedder/reranker are hot
+        before the first real turn. Best effort: errors and timeouts are
+        swallowed and never touch the breaker or recall_status()."""
+        client, timeout = self._get_client(), self._cfg()["timeout_secs"]
+
+        def _warm() -> None:
+            try:
+                client.call_tool("recall", dict(_WARMUP_RECALL_ARGS), timeout)
+            except Exception as exc:
+                logger.debug("engram warm-up recall skipped: %s", exc)
+
+        self._warmup_thread = spawn_context_thread(_warm, name=f"engram-warmup-{self._profile}", daemon=True)
+        self._warmup_thread.start()
 
     def shutdown(self) -> None:
         """Drain queued turns (bounded by ``_SHUTDOWN_DRAIN_SECS``), stop the
@@ -738,8 +785,10 @@ class EngramMemoryProvider(MemoryProvider):
 
     def prefetch(self, query: str, *, session_id: str = "") -> str:
         """Recall context for this turn. Any failure returns "" — memory must
-        never break a conversation turn."""
+        never break a conversation turn. A timeout is the one failure that is
+        not silent: it is logged (rate-limited) and shown by recall_status()."""
         self._last_recall_count = None
+        self._last_recall_timed_out = False
         if not self._prefetch_enabled or not query or not query.strip() or self._is_breaker_open():
             return ""
         cfg = self._cfg()
@@ -752,7 +801,10 @@ class EngramMemoryProvider(MemoryProvider):
             self._record_success()
         except Exception as exc:
             self._record_failure()
-            logger.debug("engram prefetch failed: %s", exc)
+            if _is_timeout(exc):
+                self._note_timeout(cfg["timeout_secs"])
+            else:
+                logger.debug("engram prefetch failed: %s", exc)
             return ""
         text = (text or "").strip()
         if not text:
@@ -764,7 +816,27 @@ class EngramMemoryProvider(MemoryProvider):
         self._last_recall_count = count
         return text
 
+    def _note_timeout(self, timeout: float) -> None:
+        self._last_recall_timed_out = True
+        now = time.monotonic()
+        if now - self._last_timeout_warn_at < _TIMEOUT_WARN_INTERVAL_SECS:
+            return
+        self._last_timeout_warn_at = now
+        logger.warning(
+            "engram recall timed out after %.1fs; this turn ran without memory context "
+            "(further timeouts logged at most every %d min). Raise timeout_secs in %s "
+            "or check the daemon's load.",
+            timeout, int(_TIMEOUT_WARN_INTERVAL_SECS // 60), CONFIG_FILENAME,
+        )
+
     def recall_status(self) -> Optional[RecallStatus]:
+        if self._last_recall_timed_out:
+            # RecallStatus has no miss field; the label carries it (count 0
+            # renders generically in Hermes' indicator line).
+            return RecallStatus(
+                provider_label=f"Engram (recall timed out after {self._cfg()['timeout_secs']:g}s; no memory this turn)",
+                count=0, glyph="⚠️",
+            )
         if self._last_recall_count is None:
             return None
         return RecallStatus(provider_label="Engram", count=self._last_recall_count)
