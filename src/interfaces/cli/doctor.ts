@@ -7,13 +7,16 @@
  * `fail` check, never an exception. Only `required` checks at level `fail`
  * make the report not-ok (and the CLI exit non-zero).
  */
-import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { request as httpRequest } from "node:http";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import type Database from "better-sqlite3";
 import { loadConfig } from "../../_core/config/index.js";
 import { resolveModelCacheDir } from "../../_core/embeddings/model-cache.js";
 import { buildIntelligenceConfig, resolveOllamaModel } from "../../_core/llm/index.js";
 import type { EngramConfig } from "../../_core/types/index.js";
+import { parseMcpPort } from "../mcp/port.js";
 
 export type DoctorLevel = "ok" | "warn" | "fail";
 
@@ -26,6 +29,8 @@ export const DOCTOR_CHECK_NAMES = [
   "transformers.js",
   "model cache",
   "ollama",
+  "data dir",
+  "mcp daemon",
 ] as const;
 export type DoctorCheckName = (typeof DOCTOR_CHECK_NAMES)[number];
 
@@ -285,6 +290,100 @@ async function checkOllama(config: EngramConfig): Promise<DoctorCheck> {
   }
 }
 
+/** The pre-0.2.0 default data directory on every platform (`~/.local/share/engram`). */
+export function legacyDataDir(home: string = homedir()): string {
+  return join(home, ".local", "share", "engram");
+}
+
+/**
+ * Which database this process will open, and whether a *different* populated
+ * database exists at the legacy default. 0.2.0 moved the default data dir
+ * (Windows: `%LOCALAPPDATA%\engram`; Linux/macOS: `$XDG_DATA_HOME/engram`), so
+ * an upgraded install can silently start a new empty database (#13, #44).
+ */
+export function checkDataDir(config: EngramConfig, legacyDir: string = legacyDataDir()): DoctorCheck {
+  const name = "data dir";
+  const dbPath = config.dbPath;
+  const dbExists = existsSync(dbPath);
+  const dbSize = dbExists ? statSync(dbPath).size : 0;
+  const source = process.env.ENGRAM_DB_PATH?.trim()
+    ? "ENGRAM_DB_PATH"
+    : process.env.ENGRAM_DATA_DIR?.trim()
+      ? "ENGRAM_DATA_DIR"
+      : "default";
+  const legacyDb = join(legacyDir, "engram.db");
+  const legacyPopulated =
+    resolve(legacyDb) !== resolve(dbPath) && existsSync(legacyDb) && statSync(legacyDb).size > 0;
+  const where = `${config.dataDir} (db: ${dbPath}, ${dbExists ? `${(dbSize / 1024 / 1024).toFixed(1)} MB` : "not created yet"}; from ${source})`;
+  if (legacyPopulated && (!dbExists || dbSize === 0)) {
+    return {
+      name, level: "warn", required: false,
+      detail: `${where} — but a populated legacy database exists at ${legacyDb}; this process would start EMPTY. Set ENGRAM_DATA_DIR=${legacyDir} or move the data dir (run \`engram update --plan\`)`,
+    };
+  }
+  if (legacyPopulated) {
+    return {
+      name, level: "warn", required: false,
+      detail: `${where}; a second database also exists at ${legacyDb} — two installs, or a leftover from an upgrade (run \`engram update --plan\`)`,
+    };
+  }
+  return { name, level: "ok", required: false, detail: where };
+}
+
+export interface McpHealthProbe {
+  status: number;
+  body: string;
+}
+
+/** GET http://127.0.0.1:port/health with a short timeout. Rejects on any transport error. */
+export function probeMcpHealth(port: number, timeoutMs = 1500): Promise<McpHealthProbe> {
+  return new Promise((resolvePromise, reject) => {
+    const req = httpRequest(
+      { host: "127.0.0.1", port, path: "/health", method: "GET", timeout: timeoutMs },
+      (res) => {
+        let body = "";
+        res.setEncoding("utf8");
+        res.on("data", (chunk: string) => { body += chunk; });
+        res.on("end", () => resolvePromise({ status: res.statusCode ?? 0, body }));
+      },
+    );
+    req.on("timeout", () => { req.destroy(new Error(`timed out after ${timeoutMs}ms`)); });
+    req.on("error", reject);
+    req.end();
+  });
+}
+
+/**
+ * Is the HTTP MCP daemon (what the Hermes plugin and other HTTP clients talk
+ * to) answering on its loopback port? Never required: stdio-only installs
+ * have no daemon. The port follows ENGRAM_MCP_PORT like the server does (#28).
+ */
+export async function checkMcpDaemon(
+  port: number = parseMcpPort(process.env.ENGRAM_MCP_PORT),
+  probe: (port: number) => Promise<McpHealthProbe> = probeMcpHealth,
+): Promise<DoctorCheck> {
+  const name = "mcp daemon";
+  const url = `http://127.0.0.1:${port}/health`;
+  const hint =
+    "install it with scripts/install-mcp-daemon.sh (Windows: scripts\\install-mcp-daemon.ps1) or run `node dist/interfaces/mcp/server.js --http`; stdio clients (.mcp.json) are unaffected";
+  try {
+    const { status, body } = await probe(port);
+    let parsed: { status?: unknown; workers?: { size?: unknown; ready?: unknown } } = {};
+    try { parsed = JSON.parse(body); } catch { /* non-JSON body handled below */ }
+    if (status === 200 && parsed.status === "ok") {
+      const w = parsed.workers;
+      const workers = w && typeof w.size === "number" ? ` (workers: ${w.size}${typeof w.ready === "number" ? `, ready: ${w.ready}` : ""})` : "";
+      return { name, level: "ok", required: false, detail: `answering at ${url}${workers}` };
+    }
+    return {
+      name, level: "warn", required: false,
+      detail: `something answers at ${url} but not like the engram daemon (HTTP ${status}${parsed.status ? `, status ${String(parsed.status)}` : ""}) — another process on the port? see scripts/install-mcp-daemon.sh status`,
+    };
+  } catch (err) {
+    return { name, level: "warn", required: false, detail: `not answering at ${url} (${errMsg(err)}) — ${hint}` };
+  }
+}
+
 /** Run every probe. Never throws; failures are reported as checks. */
 export async function runDoctor(
   config: EngramConfig = loadConfig(),
@@ -292,6 +391,7 @@ export async function runDoctor(
   const [betterSqlite, sqliteVec] = await checkNativeSqlite();
   const [transformers, modelCache] = await checkTransformersAndCache(config);
   const ollama = await checkOllama(config);
+  const mcpDaemon = await checkMcpDaemon();
   const checks: DoctorCheck[] = [
     checkNode(),
     checkPlatform(),
@@ -300,6 +400,8 @@ export async function runDoctor(
     transformers,
     modelCache,
     ollama,
+    checkDataDir(config),
+    mcpDaemon,
   ];
   return {
     node: process.version,

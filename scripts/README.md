@@ -19,6 +19,8 @@ Installation, maintenance, and operational scripts. Bash remains the macOS/Linux
 - [install-daemon.ps1](./install-daemon.ps1) — Install and control the Windows Task Scheduler nightly dream task (`install|uninstall|status|run-now`)
 - [install-visualizer.sh](./install-visualizer.sh) — Install web visualizer launchd agent
 - [install-visualizer.ps1](./install-visualizer.ps1) — Install and control the Windows Task Scheduler visualizer task
+- [install-mcp-daemon.sh](./install-mcp-daemon.sh) — Install and control the MCP HTTP daemon: launchd agent `com.engram.mcp` on macOS, systemd user unit `engram-mcp.service` on Linux (`install|uninstall|start|stop|restart|status`); every verb waits on `/health`; `status` prints the effective data dir and warns about a second legacy database; `install` retires a hand-written `ai.hermes.engram-mcp` agent (issue #28)
+- [run-mcp-daemon.sh](./run-mcp-daemon.sh) — MCP daemon launcher the plist/unit runs: sources the service environment file, then execs `node dist/interfaces/mcp/server.js --http --port ${ENGRAM_MCP_PORT:-9907}`
 - [run-visualizer.ps1](./run-visualizer.ps1) — Run the compiled visualizer with explicit Windows paths and restart-on-child-exit behavior
 - [install-mcp-daemon.ps1](./install-mcp-daemon.ps1) — Install and control the Windows Task Scheduler MCP HTTP daemon task (`install|uninstall|start|stop|restart|status`); status reports both Task Scheduler state and `/health`; reaps orphaned processes on stop/uninstall
 - [run-mcp-daemon.ps1](./run-mcp-daemon.ps1) — Run the compiled MCP server (`--http --port`) with explicit Windows paths and bounded restart-on-failure
@@ -36,8 +38,8 @@ and `npm`; the hooks and launchers need only `node`.
 ## Service environment file (API keys)
 
 The dream daemon reads secrets from `${XDG_CONFIG_HOME:-~/.config}/engram/env`, a mode-600
-shell-syntax file that `run-dream.sh` sources before it starts node. `install-daemon.sh install`
-creates it with a commented template (seeded from `ANTHROPIC_API_KEY` / `OPENROUTER_API_KEY` /
+shell-syntax file that `run-dream.sh` (and `run-mcp-daemon.sh`) source before they start node.
+`install-daemon.sh install` (or `install-mcp-daemon.sh install`) creates it with a commented template (seeded from `ANTHROPIC_API_KEY` / `OPENROUTER_API_KEY` /
 `ENGRAM_LOCAL_MODEL` when those are set in your shell) and never overwrites an existing file.
 Any variable from the README Configuration table can go there. Override the location with
 `ENGRAM_ENV_FILE`.

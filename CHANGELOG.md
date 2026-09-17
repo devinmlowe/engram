@@ -7,7 +7,11 @@ All notable changes to engram are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- macOS/Linux supervision for the MCP HTTP daemon: `scripts/install-mcp-daemon.sh` (`install|uninstall|start|stop|restart|status`, every verb waits on `/health`) renders `launchd/com.engram.mcp.plist` or `systemd/engram-mcp.service`, both running the new `scripts/run-mcp-daemon.sh` launcher, which sources `~/.config/engram/env`. The resolved data directory is rendered into the service so daemon and CLI share one database; `status` warns about a second legacy database. `install` retires a hand-written `ai.hermes.engram-mcp` agent on the same port. The server honours `ENGRAM_MCP_PORT` when `--port` is absent, and `engram doctor` gains an `mcp daemon` check that probes `/health` (#28).
+
 ### Fixed
+- `scripts/install-daemon.sh` no longer requires `launchctl` on Linux, so its systemd branch is reachable (#28).
 - Hermes plugin circuit breaker is truly half-open: after the cooldown exactly one probe call is allowed, and a failing probe re-opens the breaker with the failure count intact, so parked turns are no longer posted one by one and dropped while the daemon is still down. A queued turn that fails on transport is now kept and retried; only a turn the live server rejects (`isError` / JSON-RPC error, new `EngramMcpRejected`) is dropped (#41).
 
 ## [0.3.0] - 2026-09-17

@@ -15,11 +15,17 @@ import {
   DOCTOR_CHECK_NAMES,
   MIN_NODE_MAJOR,
   PREBUILT_TARGETS,
+  checkDataDir,
+  checkMcpDaemon,
   checkModelCache,
   formatDoctorReport,
+  legacyDataDir,
+  probeMcpHealth,
   runDoctor,
   type DoctorReport,
 } from "../../../src/interfaces/cli/doctor.js";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { loadConfig } from "../../../src/_core/config/index.js";
 import {
   applyModelCacheDir,
@@ -229,5 +235,111 @@ describe("engram doctor CLI", () => {
     const parsed = JSON.parse(run("--json")) as DoctorReport;
     expect(parsed.checks.map((c) => c.name)).toEqual([...DOCTOR_CHECK_NAMES]);
     expect(parsed.platform).toBe(`${process.platform}-${process.arch}`);
+  });
+});
+
+describe("data dir check (issues #13, #44)", () => {
+  function populated(dir: string): string {
+    mkdirSync(dir, { recursive: true });
+    const db = join(dir, "engram.db");
+    writeFileSync(db, "not really sqlite but populated");
+    return db;
+  }
+
+  it("reports the effective data dir and db path", () => {
+    const root = mkdtempSync(join(tmpdir(), "engram-doctor-dd-"));
+    try {
+      const cfg = loadConfig({ dataDir: join(root, "data") });
+      const c = checkDataDir(cfg, join(root, "legacy"));
+      expect(c.name).toBe("data dir");
+      expect(c.level).toBe("ok");
+      expect(c.required).toBe(false);
+      expect(c.detail).toContain(join(root, "data"));
+      expect(c.detail).toContain("not created yet");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("warns when this process would start empty while a populated legacy database exists", () => {
+    const root = mkdtempSync(join(tmpdir(), "engram-doctor-dd-"));
+    try {
+      const legacyDb = populated(join(root, "legacy"));
+      const cfg = loadConfig({ dataDir: join(root, "new") });
+      const c = checkDataDir(cfg, join(root, "legacy"));
+      expect(c.level).toBe("warn");
+      expect(c.detail).toContain("would start EMPTY");
+      expect(c.detail).toContain(legacyDb);
+      expect(c.detail).toContain("engram update --plan");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("warns about a second database when both are populated, and is ok when they are the same file", () => {
+    const root = mkdtempSync(join(tmpdir(), "engram-doctor-dd-"));
+    try {
+      populated(join(root, "legacy"));
+      populated(join(root, "new"));
+      const both = checkDataDir(loadConfig({ dataDir: join(root, "new") }), join(root, "legacy"));
+      expect(both.level).toBe("warn");
+      expect(both.detail).toContain("second database");
+      const same = checkDataDir(loadConfig({ dataDir: join(root, "legacy") }), join(root, "legacy"));
+      expect(same.level).toBe("ok");
+      expect(same.detail).toContain("MB");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("legacyDataDir is ~/.local/share/engram on every platform", () => {
+    expect(legacyDataDir("/home/x")).toBe(join("/home/x", ".local", "share", "engram"));
+  });
+});
+
+describe("mcp daemon check (issue #28)", () => {
+  it("is ok with worker counts when /health answers like the daemon", async () => {
+    const c = await checkMcpDaemon(9907, async () => ({
+      status: 200, body: JSON.stringify({ status: "ok", workers: { size: 2, ready: 2, busy: 0 } }),
+    }));
+    expect(c.name).toBe("mcp daemon");
+    expect(c.level).toBe("ok");
+    expect(c.required).toBe(false);
+    expect(c.detail).toContain("http://127.0.0.1:9907/health");
+    expect(c.detail).toContain("workers: 2, ready: 2");
+  });
+
+  it("warns (never fails) when nothing answers, naming the installer", async () => {
+    const c = await checkMcpDaemon(9907, async () => { throw new Error("ECONNREFUSED"); });
+    expect(c.level).toBe("warn");
+    expect(c.detail).toContain("not answering");
+    expect(c.detail).toContain("install-mcp-daemon.sh");
+  });
+
+  it("warns when something else holds the port", async () => {
+    const c = await checkMcpDaemon(9907, async () => ({ status: 404, body: "<html>nope</html>" }));
+    expect(c.level).toBe("warn");
+    expect(c.detail).toContain("not like the engram daemon");
+    expect(c.detail).toContain("HTTP 404");
+  });
+
+  it("the real probe talks HTTP to 127.0.0.1 and rejects on a closed port", async () => {
+    const srv = createServer((req, res) => {
+      expect(req.url).toBe("/health");
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ status: "ok", workers: { size: 0 } }));
+    });
+    await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
+    const port = (srv.address() as AddressInfo).port;
+    try {
+      const live = await checkMcpDaemon(port);
+      expect(live.level).toBe("ok");
+      expect(live.detail).toContain("workers: 0");
+    } finally {
+      await new Promise<void>((r) => srv.close(() => r()));
+    }
+    await expect(probeMcpHealth(port, 500)).rejects.toThrow();
+    const dead = await checkMcpDaemon(port);
+    expect(dead.level).toBe("warn");
   });
 });

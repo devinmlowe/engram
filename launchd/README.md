@@ -16,8 +16,9 @@ macOS Launch Agent plist files for scheduled and persistent engram services. Ins
 
 - [com.engram.dreamstate.plist](./com.engram.dreamstate.plist) — Nightly dream consolidation (2 AM schedule). Runs `scripts/run-dream.sh --daemon`, which sources `~/.config/engram/env` for API keys; the plist itself carries no secrets.
 - [com.engram.visualizer.plist](./com.engram.visualizer.plist) — Web visualization server (keep-alive)
+- [com.engram.mcp.plist](./com.engram.mcp.plist) — MCP HTTP daemon on 127.0.0.1:9907 (keep-alive, issue #28). Runs `scripts/run-mcp-daemon.sh`, which sources `~/.config/engram/env` for `ENGRAM_*` overrides; the installer also renders `ENGRAM_DATA_DIR` (`__DATA_DIR__`) so the daemon and CLI share one database
 
-Both files are templates: `__ENGRAM_DIR__`, `__NODE_BIN__`, and `__LOG_DIR__` are substituted by the install scripts, and [tests/deployment/paths.test.ts](../tests/deployment/paths.test.ts) enforces that no personal paths or API keys are committed here.
+All files are templates: `__ENGRAM_DIR__`, `__NODE_BIN__`, `__LOG_DIR__` (and `__DATA_DIR__` for the MCP agent) are substituted by the install scripts, and [tests/deployment/paths.test.ts](../tests/deployment/paths.test.ts) enforces that no personal paths or API keys are committed here.
 
 ## See Also
 
@@ -25,6 +26,7 @@ Both files are templates: `__ENGRAM_DIR__`, `__NODE_BIN__`, and `__LOG_DIR__` ar
 - [scripts/install-daemon.ps1](../scripts/install-daemon.ps1) — Windows sibling for the nightly dream task using Task Scheduler
 - [systemd/](../systemd/) — Linux sibling templates (`engram-dream.service` + `engram-dream.timer`) rendered from the same placeholders
 - [scripts/install-visualizer.sh](../scripts/install-visualizer.sh) — Installs visualizer service
+- [scripts/install-mcp-daemon.sh](../scripts/install-mcp-daemon.sh) — Installs the MCP HTTP daemon (launchd on macOS, systemd user unit on Linux)
 - [scripts/install-visualizer.ps1](../scripts/install-visualizer.ps1) — Windows sibling adapter using Task Scheduler
 - [docs/lessons-learned-launchd-env.md](../docs/lessons-learned-launchd-env.md) — Environment pitfalls
 - [docs/research/daemon-launchd-patterns.md](../docs/research/daemon-launchd-patterns.md) — Design research

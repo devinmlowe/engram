@@ -16,7 +16,7 @@ Command-line interface for direct human interaction with engram. Built on Comman
 ## Contains
 
 - `index.ts` — All 22 CLI commands: `init`, `sync`, `search`, `remember`, `extract`, `dream`, `reflect`, `explore`, `entities`, `relationships`, `stats`, `health`, `doctor`, `migrate`, `validate`, `backfill-event-ts`, `commitments`, `commitment-done`, `commitments-extract`, `export`, `import`, `mcp`
-- `doctor.ts` — Runtime diagnostics behind `engram doctor` (node, platform/arch, native modules, model cache)
+- `doctor.ts` — Runtime diagnostics behind `engram doctor` (node, platform/arch, native modules, model cache, effective data dir + legacy-split warning, MCP daemon /health)
 - `transfer.ts` — `engram export` / `engram import`: JSONL v1 transfer of memories, entities, relationships, and commitments
 
 ## Export / Import

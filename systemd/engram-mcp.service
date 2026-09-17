@@ -1,0 +1,43 @@
+# Engram MCP HTTP daemon — systemd *user* service template (issue #28).
+#
+# Rendered by scripts/install-mcp-daemon.sh on Linux: the placeholders below are
+# substituted with the resolved checkout, node binary, data and log directories,
+# then the unit is written to ${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/.
+# Do not install this file verbatim; unresolved placeholders will fail.
+#
+# Mirrors launchd/com.engram.mcp.plist: same launcher, same environment file,
+# same log files. The server binds 127.0.0.1 only (no authentication).
+
+[Unit]
+Description=Engram MCP HTTP daemon (Streamable HTTP on 127.0.0.1)
+Documentation=https://github.com/devinmlowe/engram
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=__ENGRAM_DIR__
+# The launcher sources the env file below, then execs NODE_BIN on
+# dist/interfaces/mcp/server.js --http --port ${ENGRAM_MCP_PORT:-9907}.
+ExecStart=/bin/bash __ENGRAM_DIR__/scripts/run-mcp-daemon.sh
+
+Environment=NODE_ENV=production
+Environment=NODE_BIN=__NODE_BIN__
+# The data directory the installer was run with, so the daemon and the CLI can
+# never silently open different databases (issues #13, #44).
+Environment=ENGRAM_DATA_DIR=__DATA_DIR__
+# ENGRAM_* overrides (data dir, model cache, worker count, port) live in the same
+# service environment file the dream unit uses: ${XDG_CONFIG_HOME:-~/.config}/engram/env
+# (mode 600). %E is systemd's XDG_CONFIG_HOME specifier; "-" keeps the file optional.
+EnvironmentFile=-%E/engram/env
+
+StandardOutput=append:__LOG_DIR__/mcp.log
+StandardError=append:__LOG_DIR__/mcp-error.log
+
+Restart=always
+RestartSec=5
+# Bounded restart storm, same spirit as the Windows runner (5 in 600 s).
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Install]
+WantedBy=default.target
