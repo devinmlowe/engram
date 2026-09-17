@@ -12,6 +12,8 @@ from __future__ import annotations
 import importlib.util
 import json
 import sys
+import threading
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -93,8 +95,15 @@ class FakeServer:
         self.health = health if health is not None else {"status": "ok"}
         self.recall_text = recall_text
         self.remember_text = remember_text
-        self.fail = fail or {}          # {"health"|"initialize"|"recall"|"remember": Exception|int}
+        self.ingest_text = json.dumps({"conversationId": "c1", "created": True})
+        self.fail = fail or {}          # {"health"|"initialize"|"recall"|"remember"|"ingest_turn": Exception|int}
         self.calls = []                 # (method, path, rpc_method, session, args)
+        self.threads = []               # thread name per recorded call
+        self.gate = None                # threading.Event: ingest_turn blocks until set
+        self.ingest_started = threading.Event()
+
+    def ingest_calls(self):
+        return [c[4] for c in self.calls if c[2] == "tools/call" and c[4] and "turn_index" in c[4]]
 
     def __call__(self, req, timeout=None):
         path = req.full_url[len(BASE):]
@@ -104,6 +113,7 @@ class FakeServer:
         session = req.headers.get("Mcp-session-id") or req.headers.get("mcp-session-id")
         self.calls.append((req.get_method(), path, rpc_method, session,
                            (rpc.get("params") or {}).get("arguments")))
+        self.threads.append(threading.current_thread().name)
 
         def _maybe_fail(key):
             f = self.fail.get(key)
@@ -128,8 +138,12 @@ class FakeServer:
         if rpc_method == "tools/call":
             assert session == SESSION, "tools/call sent without the session id"
             name = rpc["params"]["name"]
+            if name == "ingest_turn":
+                self.ingest_started.set()
+                if self.gate is not None:
+                    assert self.gate.wait(timeout=5), "ingest gate never released"
             _maybe_fail(name)
-            text = self.recall_text if name == "recall" else self.remember_text
+            text = {"recall": self.recall_text, "ingest_turn": self.ingest_text}.get(name, self.remember_text)
             return _Resp(200, _sse({"jsonrpc": "2.0", "id": rpc["id"],
                                     "result": {"content": [{"type": "text", "text": text}]}}),
                          {"content-type": "text/event-stream"})
@@ -148,7 +162,8 @@ def provider(plugin, tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     p = plugin.EngramMemoryProvider()
     p.initialize("sess-1", hermes_home=str(tmp_path), platform="cli")
-    return p
+    yield p
+    p.shutdown()
 
 
 # ---------------------------------------------------------------------------
@@ -326,9 +341,10 @@ def test_system_prompt_block_is_byte_stable(provider, server):
 
 def test_config_defaults_and_schema(plugin, provider):
     cfg = plugin._load_config()
-    assert cfg == {"base_url": "http://127.0.0.1:9907", "timeout_secs": 2.0, "prefetch_token_budget": 300}
+    assert cfg == {"base_url": "http://127.0.0.1:9907", "timeout_secs": 2.0,
+                   "prefetch_token_budget": 300, "sync_turns": True}
     keys = [f["key"] for f in provider.get_config_schema()]
-    assert keys == ["base_url", "timeout_secs", "prefetch_token_budget"]
+    assert keys == ["base_url", "timeout_secs", "prefetch_token_budget", "sync_turns"]
     assert not any(f.get("secret") for f in provider.get_config_schema())
 
 
@@ -353,11 +369,164 @@ def test_backup_paths_expanded(provider):
 
 
 def test_noop_hooks(provider, server):
-    assert provider.sync_turn("u", "a") is None
     assert provider.on_session_end([]) is None
     assert provider.on_memory_write("add", "memory", "x") is None
     assert provider.on_pre_compress([]) == ""
     assert server.calls == []
+
+
+# ---------------------------------------------------------------------------
+# sync_turn (W3): bounded queue + context-bound drain posting ingest_turn
+# ---------------------------------------------------------------------------
+
+TOOL_MESSAGES = [
+    {"role": "user", "content": "earlier question"},
+    {"role": "assistant", "content": "earlier answer", "tool_calls": [
+        {"id": "old", "type": "function", "function": {"name": "stale", "arguments": "{}"}}]},
+    {"role": "tool", "tool_call_id": "old", "content": "ignored"},
+    {"role": "user", "content": [{"type": "text", "text": "what time is it"}]},
+    {"role": "assistant", "content": None, "tool_calls": [
+        {"id": "c1", "type": "function", "function": {"name": "clock", "arguments": "{\"tz\": \"UTC\"}"}}]},
+    {"role": "tool", "tool_call_id": "c1", "content": "12:00"},
+    {"role": "assistant", "content": "It is noon"},
+]
+
+
+def _wait_for(pred, timeout=5.0):
+    deadline = time.monotonic() + timeout
+    while not pred():
+        assert time.monotonic() < deadline, "condition not met in time"
+        time.sleep(0.01)
+
+
+def test_sync_turn_enqueues_fast_without_network_on_caller_thread(provider, server):
+    server.gate = threading.Event()
+    t0 = time.perf_counter()
+    for i in range(5):
+        provider.sync_turn(f"u{i}", f"a{i}", session_id="s1")
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    assert elapsed_ms < 10, f"sync_turn took {elapsed_ms:.1f} ms"
+    server.gate.set()
+    provider.shutdown()
+    assert len(server.ingest_calls()) == 5
+    # Every request before shutdown's session DELETE came from the drain thread, never the caller.
+    assert all(name.startswith("engram-sync")
+               for name, call in zip(server.threads, server.calls) if call[0] != "DELETE")
+
+
+def test_drain_posts_ingest_turn_with_scope_session_and_text(plugin, server, tmp_path):
+    home = tmp_path / "profiles" / "career"
+    home.mkdir(parents=True)
+    p = plugin.EngramMemoryProvider()
+    p.initialize("init-sess", hermes_home=str(home), platform="cli")
+    p.sync_turn("what time is it", "It is noon", session_id="conv-42",
+                messages=TOOL_MESSAGES, turn_author={"id": "u", "name": "devin", "is_bot": False})
+    p.shutdown()
+    (args,) = server.ingest_calls()
+    assert args["scope"] == "hermes:career"
+    assert args["session_id"] == "conv-42"
+    assert args["turn_index"] == 0
+    assert args["user_text"] == "what time is it"
+    assert args["assistant_text"] == "It is noon"
+    assert args["source"] == "hermes"
+    assert args["timestamp"].endswith("+00:00")
+    assert args["tool_calls"] == [{"name": "clock", "input": {"tz": "UTC"}, "output": "12:00"}]
+    assert server.calls[-1][0] == "DELETE"           # shutdown closed the MCP session after draining
+
+
+def test_scope_prefers_agent_identity_then_default_home(plugin, server, tmp_path):
+    p = plugin.EngramMemoryProvider()
+    p.initialize("s", hermes_home=str(tmp_path), agent_identity="ops")
+    p.sync_turn("u", "a", session_id="x")
+    p.shutdown()
+    assert server.ingest_calls()[-1]["scope"] == "hermes:ops"
+
+    q = plugin.EngramMemoryProvider()
+    q.initialize("fallback-sess", hermes_home=str(tmp_path))   # not a profile home -> default
+    q.sync_turn("u", "a")                                      # no session_id -> initialize's
+    q.shutdown()
+    last = server.ingest_calls()[-1]
+    assert last["scope"] == "hermes:default"
+    assert last["session_id"] == "fallback-sess"
+    assert "tool_calls" not in last
+
+
+def test_turn_index_increments_per_session(provider, server):
+    for _ in range(3):
+        provider.sync_turn("u", "a", session_id="A")
+    provider.sync_turn("u", "a", session_id="B")
+    provider.sync_turn("u", "a", session_id="A")
+    provider.shutdown()
+    seen = [(c["session_id"], c["turn_index"]) for c in server.ingest_calls()]
+    assert seen == [("A", 0), ("A", 1), ("A", 2), ("B", 0), ("A", 3)]
+
+
+def test_overflow_drops_oldest_and_never_blocks(provider, server, plugin):
+    server.gate = threading.Event()
+    provider.sync_turn("u0", "a0", session_id="s")
+    assert server.ingest_started.wait(timeout=5)       # turn 0 is in flight, blocked in urlopen
+    t0 = time.perf_counter()
+    for i in range(1, 40):
+        provider.sync_turn(f"u{i}", f"a{i}", session_id="s")
+    assert (time.perf_counter() - t0) < 0.05
+    assert provider._sync_queue.qsize() == plugin._SYNC_QUEUE_MAX == 16
+    server.gate.set()
+    provider.shutdown()
+    posted = [c["turn_index"] for c in server.ingest_calls()]
+    assert posted == [0] + list(range(24, 40))
+
+
+def test_breaker_open_skips_posting_without_error(provider, server, plugin):
+    server.fail["recall"] = urllib.error.URLError("down")
+    for _ in range(plugin._BREAKER_THRESHOLD):
+        provider.prefetch("q")
+    n = len(server.calls)
+    provider.sync_turn("u", "a", session_id="s")
+    provider.shutdown()
+    assert len(server.calls) == n
+    assert server.ingest_calls() == []
+
+
+def test_ingest_failures_count_toward_breaker(provider, server, plugin):
+    server.fail["ingest_turn"] = urllib.error.URLError("down")
+    for _ in range(plugin._BREAKER_THRESHOLD):
+        provider.sync_turn("u", "a", session_id="s")
+    provider.shutdown()
+    assert provider._is_breaker_open()
+    assert len(server.ingest_calls()) == plugin._BREAKER_THRESHOLD
+
+
+def test_sync_turns_disabled_is_noop(plugin, server, tmp_path):
+    (tmp_path / "engram.json").write_text(json.dumps({"sync_turns": False}))
+    p = plugin.EngramMemoryProvider()
+    p.initialize("s", hermes_home=str(tmp_path))
+    p.sync_turn("u", "a", session_id="s")
+    assert p._sync_thread is None
+    p.shutdown()
+    assert server.calls == []
+
+
+def test_shutdown_drains_pending_within_deadline(provider, server):
+    server.gate = threading.Event()
+    for i in range(5):
+        provider.sync_turn(f"u{i}", f"a{i}", session_id="s")
+    server.gate.set()
+    t0 = time.perf_counter()
+    provider.shutdown()
+    assert (time.perf_counter() - t0) < 3.0
+    assert [c["turn_index"] for c in server.ingest_calls()] == [0, 1, 2, 3, 4]
+    assert provider._sync_queue.empty()
+
+
+def test_shutdown_deadline_bounds_a_stuck_server(provider, server, plugin, monkeypatch):
+    monkeypatch.setattr(plugin, "_SHUTDOWN_DRAIN_SECS", 0.3)
+    server.gate = threading.Event()                    # never released: post hangs until urlopen timeout
+    provider.sync_turn("u", "a", session_id="s")
+    assert server.ingest_started.wait(timeout=5)
+    t0 = time.perf_counter()
+    provider.shutdown()
+    assert (time.perf_counter() - t0) < 1.5
+    server.gate.set()
 
 
 def test_register_collects_provider(plugin):
