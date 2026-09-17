@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { createTestDb, type TestDb } from "../helpers.js";
-import { initDatabase, CONVERSATIONS_SCOPE_MIGRATION } from "../../src/_core/db/schema.js";
+import { initDatabase, CONVERSATIONS_SCOPE_MIGRATION, EXCHANGES_AUTHOR_MIGRATION } from "../../src/_core/db/schema.js";
 import { loadConfig } from "../../src/_core/config/index.js";
 import { upsertConversation, getConversation } from "../../src/episodic/store.js";
 
@@ -50,6 +50,59 @@ describe("conversations scope column (W2)", () => {
     // Claude Code sync path passes no scope → column default
     upsertConversation(t.db, { id: "c-global", project: "engram", exchangeCount: 1 });
     expect(getConversation(t.db, "c-global")?.scope).toBe("global");
+  });
+});
+
+describe("exchanges author_json column (#18)", () => {
+  let t: TestDb;
+
+  beforeEach(() => {
+    t = createTestDb();
+  });
+
+  afterEach(() => {
+    t.cleanup();
+  });
+
+  it("fresh DB has a nullable author_json column and records the checkpoint", () => {
+    const cols = (t.db.prepare("PRAGMA table_info(exchanges)").all() as Array<{ name: string }>).map((c) => c.name);
+    expect(cols).toContain("author_json");
+    const row = t.db
+      .prepare("SELECT 1 AS ok FROM schema_migrations WHERE name = ?")
+      .get(EXCHANGES_AUTHOR_MIGRATION) as { ok: number } | undefined;
+    expect(row?.ok).toBe(1);
+  });
+
+  it("adds the column to a legacy exchanges table, leaving existing rows NULL", () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "engram-exch-author-mig-"));
+    try {
+      const dbPath = join(tmpDir, "engram.db");
+      const legacy = new Database(dbPath);
+      legacy.exec(`
+        CREATE TABLE exchanges (
+          id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, project TEXT NOT NULL, timestamp TEXT NOT NULL,
+          user_message TEXT, assistant_message TEXT, session_id TEXT, cwd TEXT, git_branch TEXT,
+          model_version TEXT, exchange_index INTEGER, token_estimate INTEGER,
+          created_at INTEGER DEFAULT (unixepoch()), last_accessed INTEGER
+        );
+        INSERT INTO exchanges (id, conversation_id, project, timestamp) VALUES ('legacy-1', 'c', 'p', '2026-01-01T00:00:00Z');
+      `);
+      legacy.close();
+
+      const db = initDatabase(loadConfig({ dataDir: tmpDir, dbPath }));
+      try {
+        const row = db.prepare("SELECT author_json FROM exchanges WHERE id = 'legacy-1'").get() as { author_json: string | null };
+        expect(row.author_json).toBeNull();
+        const n = (
+          db.prepare("SELECT COUNT(*) AS n FROM schema_migrations WHERE name = ?").get(EXCHANGES_AUTHOR_MIGRATION) as { n: number }
+        ).n;
+        expect(n).toBe(1);
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });
 

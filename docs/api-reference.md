@@ -212,6 +212,7 @@ Record one user/assistant turn of an external agent conversation (e.g. a Hermes 
 | `tool_calls` | object[] | no | — | `{name, input?, output?}` per tool invoked during the turn (input/output truncated to 1000 chars) |
 | `timestamp` | string | no | now | ISO-8601 time of the turn |
 | `source` | string | no | `"hermes"` | Platform label; part of the conversation key |
+| `author` | object | no | — | `{id?, name?, is_bot?}` — who authored the user side of the turn; stored verbatim as JSON on the exchange (`exchanges.author_json`), absent → NULL |
 
 **Idempotency:** the conversation id is `<source>:<session_id>` and the exchange id `<source>:<session_id>:<turn_index>`; re-sending the same key updates the turn in place, so a restarted client re-sending indexes 0… of a resumed session never duplicates rows. Gaps in `turn_index` are tolerated.
 

@@ -36,6 +36,12 @@ export interface IngestTurnToolCall {
   output?: unknown;
 }
 
+export interface IngestTurnAuthor {
+  id?: string;
+  name?: string;
+  is_bot?: boolean;
+}
+
 export interface IngestTurnInput {
   sessionId: string;
   turnIndex: number;
@@ -47,6 +53,8 @@ export interface IngestTurnInput {
   timestamp?: string;
   /** Platform/source label; defaults to "hermes". Part of the conversation key. */
   source?: string;
+  /** Who authored the user side of the turn; stored verbatim as JSON on the exchange. */
+  author?: IngestTurnAuthor;
 }
 
 export interface IngestTurnResult {
@@ -139,6 +147,7 @@ export async function ingestTurn(
     exchangeIndex: input.turnIndex,
     tokenEstimate: Math.ceil((input.userText.length + input.assistantText.length) / 4),
     createdAt: existing?.createdAt ?? now,
+    authorJson: input.author === undefined ? undefined : JSON.stringify(input.author),
   };
 
   const exchangeCount = db.transaction(() => {

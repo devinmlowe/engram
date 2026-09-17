@@ -162,6 +162,14 @@ const IngestTurnInputSchema = z.object({
     .refine((v) => !Number.isNaN(new Date(v).getTime()), "timestamp must be an ISO-8601 date string")
     .optional(),
   source: z.string().trim().min(1, "source must be a non-empty label").optional(),
+  author: z
+    .object({
+      id: z.string().optional(),
+      name: z.string().optional(),
+      is_bot: z.boolean().optional(),
+    })
+    .strict()
+    .optional(),
 });
 
 const RecallInputSchema = z.object({
@@ -1107,7 +1115,8 @@ export const MCP_TOOL_DEFINITIONS: Tool[] = [
       "searchable and feeds the nightly dream extraction. Idempotent: " +
       "re-sending the same session_id + turn_index updates the turn in " +
       "place. The conversation carries the given tenant scope, and every " +
-      "memory later extracted from it inherits that scope.",
+      "memory later extracted from it inherits that scope. An optional " +
+      "author {id, name, is_bot} is stored on the turn.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1157,6 +1166,16 @@ export const MCP_TOOL_DEFINITIONS: Tool[] = [
           minLength: 1,
           default: DEFAULT_TURN_SOURCE,
           description: "Platform/source label; part of the conversation key (default \"hermes\")",
+        },
+        author: {
+          type: "object",
+          description: "Who authored the user side of the turn (stored as JSON on the exchange)",
+          properties: {
+            id: { type: "string", description: "Platform user id" },
+            name: { type: "string", description: "Display name" },
+            is_bot: { type: "boolean", description: "True when the author is a bot" },
+          },
+          additionalProperties: false,
         },
       },
       required: ["session_id", "turn_index", "scope", "user_text", "assistant_text"],
@@ -1658,6 +1677,7 @@ export async function handleToolCall(name: string, args: unknown): Promise<ToolR
         toolCalls: params.tool_calls,
         timestamp: params.timestamp,
         source: params.source,
+        author: params.author,
       });
 
       return {

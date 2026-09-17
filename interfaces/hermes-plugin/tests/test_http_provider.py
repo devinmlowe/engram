@@ -573,6 +573,7 @@ def test_drain_posts_ingest_turn_with_scope_session_and_text(plugin, server, tmp
     assert args["source"] == "hermes"
     assert args["timestamp"].endswith("+00:00")
     assert args["tool_calls"] == [{"name": "clock", "input": {"tz": "UTC"}, "output": "12:00"}]
+    assert args["author"] == {"id": "u", "name": "devin", "is_bot": False}     # #18
     assert server.calls[-1][0] == "DELETE"           # shutdown closed the MCP session after draining
 
 
@@ -591,6 +592,16 @@ def test_scope_prefers_agent_identity_then_default_home(plugin, server, tmp_path
     assert last["scope"] == "hermes:default"
     assert last["session_id"] == "fallback-sess"
     assert "tool_calls" not in last
+    assert "author" not in last                       # no turn_author -> no author key (#18)
+
+
+def test_turn_author_maps_is_bot_faithfully_and_drops_unknown_keys(provider, server):
+    provider.sync_turn("u", "a", session_id="s", turn_author={"id": 42, "name": "bot", "is_bot": True, "handle": "x"})
+    provider.sync_turn("u", "a", session_id="s", turn_author={"name": "anon"})
+    provider.sync_turn("u", "a", session_id="s", turn_author={})
+    provider.shutdown()
+    authors = [c.get("author") for c in server.ingest_calls()]
+    assert authors == [{"id": "42", "name": "bot", "is_bot": True}, {"name": "anon"}, None]
 
 
 def test_turn_index_increments_per_session(provider, server):
@@ -618,14 +629,46 @@ def test_overflow_drops_oldest_and_never_blocks(provider, server, plugin):
     assert posted == [0] + list(range(24, 40))
 
 
-def test_breaker_open_skips_posting_without_error(provider, server, plugin):
+def test_breaker_open_parks_turn_without_posting(provider, server, plugin):
     server.fail["recall"] = urllib.error.URLError("down")
     for _ in range(plugin._BREAKER_THRESHOLD):
         provider.prefetch("q")
     n = len(server.calls)
     provider.sync_turn("u", "a", session_id="s")
-    provider.shutdown()
+    t0 = time.perf_counter()
+    provider.shutdown()                               # parked items are not waited on
+    assert (time.perf_counter() - t0) < 1.0
     assert len(server.calls) == n
+    assert server.ingest_calls() == []
+    assert provider._sync_queue.qsize() == 1           # parked, not dropped (#18)
+    assert provider.unavailable_reason() == ""         # nothing overflowed
+
+
+def test_breaker_cooldown_lapse_posts_the_parked_turn(provider, server, plugin, monkeypatch):
+    monkeypatch.setattr(plugin, "_BREAKER_COOLDOWN_SECS", 0.05)
+    server.fail["recall"] = urllib.error.URLError("down")
+    for _ in range(plugin._BREAKER_THRESHOLD):
+        provider.prefetch("q")
+    assert provider._is_breaker_open()
+    provider.sync_turn("parked", "a", session_id="s", turn_author={"id": "u", "name": "d", "is_bot": False})
+    _wait_for(lambda: server.ingest_calls(), timeout=5.0)
+    (args,) = server.ingest_calls()
+    assert args["user_text"] == "parked" and args["turn_index"] == 0
+    assert args["author"] == {"id": "u", "name": "d", "is_bot": False}
+    assert not provider._is_breaker_open()
+    provider.shutdown()
+    assert server.ingest_calls() == [args]             # posted exactly once
+
+
+def test_breaker_open_overflow_drops_are_counted_in_unavailable_reason(provider, server, plugin):
+    server.fail["recall"] = urllib.error.URLError("down")
+    for _ in range(plugin._BREAKER_THRESHOLD):
+        provider.prefetch("q")
+    for i in range(plugin._SYNC_QUEUE_MAX + 3):
+        provider.sync_turn(f"u{i}", f"a{i}", session_id="s")
+    assert provider._sync_queue.qsize() == plugin._SYNC_QUEUE_MAX
+    assert "3 queued turn(s) dropped while the circuit breaker was open" in provider.unavailable_reason()
+    provider.shutdown()
     assert server.ingest_calls() == []
 
 

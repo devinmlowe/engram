@@ -17,6 +17,8 @@ export interface Exchange {
   tokenEstimate: number;
   createdAt: number;
   lastAccessed?: number;
+  /** JSON `{id?, name?, is_bot?}` of who authored the user side (ingest_turn only). */
+  authorJson?: string;
 }
 
 export interface ToolCall {

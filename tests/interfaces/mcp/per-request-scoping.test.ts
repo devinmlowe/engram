@@ -186,4 +186,18 @@ describe("per-request scope params are advertised in the tool schemas", () => {
   it("recall_drill is untouched (drills an already-scoped session result)", () => {
     expect(properties("recall_drill").scope).toBeUndefined();
   });
+
+  it("ingest_turn declares an optional closed author {id, name, is_bot} object (#18)", () => {
+    const props = properties("ingest_turn");
+    expect(props.author).toMatchObject({
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        id: { type: "string" },
+        name: { type: "string" },
+        is_bot: { type: "boolean" },
+      },
+    });
+    expect((props.author as { required?: string[] }).required).toBeUndefined();
+  });
 });
