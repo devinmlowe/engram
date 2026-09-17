@@ -7,6 +7,7 @@ import {
   isCheckpointed,
   recordCheckpoint,
   recordFailure,
+  getRetryableItems,
   getCheckpointedItems,
   getUnprocessedConversations,
   prioritizeConversations,
@@ -512,6 +513,40 @@ describe("Progress Tracking", () => {
 
       expect(progress.processed).toBe(2);
       expect(progress.total).toBe(3);
+    });
+
+    it("recordFailure updates the existing error row for the same run/phase/item instead of inserting a second (#24)", () => {
+      const runId = createRun(t.db);
+      insertConversation("conv-001");
+
+      recordFailure(t.db, runId, "extract", "conv-001", {
+        provider: "auto",
+        errorClass: "transient",
+        errorMessage: "first",
+      });
+      recordFailure(t.db, runId, "extract", "conv-001", {
+        provider: "auto",
+        errorClass: "permanent",
+        errorMessage: "second",
+      });
+
+      const rows = t.db
+        .prepare(
+          "SELECT status, error_class, error_message, attempt_count FROM dream_checkpoints WHERE run_id = ? AND phase = 'extract' AND item_id = 'conv-001'",
+        )
+        .all(runId) as Array<Record<string, unknown>>;
+      expect(rows).toEqual([
+        { status: "error", error_class: "permanent", error_message: "second", attempt_count: 2 },
+      ]);
+      expect(getPhaseProgress(t.db, runId, "extract").errors).toBe(1);
+
+      // A different run keeps its own row.
+      const run2 = createRun(t.db);
+      recordFailure(t.db, run2, "extract", "conv-001", { errorClass: "unknown" });
+      expect(getRetryableItems(t.db, run2, "extract")).toEqual([
+        { itemId: "conv-001", errorClass: "unknown", provider: null, attempts: 1 },
+      ]);
+      expect(getRetryableItems(t.db, runId, "extract")[0]?.attempts).toBe(2);
     });
 
     it("counts errors from error status checkpoints", () => {

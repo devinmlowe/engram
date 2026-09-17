@@ -433,6 +433,52 @@ describe("Error handling", () => {
     // A rejected key is a provider error — not retried as "unknown".
     expect(rows[0].error_class).toBe("provider");
   });
+
+  it("an always-failing cascade leaves exactly one extract error row per conversation per run, with attempt_count counting the retry (#24)", async () => {
+    seedConversation("conv-001");
+    seedConversation("conv-002");
+
+    // Transient class → the retry pass re-attempts, and the second failure
+    // used to insert a second row (unknown/transient + permanent).
+    const cascade = new CascadeError([
+      { tier: "ollama", errorClass: "config", message: "skipped: Ollama not reachable at http://localhost:11434" },
+      { tier: "openrouter", errorClass: "transient", message: "OpenRouter request timed out after 3 attempts" },
+      { tier: "anthropic", errorClass: "config", message: "skipped: ANTHROPIC_API_KEY not set" },
+    ]);
+    vi.mocked(extractFromConversation).mockRejectedValue(
+      new Error(`All extraction tiers failed for conversation: ${cascade.message}`, { cause: cascade }),
+    );
+
+    const rowsFor = (convId: string) =>
+      t.db
+        .prepare(
+          "SELECT run_id, status, error_class, attempt_count FROM dream_checkpoints WHERE phase = 'extract' AND item_id = ? ORDER BY processed_at",
+        )
+        .all(convId) as Array<{ run_id: string; status: string; error_class: string; attempt_count: number }>;
+
+    const first = await runDream(t.db, t.config);
+    expect(first.phases.find((p) => p.phase === "extract")!.errors).toBe(2);
+
+    for (const convId of ["conv-001", "conv-002"]) {
+      const rows = rowsFor(convId);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].status).toBe("error");
+      // initial attempt + the retry pass, on the same row
+      expect(rows[0].attempt_count).toBe(2);
+      // same class on retry → escalated to permanent, once
+      expect(rows[0].error_class).toBe("permanent");
+    }
+
+    // A second run is a new run_id: it gets its own single row and never
+    // duplicates the first run's.
+    await runDream(t.db, t.config);
+    for (const convId of ["conv-001", "conv-002"]) {
+      const rows = rowsFor(convId);
+      expect(rows).toHaveLength(2);
+      expect(new Set(rows.map((r) => r.run_id)).size).toBe(2);
+      expect(rows.map((r) => r.attempt_count)).toEqual([2, 2]);
+    }
+  });
 });
 
 // ─── Phase Runners ───────────────────────────────────────────────

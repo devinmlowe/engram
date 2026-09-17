@@ -808,12 +808,9 @@ async function processConversation(
     dateRange: `${firstTimestamp?.split("T")[0] ?? "unknown"} to ${lastTimestamp?.split("T")[0] ?? "unknown"}`,
   };
 
-  // Determine extraction tier
-  const tier = config.dream.localModel ? "auto" : "auto";
-
-  // 1. Semantic fact extraction
+  // 1. Semantic fact extraction — "auto" lets the LLM cascade pick the tier
   const extractionResult = await extractFromConversation(
-    conversationId, exchanges, metadata, { tier },
+    conversationId, exchanges, metadata, { tier: "auto" },
   );
   const facts: ExtractedFact[] = extractionResult.facts;
 
