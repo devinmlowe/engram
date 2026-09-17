@@ -394,10 +394,18 @@ describe("extractEntities (mocked API)", () => {
     resetGraphExtractor();
     savedOpenRouterKey = process.env.OPENROUTER_API_KEY;
     delete process.env.OPENROUTER_API_KEY;
+    // Isolate from a developer's live Ollama: the cascade probes it first
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("network disabled in test");
+      }),
+    );
   });
 
   afterEach(() => {
     resetGraphExtractor();
+    vi.unstubAllGlobals();
     if (savedOpenRouterKey !== undefined) {
       process.env.OPENROUTER_API_KEY = savedOpenRouterKey;
     }
@@ -482,10 +490,18 @@ describe("extractRelationships (mocked API)", () => {
     resetGraphExtractor();
     savedOpenRouterKey = process.env.OPENROUTER_API_KEY;
     delete process.env.OPENROUTER_API_KEY;
+    // Isolate from a developer's live Ollama: the cascade probes it first
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("network disabled in test");
+      }),
+    );
   });
 
   afterEach(() => {
     resetGraphExtractor();
+    vi.unstubAllGlobals();
     if (savedOpenRouterKey !== undefined) {
       process.env.OPENROUTER_API_KEY = savedOpenRouterKey;
     }

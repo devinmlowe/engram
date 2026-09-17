@@ -5,7 +5,8 @@
  * and free-text generation against a locally-running Ollama instance.
  */
 
-import type { IntelligenceConfig, GenerationResult } from "../types.js";
+import type { IntelligenceConfig, GenerationResult, GenerationOptions } from "../types.js";
+import { DEFAULT_MAX_TOKENS } from "../types.js";
 
 // ─── Configuration ───────────────────────────────────────────────
 
@@ -72,6 +73,7 @@ export async function ollamaGenerateStructured<T>(
   userPrompt: string,
   schema: Record<string, unknown>,
   config: IntelligenceConfig,
+  options: GenerationOptions = {},
 ): Promise<GenerationResult<T> | null> {
   try {
     const startMs = Date.now();
@@ -90,7 +92,7 @@ export async function ollamaGenerateStructured<T>(
         prompt: userPrompt,
         format: schema,
         stream: false,
-        options: { num_predict: 4096 },
+        options: { num_predict: options.maxTokens ?? DEFAULT_MAX_TOKENS },
       }),
       signal: controller.signal,
     });
@@ -111,6 +113,7 @@ export async function ollamaGenerateStructured<T>(
     return {
       result: parsed,
       source: "local",
+      provider: "ollama",
       model: config.ollamaModel,
       durationMs,
     };
@@ -148,7 +151,7 @@ export async function ollamaGenerate(
         system: systemPrompt,
         prompt: userPrompt,
         stream: false,
-        options: { num_predict: 4096 },
+        options: { num_predict: DEFAULT_MAX_TOKENS },
       }),
       signal: controller.signal,
     });
@@ -168,6 +171,7 @@ export async function ollamaGenerate(
     return {
       result: data.response,
       source: "local",
+      provider: "ollama",
       model: config.ollamaModel,
       durationMs,
     };

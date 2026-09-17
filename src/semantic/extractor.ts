@@ -1,9 +1,11 @@
 /**
  * Three-tier semantic extraction pipeline.
  *
- * Extracts structured facts from Claude Code conversations using LLM
- * tool_use. Supports chunking for long conversations, tiered model
- * fallback (Haiku -> Sonnet), and optional reflexion for completeness.
+ * Extracts structured facts from Claude Code conversations through the
+ * _core/llm factory, so the configured cascade (Ollama → OpenRouter →
+ * Anthropic primary → Anthropic fallback) applies to every chunk (SPEC.md
+ * INV-3). Supports chunking for long conversations and optional reflexion
+ * for completeness.
  *
  * Phase 3, Stream C implementation.
  */
@@ -11,9 +13,20 @@
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import Anthropic from "@anthropic-ai/sdk";
+import type Anthropic from "@anthropic-ai/sdk";
 import type { MemoryType } from "./types.js";
-import { isOpenRouterAvailable, callOpenRouterTool } from "../_core/llm/providers/openrouter.js";
+import {
+  buildIntelligenceConfig,
+  generateStructured,
+  isAnthropicAvailable,
+  isOllamaAvailable,
+  isOpenRouterAvailable,
+  resetIntelligence,
+  setClient as setIntelligenceClient,
+  type GenerationResult,
+  type IntelligenceConfig,
+} from "../_core/llm/index.js";
+import { loadConfig } from "../_core/config/index.js";
 import type {
   ExtractedFact,
   ExtractionResult,
@@ -26,8 +39,6 @@ import type {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-let client: Anthropic | null = null;
-
 const VALID_MEMORY_TYPES: ReadonlySet<MemoryType> = new Set([
   "preference",
   "decision",
@@ -37,8 +48,6 @@ const VALID_MEMORY_TYPES: ReadonlySet<MemoryType> = new Set([
   "convention",
 ]);
 
-const DEFAULT_MODEL = "claude-haiku-4-5-20251001";
-const FALLBACK_MODEL = "claude-sonnet-4-6";
 const DEFAULT_CONFIG: ExtractionConfig = {
   tier: "auto",
   reflexionEnabled: false,
@@ -50,52 +59,53 @@ const DEFAULT_CONFIG: ExtractionConfig = {
 
 // ─── Tool Schema ────────────────────────────────────────────────
 
-const EXTRACT_MEMORIES_TOOL: Anthropic.Tool = {
-  name: "extract_memories",
-  description: "Extract structured facts from conversation",
-  input_schema: {
-    type: "object" as const,
-    properties: {
-      facts: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            type: {
-              type: "string",
-              enum: [
-                "preference",
-                "decision",
-                "pattern",
-                "fact",
-                "solution",
-                "convention",
-              ],
-            },
-            content: { type: "string" },
-            context: { type: "string" },
-            importance: { type: "number", minimum: 0, maximum: 1 },
-            source_exchange_indexes: {
-              type: "array",
-              items: { type: "integer" },
-            },
-            extraction_basis: {
-              type: "string",
-              enum: ["explicit", "inferred", "observed"],
-              description: "How this fact was derived: explicit (user stated), inferred (from behavior), observed (factual from conversation)",
-            },
+const EXTRACT_MEMORIES_TOOL_NAME = "extract_memories";
+const EXTRACT_MEMORIES_TOOL_DESCRIPTION = "Extract structured facts from conversation";
+const EXTRACTION_SYSTEM_PROMPT =
+  "You are a memory extraction system. Extract facts from the conversation.";
+
+/** JSON schema for the structured extraction result (factory adds `type: object`). */
+const EXTRACT_MEMORIES_SCHEMA: Record<string, unknown> = {
+  properties: {
+    facts: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          type: {
+            type: "string",
+            enum: [
+              "preference",
+              "decision",
+              "pattern",
+              "fact",
+              "solution",
+              "convention",
+            ],
           },
-          required: [
-            "type",
-            "content",
-            "importance",
-            "source_exchange_indexes",
-          ],
+          content: { type: "string" },
+          context: { type: "string" },
+          importance: { type: "number", minimum: 0, maximum: 1 },
+          source_exchange_indexes: {
+            type: "array",
+            items: { type: "integer" },
+          },
+          extraction_basis: {
+            type: "string",
+            enum: ["explicit", "inferred", "observed"],
+            description: "How this fact was derived: explicit (user stated), inferred (from behavior), observed (factual from conversation)",
+          },
         },
+        required: [
+          "type",
+          "content",
+          "importance",
+          "source_exchange_indexes",
+        ],
       },
     },
-    required: ["facts"],
   },
+  required: ["facts"],
 };
 
 // ─── Exchange Type ──────────────────────────────────────────────
@@ -144,41 +154,38 @@ export interface ConversationMetadata {
 // ─── Initialization ─────────────────────────────────────────────
 
 /**
- * Initialize the extraction clients.
+ * Verify that at least one tier of the LLM cascade can serve extraction.
  *
- * Creates the Anthropic client if an API key is available.
- * OpenRouter uses fetch directly and only needs OPENROUTER_API_KEY at call time.
- * At least one provider (Anthropic or OpenRouter) must be configured.
+ * Credentials and clients are owned by the _core/llm factory; this only
+ * checks reachability so callers fail fast with a clear message. Per
+ * SPEC.md INV-3 a reachable local Ollama model is sufficient on its own.
  */
-export async function initExtractor(anthropicApiKey?: string): Promise<void> {
-  if (client) return;
-
-  const apiKey = anthropicApiKey ?? process.env.ANTHROPIC_API_KEY;
-  if (apiKey) {
-    client = new Anthropic({ apiKey });
-  }
-
-  // Verify at least one extraction provider is available
-  if (!client && !isOpenRouterAvailable()) {
-    throw new Error(
-      "No extraction provider configured. " +
-        "Set ANTHROPIC_API_KEY or OPENROUTER_API_KEY environment variable.",
-    );
-  }
+export async function initExtractor(): Promise<void> {
+  if (isAnthropicAvailable() || isOpenRouterAvailable()) return;
+  if (await isOllamaAvailable(intelligenceConfig())) return;
+  throw new Error(
+    "No extraction provider configured. " +
+      "Set ANTHROPIC_API_KEY or OPENROUTER_API_KEY, or run Ollama with the configured local model.",
+  );
 }
 
 /**
- * Reset the extractor state (for testing).
+ * Reset the extractor state (for testing). Clears the factory's client.
  */
 export function resetExtractor(): void {
-  client = null;
+  resetIntelligence();
 }
 
 /**
- * Set a custom Anthropic client (for testing with mocks).
+ * Inject a custom Anthropic client into the factory (for testing with mocks).
  */
 export function setClient(customClient: Anthropic): void {
-  client = customClient;
+  setIntelligenceClient(customClient);
+}
+
+/** Cascade configuration derived from the application config. */
+function intelligenceConfig(): IntelligenceConfig {
+  return buildIntelligenceConfig(loadConfig());
 }
 
 // ─── Prompt Building ────────────────────────────────────────────
@@ -326,88 +333,99 @@ export function parseExtractionResponse(
   return facts;
 }
 
-// ─── LLM Extraction Call ────────────────────────────────────────
+// ─── Tier Planning ──────────────────────────────────────────────
 
-/**
- * Call OpenRouter for fact extraction via the shared client.
- */
-async function callOpenRouterExtraction(
-  prompt: string,
-): Promise<{ facts: ExtractedFact[]; model: string }> {
-  const { result, model } = await callOpenRouterTool<{ facts: unknown[] }>(
-    [{ role: "user", content: prompt }],
-    {
-      name: EXTRACT_MEMORIES_TOOL.name,
-      description: EXTRACT_MEMORIES_TOOL.description ?? "",
-      parameters: EXTRACT_MEMORIES_TOOL.input_schema as Record<string, unknown>,
-    },
-  );
+/** Cascade tier label reported on extraction results. */
+export type ExtractionTier = ExtractionResult["tier"];
 
-  const facts = parseExtractionResponse({ facts: result.facts });
-  return { facts, model };
+/** How a configured ExtractionConfig tier maps onto the factory cascade. */
+interface TierPlan {
+  config: IntelligenceConfig;
+  /** Skip the local Ollama probe (explicit cloud pins). */
+  skipLocal: boolean;
+  /** Fixed tier label for single-model pins; otherwise derived from the result. */
+  pinnedTier?: ExtractionTier;
 }
 
 /**
- * Call an LLM for fact extraction, routing by model identifier.
+ * Translate an ExtractionConfig tier into factory inputs.
+ *
+ * - "auto" / "local": full cascade — Ollama → OpenRouter → Anthropic.
+ * - "openrouter": cloud only — OpenRouter → Anthropic.
+ * - "haiku" / "sonnet": explicit Anthropic model pin — single model, no
+ *   local probe, no OpenRouter.
+ */
+function planForTier(
+  tier: ExtractionConfig["tier"],
+  base: IntelligenceConfig,
+): TierPlan {
+  switch (tier) {
+    case "haiku":
+      return {
+        config: { ...base, openrouterModel: undefined, apiFallbackModel: base.apiModel },
+        skipLocal: true,
+        pinnedTier: "haiku",
+      };
+    case "sonnet":
+      return {
+        config: { ...base, openrouterModel: undefined, apiModel: base.apiFallbackModel },
+        skipLocal: true,
+        pinnedTier: "sonnet",
+      };
+    case "openrouter":
+      return { config: base, skipLocal: true };
+    case "local":
+    case "auto":
+    default:
+      return { config: base, skipLocal: false };
+  }
+}
+
+/**
+ * Label the cascade tier that produced a factory result.
+ *
+ * "haiku"/"sonnet" are the historical names for the Anthropic primary and
+ * fallback models; the actual model ids come from config.
+ */
+export function cascadeTierOf(
+  result: GenerationResult<unknown>,
+  config: IntelligenceConfig,
+): ExtractionTier {
+  if (result.provider === "ollama" || (!result.provider && result.source === "local")) {
+    return "local";
+  }
+  if (result.provider === "openrouter") return "openrouter";
+  return result.model === config.apiFallbackModel && result.model !== config.apiModel
+    ? "sonnet"
+    : "haiku";
+}
+
+// ─── LLM Extraction Call ────────────────────────────────────────
+
+/**
+ * Run one extraction call through the factory cascade.
  */
 async function callExtraction(
   prompt: string,
-  model: string,
-): Promise<{ facts: ExtractedFact[]; model: string }> {
-  // Local model route: use intelligence layer instead of Anthropic SDK
-  if (model === "local") {
-    const { generateStructured, buildIntelligenceConfig } = await import(
-      "../_core/llm/index.js"
-    );
-    const { loadConfig } = await import("../_core/config/index.js");
-    const config = loadConfig();
-    const intelligenceConfig = buildIntelligenceConfig(config);
-
-    // Build a JSON schema matching the EXTRACT_MEMORIES_TOOL input schema
-    const schema = EXTRACT_MEMORIES_TOOL.input_schema;
-
-    const result = await generateStructured<{ facts: unknown[] }>(
-      "You are a memory extraction system. Extract facts from the conversation.",
-      prompt,
-      schema as Record<string, unknown>,
-      intelligenceConfig,
-    );
-
-    const facts = parseExtractionResponse({ facts: result.result.facts });
-    return { facts, model: result.model };
-  }
-
-  // OpenRouter route: use fetch with OpenAI-compatible function calling
-  if (model === "openrouter") {
-    return callOpenRouterExtraction(prompt);
-  }
-
-  // Anthropic API route: use Anthropic SDK
-  if (!client) {
-    throw new Error(
-      "Anthropic client not initialized. Set ANTHROPIC_API_KEY or use OpenRouter/local tier.",
-    );
-  }
-
-  const response = await client.messages.create({
-    model,
-    max_tokens: 4096,
-    tools: [EXTRACT_MEMORIES_TOOL],
-    tool_choice: { type: "tool", name: "extract_memories" },
-    messages: [{ role: "user", content: prompt }],
-  });
-
-  // Find the tool_use block in response
-  const toolUseBlock = response.content.find(
-    (block) => block.type === "tool_use",
+  plan: TierPlan,
+): Promise<{ facts: ExtractedFact[]; model: string; tier: ExtractionTier }> {
+  const result = await generateStructured<{ facts?: unknown[] }>(
+    EXTRACTION_SYSTEM_PROMPT,
+    prompt,
+    EXTRACT_MEMORIES_SCHEMA,
+    plan.config,
+    {
+      toolName: EXTRACT_MEMORIES_TOOL_NAME,
+      toolDescription: EXTRACT_MEMORIES_TOOL_DESCRIPTION,
+      skipLocal: plan.skipLocal,
+    },
   );
 
-  if (!toolUseBlock || toolUseBlock.type !== "tool_use") {
-    return { facts: [], model };
-  }
-
-  const facts = parseExtractionResponse({ facts: (toolUseBlock.input as Record<string, unknown>).facts });
-  return { facts, model };
+  return {
+    facts: parseExtractionResponse({ facts: result.result.facts }),
+    model: result.model,
+    tier: plan.pinnedTier ?? cascadeTierOf(result, plan.config),
+  };
 }
 
 // ─── Reflexion Pass ─────────────────────────────────────────────
@@ -419,10 +437,8 @@ async function callExtraction(
 async function reflexionPass(
   prompt: string,
   existingFacts: ExtractedFact[],
-  model: string,
+  plan: TierPlan,
 ): Promise<ExtractedFact[]> {
-  if (!client) return [];
-
   const factsJson = JSON.stringify(
     existingFacts.map((f) => ({
       type: f.type,
@@ -440,23 +456,8 @@ async function reflexionPass(
     `Extract only the MISSING facts that were not already captured above.`;
 
   try {
-    const response = await client.messages.create({
-      model,
-      max_tokens: 4096,
-      tools: [EXTRACT_MEMORIES_TOOL],
-      tool_choice: { type: "tool", name: "extract_memories" },
-      messages: [{ role: "user", content: reflexionPrompt }],
-    });
-
-    const toolUseBlock = response.content.find(
-      (block) => block.type === "tool_use",
-    );
-
-    if (!toolUseBlock || toolUseBlock.type !== "tool_use") {
-      return [];
-    }
-
-    return parseExtractionResponse({ facts: (toolUseBlock.input as Record<string, unknown>).facts });
+    const { facts } = await callExtraction(reflexionPrompt, plan);
+    return facts;
   } catch {
     // Reflexion is optional; don't fail the extraction if it errors
     return [];
@@ -498,10 +499,10 @@ function deduplicateFacts(
 /**
  * Extract structured facts from a conversation.
  *
- * Multi-tier routing (when tier="auto"):
- * 1. OpenRouter — cost-effective first attempt (Gemini 2.5 Flash Lite ~$11/batch)
- * 2. Haiku — Anthropic fallback
- * 3. Sonnet — final fallback if Haiku fails
+ * Every chunk goes through the _core/llm factory cascade (tier="auto"):
+ * 1. Ollama — local, free (SPEC.md INV-3)
+ * 2. OpenRouter — cost-effective cloud (Gemini 2.5 Flash Lite ~$11/batch)
+ * 3. Anthropic — primary model, then fallback model
  *
  * Chunks long conversations and optionally runs a reflexion pass
  * to catch missed facts.
@@ -540,39 +541,25 @@ export async function extractFromConversation(
     return { start: startIdx, end: endIdx, avgDensity };
   });
 
-  let allFacts: ExtractedFact[] = [];
-  let usedModel = DEFAULT_MODEL;
-  let usedTier: "local" | "openrouter" | "haiku" | "sonnet" = "haiku";
+  const plan = planForTier(cfg.tier, intelligenceConfig());
 
-  // Determine which model(s) to try
-  const modelsToTry = resolveModels(cfg.tier);
+  let allFacts: ExtractedFact[] = [];
+  let usedModel = plan.config.apiModel;
+  let usedTier: ExtractionTier = "haiku";
 
   for (const chunk of chunks) {
     const prompt = buildExtractionPrompt(chunk, metadata);
-    let extracted = false;
 
-    for (const { model, tier } of modelsToTry) {
-      try {
-        const result = await callExtraction(prompt, model);
-        allFacts.push(...result.facts);
-        usedModel = result.model;
-        usedTier = tier;
-        extracted = true;
-        break;
-      } catch (err) {
-        // If this is the last model option, throw
-        if (model === modelsToTry[modelsToTry.length - 1].model) {
-          throw new Error(
-            `All extraction tiers failed for conversation ${conversationId}: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        }
-        // Otherwise, fall through to next tier
-      }
-    }
-
-    if (!extracted) {
+    try {
+      // The factory walks the whole cascade; an error here means every
+      // configured tier failed for this chunk.
+      const result = await callExtraction(prompt, plan);
+      allFacts.push(...result.facts);
+      usedModel = result.model;
+      usedTier = result.tier;
+    } catch (err) {
       throw new Error(
-        `Extraction failed for conversation ${conversationId}: no tier succeeded.`,
+        `All extraction tiers failed for conversation ${conversationId}: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
   }
@@ -593,7 +580,7 @@ export async function extractFromConversation(
 
   if (cfg.reflexionEnabled && allFacts.length > 0) {
     const fullPrompt = buildExtractionPrompt(exchanges, metadata);
-    const additional = await reflexionPass(fullPrompt, allFacts, usedModel);
+    const additional = await reflexionPass(fullPrompt, allFacts, plan);
     const unique = deduplicateFacts(allFacts, additional);
     allFacts = [...allFacts, ...unique];
   }
@@ -651,54 +638,5 @@ export function persistChunkMetadata(
     insertAll();
   } catch {
     // Chunk metadata is diagnostic — never fail the extraction pipeline
-  }
-}
-
-/**
- * Resolve which models to try based on tier configuration.
- *
- * In "auto" mode, OpenRouter is preferred when OPENROUTER_API_KEY is set,
- * with Anthropic Haiku → Sonnet as fallbacks. This gives the cheapest
- * extraction path (~$11 vs ~$90-120 for a full dream cycle).
- */
-function resolveModels(
-  tier: ExtractionConfig["tier"],
-): Array<{ model: string; tier: "local" | "openrouter" | "haiku" | "sonnet" }> {
-  switch (tier) {
-    case "haiku":
-      return [{ model: DEFAULT_MODEL, tier: "haiku" }];
-    case "sonnet":
-      return [{ model: FALLBACK_MODEL, tier: "sonnet" }];
-    case "openrouter":
-      return [
-        { model: "openrouter", tier: "openrouter" },
-        { model: DEFAULT_MODEL, tier: "haiku" },
-        { model: FALLBACK_MODEL, tier: "sonnet" },
-      ];
-    case "local":
-      return [
-        { model: "local", tier: "local" },
-        { model: "openrouter", tier: "openrouter" },
-        { model: DEFAULT_MODEL, tier: "haiku" },
-        { model: FALLBACK_MODEL, tier: "sonnet" },
-      ];
-    case "auto":
-    default: {
-      const models: Array<{ model: string; tier: "local" | "openrouter" | "haiku" | "sonnet" }> = [];
-      // Prefer OpenRouter when available (10x cheaper than Haiku)
-      if (isOpenRouterAvailable()) {
-        models.push({ model: "openrouter", tier: "openrouter" });
-      }
-      // Anthropic tiers as fallback
-      if (client) {
-        models.push({ model: DEFAULT_MODEL, tier: "haiku" });
-        models.push({ model: FALLBACK_MODEL, tier: "sonnet" });
-      }
-      // If nothing is configured, return Haiku as default (will error with helpful message)
-      if (models.length === 0) {
-        models.push({ model: DEFAULT_MODEL, tier: "haiku" });
-      }
-      return models;
-    }
   }
 }

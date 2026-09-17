@@ -9,19 +9,24 @@
  */
 
 import type { EngramConfig } from "../types/index.js";
-import type { IntelligenceConfig, GenerationResult } from "./types.js";
+import type { IntelligenceConfig, GenerationResult, GenerationOptions } from "./types.js";
 import { isOllamaAvailable, ollamaGenerateStructured, ollamaGenerate } from "./providers/ollama.js";
 import { openrouterGenerateStructured, openrouterGenerate } from "./providers/openrouter.js";
 import { apiGenerateStructured, apiGenerate, setClient, resetIntelligence } from "./providers/anthropic.js";
 
 // ─── Re-export types ─────────────────────────────────────────────
 
-export type { IntelligenceConfig, GenerationResult } from "./types.js";
+export type {
+  IntelligenceConfig,
+  GenerationResult,
+  GenerationOptions,
+  LlmProvider,
+} from "./types.js";
 
 // ─── Re-export provider functions for external use ───────────────
 
 export { isOllamaAvailable } from "./providers/ollama.js";
-export { setClient, resetIntelligence } from "./providers/anthropic.js";
+export { setClient, resetIntelligence, isAnthropicAvailable } from "./providers/anthropic.js";
 export {
   isOpenRouterAvailable,
   callOpenRouterTool,
@@ -66,21 +71,24 @@ export function buildIntelligenceConfig(
  * Generate structured output (JSON matching a schema).
  *
  * Tier cascade: Ollama (local) → OpenRouter (cheap cloud) → Anthropic API.
+ * `options.skipLocal` bypasses the Ollama probe for explicit cloud pins.
  */
 export async function generateStructured<T>(
   systemPrompt: string,
   userPrompt: string,
   schema: Record<string, unknown>,
   config: IntelligenceConfig,
+  options: GenerationOptions = {},
 ): Promise<GenerationResult<T>> {
   // Tier 1: Try Ollama (local, free)
-  const available = await isOllamaAvailable(config);
+  const available = !options.skipLocal && (await isOllamaAvailable(config));
   if (available) {
     const localResult = await ollamaGenerateStructured<T>(
       systemPrompt,
       userPrompt,
       schema,
       config,
+      options,
     );
     if (localResult) {
       return localResult;
@@ -93,13 +101,14 @@ export async function generateStructured<T>(
     userPrompt,
     schema,
     config,
+    options,
   );
   if (openrouterResult) {
     return openrouterResult;
   }
 
   // Tier 3: Fall back to Anthropic API
-  return apiGenerateStructured<T>(systemPrompt, userPrompt, schema, config);
+  return apiGenerateStructured<T>(systemPrompt, userPrompt, schema, config, options);
 }
 
 /**

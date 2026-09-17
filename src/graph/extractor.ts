@@ -1,9 +1,10 @@
 /**
  * Two-step entity and relationship extraction pipeline.
  *
- * Extracts entities and relationships from Claude Code conversations using
- * LLM tool_use. Follows the same patterns as semantic/extractor.ts:
- * lazy singleton client, tiered model fallback (Haiku -> Sonnet), and
+ * Extracts entities and relationships from Claude Code conversations
+ * through the _core/llm factory, so the configured cascade (Ollama →
+ * OpenRouter → Anthropic primary → Anthropic fallback) applies (SPEC.md
+ * INV-3). Follows the same patterns as semantic/extractor.ts, including
  * prompt template loading from disk.
  *
  * Phase 4, Stream B implementation.
@@ -12,24 +13,36 @@
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import Anthropic from "@anthropic-ai/sdk";
-import type { EntityType, RelationshipType } from "./types.js";
-import { isOpenRouterAvailable, callOpenRouterTool } from "../_core/llm/providers/openrouter.js";
+import type Anthropic from "@anthropic-ai/sdk";
+import type { EntityType, RelationshipType, GraphExtractionTier } from "./types.js";
+import {
+  buildIntelligenceConfig,
+  generateStructured,
+  isAnthropicAvailable,
+  isOllamaAvailable,
+  isOpenRouterAvailable,
+  resetIntelligence,
+  setClient as setIntelligenceClient,
+  type IntelligenceConfig,
+} from "../_core/llm/index.js";
+import { loadConfig } from "../_core/config/index.js";
 import type {
   ExtractedEntity,
   ExtractedRelationship,
   EntityExtractionResult,
   RelationshipExtractionResult,
 } from "./types.js";
-import type { ConversationExchange, ConversationMetadata } from "../semantic/extractor.js";
+import {
+  cascadeTierOf,
+  type ConversationExchange,
+  type ConversationMetadata,
+} from "../semantic/extractor.js";
 import { chunkConversation } from "../_core/search/text.js";
 
 // ─── Module State ───────────────────────────────────────────────
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-
-let client: Anthropic | null = null;
 
 const VALID_ENTITY_TYPES: ReadonlySet<EntityType> = new Set([
   "project",
@@ -50,116 +63,113 @@ const VALID_RELATIONSHIP_TYPES: ReadonlySet<RelationshipType> = new Set([
   "solved_by",
 ]);
 
-const DEFAULT_MODEL = "claude-haiku-4-5-20251001";
-const FALLBACK_MODEL = "claude-sonnet-4-6";
-
 // ─── Tool Schemas ──────────────────────────────────────────────
 
-const EXTRACT_ENTITIES_TOOL: Anthropic.Tool = {
-  name: "extract_entities",
-  description: "Extract entities from conversation",
-  input_schema: {
-    type: "object" as const,
-    properties: {
-      entities: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            name: { type: "string" },
-            type: {
-              type: "string",
-              enum: [
-                "project",
-                "tool",
-                "technology",
-                "person",
-                "concept",
-                "file",
-                "repo",
-              ],
-            },
-            description: { type: "string" },
+const EXTRACT_ENTITIES_TOOL_NAME = "extract_entities";
+const EXTRACT_ENTITIES_TOOL_DESCRIPTION = "Extract entities from conversation";
+const ENTITY_SYSTEM_PROMPT =
+  "You are a knowledge graph extraction system. Extract entities from the conversation.";
+
+/** JSON schema for entity extraction (factory adds `type: object`). */
+const EXTRACT_ENTITIES_SCHEMA: Record<string, unknown> = {
+  properties: {
+    entities: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          name: { type: "string" },
+          type: {
+            type: "string",
+            enum: [
+              "project",
+              "tool",
+              "technology",
+              "person",
+              "concept",
+              "file",
+              "repo",
+            ],
           },
-          required: ["name", "type"],
+          description: { type: "string" },
         },
+        required: ["name", "type"],
       },
     },
-    required: ["entities"],
   },
+  required: ["entities"],
 };
 
-const EXTRACT_RELATIONSHIPS_TOOL: Anthropic.Tool = {
-  name: "extract_relationships",
-  description: "Extract relationships between entities",
-  input_schema: {
-    type: "object" as const,
-    properties: {
-      relationships: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            source_entity_index: { type: "integer" },
-            target_entity_index: { type: "integer" },
-            type: {
-              type: "string",
-              enum: [
-                "uses",
-                "depends_on",
-                "related_to",
-                "part_of",
-                "configured_by",
-                "solved_by",
-              ],
-            },
-            context: { type: "string" },
+const EXTRACT_RELATIONSHIPS_TOOL_NAME = "extract_relationships";
+const EXTRACT_RELATIONSHIPS_TOOL_DESCRIPTION = "Extract relationships between entities";
+const RELATIONSHIP_SYSTEM_PROMPT =
+  "You are a knowledge graph extraction system. Extract relationships between the listed entities.";
+
+/** JSON schema for relationship extraction (factory adds `type: object`). */
+const EXTRACT_RELATIONSHIPS_SCHEMA: Record<string, unknown> = {
+  properties: {
+    relationships: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          source_entity_index: { type: "integer" },
+          target_entity_index: { type: "integer" },
+          type: {
+            type: "string",
+            enum: [
+              "uses",
+              "depends_on",
+              "related_to",
+              "part_of",
+              "configured_by",
+              "solved_by",
+            ],
           },
-          required: ["source_entity_index", "target_entity_index", "type"],
+          context: { type: "string" },
         },
+        required: ["source_entity_index", "target_entity_index", "type"],
       },
     },
-    required: ["relationships"],
   },
+  required: ["relationships"],
 };
 
 // ─── Initialization ─────────────────────────────────────────────
 
 /**
- * Initialize the graph extraction clients.
+ * Verify that at least one tier of the LLM cascade can serve extraction.
  *
- * Creates the Anthropic client if an API key is available.
- * OpenRouter is used via the shared client when OPENROUTER_API_KEY is set.
- * At least one provider must be configured.
+ * Credentials and clients are owned by the _core/llm factory; this only
+ * checks reachability so callers fail fast with a clear message. Per
+ * SPEC.md INV-3 a reachable local Ollama model is sufficient on its own.
  */
-export async function initGraphExtractor(anthropicApiKey?: string): Promise<void> {
-  if (client) return;
-
-  const apiKey = anthropicApiKey ?? process.env.ANTHROPIC_API_KEY;
-  if (apiKey) {
-    client = new Anthropic({ apiKey });
-  }
-
-  if (!client && !isOpenRouterAvailable()) {
-    throw new Error(
-      "No graph extraction provider configured. " +
-        "Set ANTHROPIC_API_KEY or OPENROUTER_API_KEY environment variable.",
-    );
-  }
+export async function initGraphExtractor(): Promise<void> {
+  if (isAnthropicAvailable() || isOpenRouterAvailable()) return;
+  if (await isOllamaAvailable(intelligenceConfig())) return;
+  throw new Error(
+    "No graph extraction provider configured. " +
+      "Set ANTHROPIC_API_KEY or OPENROUTER_API_KEY, or run Ollama with the configured local model.",
+  );
 }
 
 /**
- * Reset the graph extractor state (for testing).
+ * Reset the graph extractor state (for testing). Clears the factory's client.
  */
 export function resetGraphExtractor(): void {
-  client = null;
+  resetIntelligence();
 }
 
 /**
- * Set a custom Anthropic client (for testing with mocks).
+ * Inject a custom Anthropic client into the factory (for testing with mocks).
  */
 export function setGraphExtractorClient(customClient: Anthropic): void {
-  client = customClient;
+  setIntelligenceClient(customClient);
+}
+
+/** Cascade configuration derived from the application config. */
+function intelligenceConfig(): IntelligenceConfig {
+  return buildIntelligenceConfig(loadConfig());
 }
 
 // ─── Prompt Building ────────────────────────────────────────────
@@ -445,111 +455,57 @@ export function parseRelationshipExtractionResponse(
 // ─── LLM Extraction Calls ───────────────────────────────────────
 
 /**
- * Call an LLM for entity extraction, preferring OpenRouter when available.
+ * Run entity extraction through the factory cascade.
  */
 async function callEntityExtraction(
   prompt: string,
-  model: string,
-): Promise<{ entities: ExtractedEntity[]; model: string }> {
-  // OpenRouter path: use shared client with function calling
-  if (model === "openrouter" || (!client && isOpenRouterAvailable())) {
-    const { result, model: usedModel } = await callOpenRouterTool<{ entities: unknown[] }>(
-      [{ role: "user", content: prompt }],
-      {
-        name: EXTRACT_ENTITIES_TOOL.name,
-        description: EXTRACT_ENTITIES_TOOL.description ?? "",
-        parameters: EXTRACT_ENTITIES_TOOL.input_schema as Record<string, unknown>,
-      },
-    );
-    const entities = parseEntityExtractionResponse({ entities: result.entities });
-    return { entities, model: usedModel };
-  }
-
-  // Anthropic path
-  if (!client) {
-    throw new Error(
-      "Graph extractor not initialized. Set ANTHROPIC_API_KEY or OPENROUTER_API_KEY.",
-    );
-  }
-
-  const response = await client.messages.create({
-    model,
-    max_tokens: 4096,
-    tools: [EXTRACT_ENTITIES_TOOL],
-    tool_choice: { type: "tool", name: "extract_entities" },
-    messages: [{ role: "user", content: prompt }],
-  });
-
-  const toolUseBlock = response.content.find(
-    (block) => block.type === "tool_use",
+  config: IntelligenceConfig,
+): Promise<{ entities: ExtractedEntity[]; model: string; tier: GraphExtractionTier }> {
+  const result = await generateStructured<{ entities?: unknown[] }>(
+    ENTITY_SYSTEM_PROMPT,
+    prompt,
+    EXTRACT_ENTITIES_SCHEMA,
+    config,
+    {
+      toolName: EXTRACT_ENTITIES_TOOL_NAME,
+      toolDescription: EXTRACT_ENTITIES_TOOL_DESCRIPTION,
+    },
   );
 
-  if (!toolUseBlock || toolUseBlock.type !== "tool_use") {
-    return { entities: [], model };
-  }
-
-  const entities = parseEntityExtractionResponse({
-    entities: (toolUseBlock.input as Record<string, unknown>).entities,
-  });
-  return { entities, model };
+  return {
+    entities: parseEntityExtractionResponse({ entities: result.result.entities }),
+    model: result.model,
+    tier: cascadeTierOf(result, config),
+  };
 }
 
 /**
- * Call an LLM for relationship extraction, preferring OpenRouter when available.
+ * Run relationship extraction through the factory cascade.
  */
 async function callRelationshipExtraction(
   prompt: string,
-  model: string,
+  config: IntelligenceConfig,
   entityCount: number,
-): Promise<{ relationships: ExtractedRelationship[]; model: string }> {
-  // OpenRouter path
-  if (model === "openrouter" || (!client && isOpenRouterAvailable())) {
-    const { result, model: usedModel } = await callOpenRouterTool<{ relationships: unknown[] }>(
-      [{ role: "user", content: prompt }],
-      {
-        name: EXTRACT_RELATIONSHIPS_TOOL.name,
-        description: EXTRACT_RELATIONSHIPS_TOOL.description ?? "",
-        parameters: EXTRACT_RELATIONSHIPS_TOOL.input_schema as Record<string, unknown>,
-      },
-    );
-    const relationships = parseRelationshipExtractionResponse(
-      { relationships: result.relationships },
-      entityCount,
-    );
-    return { relationships, model: usedModel };
-  }
-
-  // Anthropic path
-  if (!client) {
-    throw new Error(
-      "Graph extractor not initialized. Set ANTHROPIC_API_KEY or OPENROUTER_API_KEY.",
-    );
-  }
-
-  const response = await client.messages.create({
-    model,
-    max_tokens: 4096,
-    tools: [EXTRACT_RELATIONSHIPS_TOOL],
-    tool_choice: { type: "tool", name: "extract_relationships" },
-    messages: [{ role: "user", content: prompt }],
-  });
-
-  const toolUseBlock = response.content.find(
-    (block) => block.type === "tool_use",
-  );
-
-  if (!toolUseBlock || toolUseBlock.type !== "tool_use") {
-    return { relationships: [], model };
-  }
-
-  const relationships = parseRelationshipExtractionResponse(
+): Promise<{ relationships: ExtractedRelationship[]; model: string; tier: GraphExtractionTier }> {
+  const result = await generateStructured<{ relationships?: unknown[] }>(
+    RELATIONSHIP_SYSTEM_PROMPT,
+    prompt,
+    EXTRACT_RELATIONSHIPS_SCHEMA,
+    config,
     {
-      relationships: (toolUseBlock.input as Record<string, unknown>)
-        .relationships,
+      toolName: EXTRACT_RELATIONSHIPS_TOOL_NAME,
+      toolDescription: EXTRACT_RELATIONSHIPS_TOOL_DESCRIPTION,
     },
-    entityCount,
   );
-  return { relationships, model };
+
+  return {
+    relationships: parseRelationshipExtractionResponse(
+      { relationships: result.result.relationships },
+      entityCount,
+    ),
+    model: result.model,
+    tier: cascadeTierOf(result, config),
+  };
 }
 
 // ─── Main Extraction Entry Points ───────────────────────────────
@@ -557,9 +513,10 @@ async function callRelationshipExtraction(
 /**
  * Extract entities from a conversation.
  *
- * Three-tier routing (Haiku first, Sonnet fallback):
+ * Every chunk goes through the factory cascade (Ollama → OpenRouter →
+ * Anthropic primary → fallback):
  * 1. Build prompt from template + metadata + exchanges
- * 2. Call LLM with tool_use
+ * 2. Call LLM with structured output
  * 3. Parse, validate, and deduplicate entities
  *
  * Long conversations are chunked and entities are merged across chunks.
@@ -570,33 +527,18 @@ export async function extractEntities(
 ): Promise<EntityExtractionResult> {
   const startTime = Date.now();
   const chunks = chunkConversation(exchanges);
+  const config = intelligenceConfig();
 
   let allEntities: ExtractedEntity[] = [];
-  let usedModel = DEFAULT_MODEL;
-  let usedTier: "haiku" | "sonnet" = "haiku";
+  let usedModel = config.apiModel;
+  let usedTier: GraphExtractionTier = "haiku";
 
   for (const chunk of chunks) {
     const prompt = buildEntityExtractionPrompt(chunk, metadata);
-
-    // Try OpenRouter first, then Haiku, then Sonnet
-    try {
-      const result = await callEntityExtraction(prompt, isOpenRouterAvailable() ? "openrouter" : DEFAULT_MODEL);
-      allEntities.push(...result.entities);
-      usedModel = result.model;
-    } catch {
-      // Fallback to Anthropic tiers
-      try {
-        const result = await callEntityExtraction(prompt, DEFAULT_MODEL);
-        allEntities.push(...result.entities);
-        usedModel = result.model;
-        usedTier = "haiku";
-      } catch {
-        const result = await callEntityExtraction(prompt, FALLBACK_MODEL);
-        allEntities.push(...result.entities);
-        usedModel = result.model;
-        usedTier = "sonnet";
-      }
-    }
+    const result = await callEntityExtraction(prompt, config);
+    allEntities.push(...result.entities);
+    usedModel = result.model;
+    usedTier = result.tier;
   }
 
   // Deduplicate entities across chunks by lowercase name
@@ -624,9 +566,9 @@ export async function extractEntities(
 /**
  * Extract relationships from a conversation given resolved entities.
  *
- * Three-tier routing (Haiku first, Sonnet fallback):
+ * Goes through the factory cascade (Ollama → OpenRouter → Anthropic):
  * 1. Build prompt from template + entity list + exchanges
- * 2. Call LLM with tool_use
+ * 2. Call LLM with structured output
  * 3. Parse, validate indexes, filter self-refs
  */
 export async function extractRelationships(
@@ -648,47 +590,18 @@ export async function extractRelationships(
     entityList,
   );
 
-  let relationships: ExtractedRelationship[] = [];
-  let usedModel = DEFAULT_MODEL;
-  let usedTier: "haiku" | "sonnet" = "haiku";
-
-  // Try OpenRouter first, then Haiku, then Sonnet
-  try {
-    const result = await callRelationshipExtraction(
-      prompt,
-      isOpenRouterAvailable() ? "openrouter" : DEFAULT_MODEL,
-      resolvedEntities.length,
-    );
-    relationships = result.relationships;
-    usedModel = result.model;
-  } catch {
-    try {
-      const result = await callRelationshipExtraction(
-        prompt,
-        DEFAULT_MODEL,
-        resolvedEntities.length,
-      );
-      relationships = result.relationships;
-      usedModel = result.model;
-      usedTier = "haiku";
-    } catch {
-      const result = await callRelationshipExtraction(
-        prompt,
-        FALLBACK_MODEL,
-        resolvedEntities.length,
-      );
-      relationships = result.relationships;
-      usedModel = result.model;
-      usedTier = "sonnet";
-    }
-  }
+  const result = await callRelationshipExtraction(
+    prompt,
+    intelligenceConfig(),
+    resolvedEntities.length,
+  );
 
   const durationMs = Date.now() - startTime;
 
   return {
-    relationships,
-    model: usedModel,
-    tier: usedTier,
+    relationships: result.relationships,
+    model: result.model,
+    tier: result.tier,
     durationMs,
   };
 }

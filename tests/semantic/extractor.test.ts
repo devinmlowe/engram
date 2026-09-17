@@ -389,10 +389,18 @@ describe("extractFromConversation (mocked API)", () => {
     // Isolate tests from real OpenRouter API key so auto tier uses Anthropic path
     savedOpenRouterKey = process.env.OPENROUTER_API_KEY;
     delete process.env.OPENROUTER_API_KEY;
+    // Isolate from a developer's live Ollama: the cascade probes it first
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("network disabled in test");
+      }),
+    );
   });
 
   afterEach(() => {
     resetExtractor();
+    vi.unstubAllGlobals();
     // Restore the key
     if (savedOpenRouterKey !== undefined) {
       process.env.OPENROUTER_API_KEY = savedOpenRouterKey;

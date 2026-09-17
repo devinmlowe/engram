@@ -7,7 +7,8 @@
  * is set (10x cheaper than Anthropic Haiku for batch workloads).
  */
 
-import type { IntelligenceConfig, GenerationResult } from "../types.js";
+import type { IntelligenceConfig, GenerationResult, GenerationOptions } from "../types.js";
+import { DEFAULT_TOOL_NAME, DEFAULT_TOOL_DESCRIPTION } from "../types.js";
 
 const DEFAULT_MODEL = "google/gemini-2.5-flash";
 const BASE_URL = "https://openrouter.ai/api/v1";
@@ -319,6 +320,7 @@ export async function openrouterGenerateStructured<T>(
   userPrompt: string,
   schema: Record<string, unknown>,
   config: IntelligenceConfig,
+  options: GenerationOptions = {},
 ): Promise<GenerationResult<T> | null> {
   if (!config.openrouterModel) return null;
 
@@ -330,16 +332,21 @@ export async function openrouterGenerateStructured<T>(
         { role: "user", content: userPrompt },
       ],
       {
-        name: "structured_output",
-        description: "Return structured data matching the schema",
+        name: options.toolName ?? DEFAULT_TOOL_NAME,
+        description: options.toolDescription ?? DEFAULT_TOOL_DESCRIPTION,
         parameters: { type: "object", ...schema },
       },
-      { model: config.openrouterModel, timeoutMs: config.timeoutMs },
+      {
+        model: config.openrouterModel,
+        timeoutMs: config.timeoutMs,
+        maxTokens: options.maxTokens,
+      },
     );
 
     return {
       result,
       source: "api",
+      provider: "openrouter",
       model,
       durationMs: Date.now() - startMs,
     };
@@ -372,6 +379,7 @@ export async function openrouterGenerate(
     return {
       result,
       source: "api",
+      provider: "openrouter",
       model,
       durationMs: Date.now() - startMs,
     };
