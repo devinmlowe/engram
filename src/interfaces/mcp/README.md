@@ -18,6 +18,10 @@ Model Context Protocol server exposing 15 tools for LLM agent memory operations.
 
 - `server.ts` — MCP server with 15 tools: `recall`, `remember`, `show`, `explore`, `reflect`, `recall_session`, `recall_drill`, `explore_selective`, `remember_batch`, `fetch_snippets`, `index_file_structure`, `scan_file`, `commitments`, `commitments_update`, `ingest_turn` (records one external user/assistant turn keyed by `session_id`/`turn_index` with `scope`, `user_text`, `assistant_text`; idempotent upsert)
 
+## Annotations
+
+Retrieval tools (`recall`, `recall_session`, `recall_drill`) stay `readOnlyHint: true` although they reinforce the memories they return (FSRS `access_count` / `last_accessed` / `stability`): that is bookkeeping, not a content change, and a write hint would make clients confirm every recall. `reinforce: false` opts out per call. See [interfaces/SPEC.md](../SPEC.md) INV-3.
+
 ## See Also
 
 - [interfaces/shared/](../shared/) — Shared operation logic used by MCP and CLI

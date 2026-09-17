@@ -40,6 +40,7 @@ The interfaces domain provides all external access points to engram: CLI for dir
 
 - **INV-1**: Interfaces shall not contain business logic — they are adapters to domain operations.
 - **INV-2**: Parameter naming shall use snake_case for MCP tool inputs and camelCase for internal APIs.
+- **INV-3**: MCP retrieval tools (`recall`, `recall_session`, `recall_drill`) shall be annotated `readOnlyHint: true` even though retrieval reinforces the memories it returns. Reinforcement is FSRS bookkeeping only — `access_count`, `last_accessed`, `stability` — and never creates, edits or deletes a memory or changes its content; annotating it as a write would make MCP clients prompt for approval on every recall. The tool descriptions shall state the bookkeeping and that `reinforce: false` opts out. Tools that create or modify memories, commitments, exchanges or graph entities (`remember`, `remember_batch`, `reflect`, `index_file_structure`, `commitments_update`, `ingest_turn`) shall be `readOnlyHint: false`. *(decision recorded with #22)*
 
 ## Decomposes Into
 
@@ -66,3 +67,4 @@ The interfaces domain provides all external access points to engram: CLI for dir
 | REQ-3 | Unit test | `../tests/contracts/recall-contract.test.ts` (XML output), `../tests/episodic/search.test.ts` (formatRecallXml) |
 | REQ-5 | Unit test | `../tests/contracts/remember-contract.test.ts`, `../tests/e2e/mcp-server.test.ts` (remember deduplication) |
 | POST-4 | Uncovered | Dedup lives in `../interfaces/shared/`, but no test compares CLI and MCP behaviour |
+| INV-3 | Unit test | `../tests/interfaces/mcp/tool-annotations.test.ts` (readOnlyHint per tool, reinforcement sentence on retrieval tools) |

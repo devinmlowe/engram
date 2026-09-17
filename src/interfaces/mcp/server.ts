@@ -4,6 +4,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
@@ -326,836 +327,855 @@ const server = new Server(
  * mode, the historical behaviour) or via the worker-pool dispatcher (HTTP
  * mode). The list-tools handler always runs on the calling thread.
  */
-function registerToolHandlers(srv: Server, callTool: ToolHandler = handleToolCall) {
-  srv.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [
-    {
-      name: "recall",
-      description:
-        "Retrieve relevant memories from past Claude Code conversations and " +
-        "extracted knowledge. Uses hybrid semantic + keyword search with " +
-        "token-budgeted output across episodic and semantic memory stores. " +
-        "Search BEFORE every task to recover decisions, solutions, and context. " +
-        "Time-scope with after/before (YYYY-MM-DD) or a natural-language dateHint " +
-        "(\"last week\", \"in March\", \"this day last year\", \"on this day\"); " +
-        "dateBasis picks whether dates mean when a memory was filed or when the " +
-        "events it describes happened. The applied window is echoed in <date_filter>.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          query: { type: "string", minLength: 2 },
-          budget: {
-            type: "number",
-            minimum: 100,
-            maximum: 5000,
-            default: 1500,
-            description: "Max tokens in response",
-          },
-          after: {
-            type: "string",
-            pattern: "^\\d{4}-\\d{2}-\\d{2}$",
-            description: "Only results after this date (YYYY-MM-DD)",
-          },
-          before: {
-            type: "string",
-            pattern: "^\\d{4}-\\d{2}-\\d{2}$",
-            description: "Only results before this date (YYYY-MM-DD; that day is excluded)",
-          },
-          dateHint: {
-            type: "string",
-            maxLength: 200,
-            description:
-              "Natural-language date window, resolved in UTC: today, yesterday, " +
-              "this/last week|month|year, N days|weeks|months ago, this day last year, " +
-              "in <month>, <month> <year>, since <phrase>, before <phrase>, " +
-              "on this day (same month/day across all years), or an ISO date/month. " +
-              "Explicit after/before take precedence over the hint. Unrecognized " +
-              "hints apply no filter and are reported in <date_filter note>.",
-          },
-          dateBasis: {
-            type: "string",
-            enum: ["filed", "event"],
-            default: "filed",
-            description:
-              "What the dates refer to: 'filed' = when the memory was recorded " +
-              "(memories IN March); 'event' = when the described events happened, " +
-              "via source-exchange timestamps (memories ABOUT March). Episodic " +
-              "results are identical under both.",
-          },
-          depth: {
-            type: "string",
-            enum: ["shallow", "deep"],
-            default: "shallow",
-          },
-          sources: {
-            type: "array",
-            items: { type: "string", enum: ["episodic", "semantic", "graph"] },
-            default: ["episodic", "semantic"],
-            description:
-              "Which memory stores to search. Defaults to episodic and semantic.",
-          },
-          scope: {
-            type: "string",
-            minLength: 1,
-            description:
-              "Tenant identity for this call (e.g. \"hermes:career\"); reads " +
-              "default to global + this scope. Overrides ENGRAM_SCOPE for this call only.",
-          },
-          read_scopes: {
-            type: "array",
-            items: { type: "string", minLength: 1 },
-            minItems: 1,
-            description:
-              "Explicit scopes to read from (e.g. [\"global\", \"hermes:career\"]). " +
-              "Overrides ENGRAM_READ_SCOPES for this call only.",
-          },
-          reinforce: {
-            type: "boolean",
-            default: true,
-            description:
-              "Reinforce the semantic memories this call returns (FSRS: bumps " +
-              "access_count/last_accessed and grows stability). Set false for " +
-              "read-only or diagnostic callers that must not mutate the store.",
-          },
+/**
+ * The tools the server advertises (ListTools). Exported so tests can pin
+ * names, descriptions and annotations without a transport.
+ *
+ * Annotation policy (#22): retrieval tools keep `readOnlyHint: true` even
+ * though recall reinforces returned memories. Reinforcement is FSRS
+ * bookkeeping only (access_count, last_accessed, stability) — it never
+ * creates, edits or deletes a memory or changes its content — and flipping
+ * the hint would make MCP clients prompt for approval on every recall.
+ * `reinforce: false` opts out per call.
+ */
+export const MCP_TOOL_DEFINITIONS: Tool[] = [
+  {
+    name: "recall",
+    description:
+      "Retrieve relevant memories from past Claude Code conversations and " +
+      "extracted knowledge. Uses hybrid semantic + keyword search with " +
+      "token-budgeted output across episodic and semantic memory stores. " +
+      "Search BEFORE every task to recover decisions, solutions, and context. " +
+      "Time-scope with after/before (YYYY-MM-DD) or a natural-language dateHint " +
+      "(\"last week\", \"in March\", \"this day last year\", \"on this day\"); " +
+      "dateBasis picks whether dates mean when a memory was filed or when the " +
+      "events it describes happened. The applied window is echoed in <date_filter>. " +
+      "Retrieval records access bookkeeping on the returned memories (access_count, last_accessed, stability); " +
+      "pass reinforce: false to opt out.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", minLength: 2 },
+        budget: {
+          type: "number",
+          minimum: 100,
+          maximum: 5000,
+          default: 1500,
+          description: "Max tokens in response",
         },
-        required: ["query"],
-        additionalProperties: false,
+        after: {
+          type: "string",
+          pattern: "^\\d{4}-\\d{2}-\\d{2}$",
+          description: "Only results after this date (YYYY-MM-DD)",
+        },
+        before: {
+          type: "string",
+          pattern: "^\\d{4}-\\d{2}-\\d{2}$",
+          description: "Only results before this date (YYYY-MM-DD; that day is excluded)",
+        },
+        dateHint: {
+          type: "string",
+          maxLength: 200,
+          description:
+            "Natural-language date window, resolved in UTC: today, yesterday, " +
+            "this/last week|month|year, N days|weeks|months ago, this day last year, " +
+            "in <month>, <month> <year>, since <phrase>, before <phrase>, " +
+            "on this day (same month/day across all years), or an ISO date/month. " +
+            "Explicit after/before take precedence over the hint. Unrecognized " +
+            "hints apply no filter and are reported in <date_filter note>.",
+        },
+        dateBasis: {
+          type: "string",
+          enum: ["filed", "event"],
+          default: "filed",
+          description:
+            "What the dates refer to: 'filed' = when the memory was recorded " +
+            "(memories IN March); 'event' = when the described events happened, " +
+            "via source-exchange timestamps (memories ABOUT March). Episodic " +
+            "results are identical under both.",
+        },
+        depth: {
+          type: "string",
+          enum: ["shallow", "deep"],
+          default: "shallow",
+        },
+        sources: {
+          type: "array",
+          items: { type: "string", enum: ["episodic", "semantic", "graph"] },
+          default: ["episodic", "semantic"],
+          description:
+            "Which memory stores to search. Defaults to episodic and semantic.",
+        },
+        scope: {
+          type: "string",
+          minLength: 1,
+          description:
+            "Tenant identity for this call (e.g. \"hermes:career\"); reads " +
+            "default to global + this scope. Overrides ENGRAM_SCOPE for this call only.",
+        },
+        read_scopes: {
+          type: "array",
+          items: { type: "string", minLength: 1 },
+          minItems: 1,
+          description:
+            "Explicit scopes to read from (e.g. [\"global\", \"hermes:career\"]). " +
+            "Overrides ENGRAM_READ_SCOPES for this call only.",
+        },
+        reinforce: {
+          type: "boolean",
+          default: true,
+          description:
+            "Reinforce the semantic memories this call returns (FSRS: bumps " +
+            "access_count/last_accessed and grows stability). Set false for " +
+            "read-only or diagnostic callers that must not mutate the store.",
+        },
       },
-      annotations: {
-        title: "Recall Memories",
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false,
-      },
+      required: ["query"],
+      additionalProperties: false,
     },
-    {
-      name: "remember",
-      description:
-        "Store a fact, preference, decision, or other knowledge as a semantic " +
-        "memory. Use this to explicitly record important information that should " +
-        "persist across conversations. Automatically deduplicates against " +
-        "existing memories.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          content: {
-            type: "string",
-            minLength: 1,
-            description: "The fact, preference, or knowledge to remember",
+    annotations: {
+      title: "Recall Memories",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+  },
+  {
+    name: "remember",
+    description:
+      "Store a fact, preference, decision, or other knowledge as a semantic " +
+      "memory. Use this to explicitly record important information that should " +
+      "persist across conversations. Automatically deduplicates against " +
+      "existing memories.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        content: {
+          type: "string",
+          minLength: 1,
+          description: "The fact, preference, or knowledge to remember",
+        },
+        type: {
+          type: "string",
+          enum: [
+            "preference",
+            "decision",
+            "pattern",
+            "fact",
+            "solution",
+            "convention",
+          ],
+          default: "fact",
+          description: "Type of memory",
+        },
+        importance: {
+          type: "number",
+          minimum: 0,
+          maximum: 1,
+          default: 0.7,
+          description: "Importance score (0-1)",
+        },
+        source: {
+          type: "string",
+          enum: ["user", "dream", "rlm", "import"],
+          default: "user",
+          description: "Source of this memory (user, dream, rlm, import)",
+        },
+        scope: {
+          type: "string",
+          minLength: 1,
+          description:
+            "Tenant scope to stamp on this write (e.g. \"hermes:career\"). " +
+            "Overrides the ENGRAM_SCOPE env default for this call only.",
+        },
+      },
+      required: ["content"],
+      additionalProperties: false,
+    },
+    annotations: {
+      title: "Remember",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
+  },
+  {
+    name: "remember_batch",
+    description:
+      "Store multiple facts, preferences, decisions, or other knowledge items " +
+      "as semantic memories in a single call. Supports up to 50 items per batch. " +
+      "Automatically deduplicates against existing memories and within the batch. " +
+      "Use for bulk ingestion from RLM agents or dream pipeline. Optionally link " +
+      "each memory to existing graph entities via relates_to_entities.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        memories: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              content: {
+                type: "string",
+                minLength: 1,
+                description: "The fact, preference, or knowledge to remember",
+              },
+              type: {
+                type: "string",
+                enum: [
+                  "preference",
+                  "decision",
+                  "pattern",
+                  "fact",
+                  "solution",
+                  "convention",
+                ],
+                default: "fact",
+                description: "Type of memory",
+              },
+              importance: {
+                type: "number",
+                minimum: 0,
+                maximum: 1,
+                description: "Importance score (0-1)",
+              },
+              source: {
+                type: "string",
+                enum: ["user", "dream", "rlm", "import"],
+                description: "Source of this memory",
+              },
+              relates_to_entities: {
+                type: "array",
+                items: { type: "string" },
+                maxItems: 10,
+                description:
+                  "Entity names to link this memory to. Bumps mention counts " +
+                  "and creates pairwise related_to relationships between entities.",
+              },
+            },
+            required: ["content"],
           },
-          type: {
+          minItems: 1,
+          maxItems: 50,
+          description: "Array of memories to store (max 50)",
+        },
+        scope: {
+          type: "string",
+          minLength: 1,
+          description:
+            "Tenant scope to stamp on this write (e.g. \"hermes:career\"). " +
+            "Overrides the ENGRAM_SCOPE env default for this call only.",
+        },
+      },
+      required: ["memories"],
+      additionalProperties: false,
+    },
+    annotations: {
+      title: "Batch Remember",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
+  },
+  {
+    name: "show",
+    description:
+      "Read full conversations to extract detailed context after " +
+      "finding relevant results with recall. Use startLine/endLine " +
+      "pagination for large conversations.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", minLength: 1 },
+        startLine: { type: "number", minimum: 1 },
+        endLine: { type: "number", minimum: 1 },
+      },
+      required: ["path"],
+      additionalProperties: false,
+    },
+    annotations: {
+      title: "Show Conversation",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+  },
+  {
+    name: "explore",
+    description:
+      "Explore connections in the knowledge graph starting from an entity. " +
+      "Shows what a concept, tool, project, or technology is connected to. " +
+      "Use after recall to understand how things relate to each other.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        entity: {
+          type: "string",
+          minLength: 1,
+          description:
+            "Entity name to explore (e.g., 'TypeScript', 'engram', 'SQLite')",
+        },
+        depth: {
+          type: "number",
+          minimum: 1,
+          maximum: 3,
+          default: 1,
+          description: "Number of hops to traverse (1-3)",
+        },
+        limit: {
+          type: "number",
+          minimum: 1,
+          maximum: 50,
+          default: 25,
+          description: "Max neighbors to return, sorted by weight (1-50)",
+        },
+        budget: {
+          type: "number",
+          minimum: 100,
+          maximum: 5000,
+          default: 1500,
+          description: "Max tokens in response",
+        },
+        relationship_types: {
+          type: "array",
+          items: {
             type: "string",
             enum: [
-              "preference",
-              "decision",
-              "pattern",
-              "fact",
-              "solution",
-              "convention",
+              "uses",
+              "depends_on",
+              "related_to",
+              "part_of",
+              "configured_by",
+              "solved_by",
+              "contains",
             ],
-            default: "fact",
-            description: "Type of memory",
           },
-          importance: {
-            type: "number",
-            minimum: 0,
-            maximum: 1,
-            default: 0.7,
-            description: "Importance score (0-1)",
-          },
-          source: {
-            type: "string",
-            enum: ["user", "dream", "rlm", "import"],
-            default: "user",
-            description: "Source of this memory (user, dream, rlm, import)",
-          },
-          scope: {
-            type: "string",
-            minLength: 1,
-            description:
-              "Tenant scope to stamp on this write (e.g. \"hermes:career\"). " +
-              "Overrides the ENGRAM_SCOPE env default for this call only.",
-          },
+          description: "Filter by relationship types",
         },
-        required: ["content"],
-        additionalProperties: false,
       },
-      annotations: {
-        title: "Remember",
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: false,
-        openWorldHint: false,
-      },
+      required: ["entity"],
+      additionalProperties: false,
     },
-    {
-      name: "remember_batch",
-      description:
-        "Store multiple facts, preferences, decisions, or other knowledge items " +
-        "as semantic memories in a single call. Supports up to 50 items per batch. " +
-        "Automatically deduplicates against existing memories and within the batch. " +
-        "Use for bulk ingestion from RLM agents or dream pipeline. Optionally link " +
-        "each memory to existing graph entities via relates_to_entities.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          memories: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                content: {
-                  type: "string",
-                  minLength: 1,
-                  description: "The fact, preference, or knowledge to remember",
-                },
-                type: {
-                  type: "string",
-                  enum: [
-                    "preference",
-                    "decision",
-                    "pattern",
-                    "fact",
-                    "solution",
-                    "convention",
-                  ],
-                  default: "fact",
-                  description: "Type of memory",
-                },
-                importance: {
-                  type: "number",
-                  minimum: 0,
-                  maximum: 1,
-                  description: "Importance score (0-1)",
-                },
-                source: {
-                  type: "string",
-                  enum: ["user", "dream", "rlm", "import"],
-                  description: "Source of this memory",
-                },
-                relates_to_entities: {
-                  type: "array",
-                  items: { type: "string" },
-                  maxItems: 10,
-                  description:
-                    "Entity names to link this memory to. Bumps mention counts " +
-                    "and creates pairwise related_to relationships between entities.",
-                },
-              },
-              required: ["content"],
+    annotations: {
+      title: "Explore Knowledge Graph",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+  },
+  {
+    name: "reflect",
+    description:
+      "View emergent patterns and structure in the knowledge graph. " +
+      "Shows topic communities with meaningful names, bridge entities " +
+      "connecting different domains, temporal patterns, and graph health. " +
+      "Use after working on a topic to understand how it connects to " +
+      "other knowledge domains.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        mode: {
+          type: "string",
+          enum: ["communities", "bridges", "temporal", "health", "all"],
+          default: "all",
+          description: "What to reflect on.",
+        },
+        refresh: {
+          type: "boolean",
+          default: false,
+          description: "Force a fresh analysis instead of using cached results.",
+        },
+      },
+      additionalProperties: false,
+    },
+    annotations: {
+      title: "Reflect on Knowledge Graph",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+  },
+  {
+    name: "recall_session",
+    description:
+      "Create or continue an iterative search session for multi-step memory " +
+      "exploration. Omit session_id to start a new session; provide session_id " +
+      "to refine with a new query. Sessions track accumulated results and " +
+      "remaining token budget. Use recall_drill to expand individual results. " +
+      "Retrieval records access bookkeeping on the returned memories (access_count, last_accessed, stability); " +
+      "pass reinforce: false to opt out.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          minLength: 2,
+          description: "Search query",
+        },
+        session_id: {
+          type: "string",
+          format: "uuid",
+          description: "Existing session ID to refine (omit to create new)",
+        },
+        budget: {
+          type: "number",
+          minimum: 100,
+          maximum: 10000,
+          default: 3000,
+          description: "Max total token budget for this session",
+        },
+        sources: {
+          type: "array",
+          items: { type: "string", enum: ["episodic", "semantic", "graph"] },
+          default: ["episodic", "semantic"],
+          description: "Which memory stores to search",
+        },
+        scope: {
+          type: "string",
+          minLength: 1,
+          description:
+            "Tenant identity for this call (e.g. \"hermes:career\"); reads " +
+            "default to global + this scope. Overrides ENGRAM_SCOPE for this call only.",
+        },
+        read_scopes: {
+          type: "array",
+          items: { type: "string", minLength: 1 },
+          minItems: 1,
+          description:
+            "Explicit scopes to read from (e.g. [\"global\", \"hermes:career\"]). " +
+            "Overrides ENGRAM_READ_SCOPES for this call only.",
+        },
+        reinforce: {
+          type: "boolean",
+          default: true,
+          description:
+            "Reinforce the semantic memories this call returns (FSRS: bumps " +
+            "access_count/last_accessed and grows stability). Set false for " +
+            "read-only or diagnostic callers that must not mutate the store.",
+        },
+      },
+      required: ["query"],
+      additionalProperties: false,
+    },
+    annotations: {
+      title: "Recall Session",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
+  },
+  {
+    name: "recall_drill",
+    description:
+      "Drill into a specific result from a recall session to get expanded " +
+      "context. For episodic results: shows surrounding conversation exchanges. " +
+      "For semantic results: shows source conversation segments. " +
+      "For graph results: shows entity with full relationship neighborhood. " +
+      "Retrieval records access bookkeeping on the returned memories (access_count, last_accessed, stability); " +
+      "pass reinforce: false to opt out.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        session_id: {
+          type: "string",
+          format: "uuid",
+          description: "Session ID from recall_session",
+        },
+        result_index: {
+          type: "number",
+          minimum: 0,
+          description: "0-based index into session results",
+        },
+        reinforce: {
+          type: "boolean",
+          default: true,
+          description:
+            "Reinforce the semantic memories this call returns (FSRS: bumps " +
+            "access_count/last_accessed and grows stability). Set false for " +
+            "read-only or diagnostic callers that must not mutate the store.",
+        },
+      },
+      required: ["session_id", "result_index"],
+      additionalProperties: false,
+    },
+    annotations: {
+      title: "Drill Into Result",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+  },
+  {
+    name: "explore_selective",
+    description:
+      "Explore the knowledge graph selectively by expanding only branches " +
+      "relevant to specified criteria. Unlike explore (fixed-depth BFS), this " +
+      "uses embedding similarity to prune irrelevant neighbors and recursively " +
+      "follows only relevant paths. Use when you want to find connections related " +
+      "to a specific topic or question.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        entity: {
+          type: "string",
+          minLength: 1,
+          description:
+            "Starting entity name (e.g., 'TypeScript', 'engram', 'SQLite')",
+        },
+        criteria: {
+          type: "string",
+          minLength: 1,
+          description:
+            "What makes a neighbor relevant (e.g., 'build tooling', 'performance optimization')",
+        },
+        max_depth: {
+          type: "number",
+          minimum: 1,
+          maximum: 5,
+          default: 3,
+          description: "Maximum traversal depth (1-5)",
+        },
+        max_nodes: {
+          type: "number",
+          minimum: 1,
+          maximum: 50,
+          default: 50,
+          description: "Safety cap on total nodes returned (1-50)",
+        },
+        relationship_types: {
+          type: "array",
+          items: {
+            type: "string",
+            enum: [
+              "uses",
+              "depends_on",
+              "related_to",
+              "part_of",
+              "configured_by",
+              "solved_by",
+              "contains",
+            ],
+          },
+          description: "Filter by relationship types",
+        },
+      },
+      required: ["entity", "criteria"],
+      additionalProperties: false,
+    },
+    annotations: {
+      title: "Selective Graph Exploration",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+  },
+  {
+    name: "fetch_snippets",
+    description:
+      "Fetch multiple line ranges from a single file in one call. Ranges are " +
+      "merged when overlapping, padded with optional context lines, and joined " +
+      "with gap markers. More efficient than multiple show calls for targeted " +
+      "code reading.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", minLength: 1 },
+        ranges: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              start: { type: "number", minimum: 1 },
+              end: { type: "number", minimum: 1 },
             },
-            minItems: 1,
-            maxItems: 50,
-            description: "Array of memories to store (max 50)",
+            required: ["start", "end"],
           },
-          scope: {
-            type: "string",
-            minLength: 1,
-            description:
-              "Tenant scope to stamp on this write (e.g. \"hermes:career\"). " +
-              "Overrides the ENGRAM_SCOPE env default for this call only.",
-          },
+          minItems: 1,
+          maxItems: 20,
+          description: "Line ranges to fetch (max 20)",
         },
-        required: ["memories"],
-        additionalProperties: false,
-      },
-      annotations: {
-        title: "Batch Remember",
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: false,
-        openWorldHint: false,
-      },
-    },
-    {
-      name: "show",
-      description:
-        "Read full conversations to extract detailed context after " +
-        "finding relevant results with recall. Use startLine/endLine " +
-        "pagination for large conversations.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          path: { type: "string", minLength: 1 },
-          startLine: { type: "number", minimum: 1 },
-          endLine: { type: "number", minimum: 1 },
+        context: {
+          type: "number",
+          minimum: 0,
+          maximum: 50,
+          default: 0,
+          description: "Number of padding lines around each range (0-50)",
         },
-        required: ["path"],
-        additionalProperties: false,
+        session_id: {
+          type: "string",
+          format: "uuid",
+          description: "Optional session ID for token budget tracking",
+        },
       },
-      annotations: {
-        title: "Show Conversation",
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false,
-      },
+      required: ["path", "ranges"],
+      additionalProperties: false,
     },
-    {
-      name: "explore",
-      description:
-        "Explore connections in the knowledge graph starting from an entity. " +
-        "Shows what a concept, tool, project, or technology is connected to. " +
-        "Use after recall to understand how things relate to each other.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          entity: {
-            type: "string",
-            minLength: 1,
-            description:
-              "Entity name to explore (e.g., 'TypeScript', 'engram', 'SQLite')",
-          },
-          depth: {
-            type: "number",
-            minimum: 1,
-            maximum: 3,
-            default: 1,
-            description: "Number of hops to traverse (1-3)",
-          },
-          limit: {
-            type: "number",
-            minimum: 1,
-            maximum: 50,
-            default: 25,
-            description: "Max neighbors to return, sorted by weight (1-50)",
-          },
-          budget: {
-            type: "number",
-            minimum: 100,
-            maximum: 5000,
-            default: 1500,
-            description: "Max tokens in response",
-          },
-          relationship_types: {
-            type: "array",
-            items: {
-              type: "string",
-              enum: [
-                "uses",
-                "depends_on",
-                "related_to",
-                "part_of",
-                "configured_by",
-                "solved_by",
-                "contains",
-              ],
+    annotations: {
+      title: "Fetch Snippets",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+  },
+  {
+    name: "scan_file",
+    description:
+      "Scan a file server-side with regex patterns and return structured matches " +
+      "with surrounding context. The file is read on the server and never loaded " +
+      "into conversation context. Supports multiple patterns, context windows, " +
+      "overlap deduplication, and function context detection.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          minLength: 1,
+          description: "Absolute path to the file to scan",
+        },
+        patterns: {
+          type: "array",
+          items: { type: "string" },
+          minItems: 1,
+          maxItems: 10,
+          description: "Regex patterns to search for (max 10)",
+        },
+        context_lines: {
+          type: "number",
+          minimum: 0,
+          maximum: 10,
+          default: 2,
+          description: "Lines of context before and after each match (0-10)",
+        },
+        group_by: {
+          type: "string",
+          enum: ["pattern", "location"],
+          default: "location",
+          description: "Order results by file location or grouped by pattern",
+        },
+        max_matches: {
+          type: "number",
+          minimum: 1,
+          maximum: 500,
+          default: 100,
+          description: "Maximum matches to return (1-500)",
+        },
+        deduplicate_overlaps: {
+          type: "boolean",
+          default: true,
+          description: "Merge overlapping context windows to avoid duplicate lines",
+        },
+        session_id: {
+          type: "string",
+          format: "uuid",
+          description: "Optional session ID for token budget tracking",
+        },
+      },
+      required: ["path", "patterns"],
+      additionalProperties: false,
+    },
+    annotations: {
+      title: "Scan File",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+  },
+  {
+    name: "index_file_structure",
+    description:
+      "Parse a source file to extract function, class, and module definitions, " +
+      "then index them as entities in the knowledge graph with 'contains' relationships. " +
+      "Enables RLM to discover file contents without reading the full file.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          minLength: 1,
+          description: "Absolute path to the source file to index",
+        },
+      },
+      required: ["path"],
+      additionalProperties: false,
+    },
+    annotations: {
+      title: "Index File Structure",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+  },
+  {
+    name: "commitments",
+    description:
+      "List tracked commitments — first-person promises, intentions and " +
+      "follow-ups owed by others, extracted nightly from conversations " +
+      "(\"mention once, never dropped\"). Default: pending items, overdue " +
+      "first, then by due date, then newest. Use include_due_within_days to " +
+      "surface only what is due soon or overdue.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        status: {
+          type: "string",
+          enum: ["pending", "done", "dropped", "superseded", "all"],
+          default: "pending",
+          description: "Lifecycle state to list",
+        },
+        include_due_within_days: {
+          type: "number",
+          minimum: 0,
+          description: "Only items with a due date within this many days (overdue items included)",
+        },
+        limit: {
+          type: "number",
+          minimum: 1,
+          maximum: 500,
+          default: 20,
+          description: "Max items",
+        },
+        budget: {
+          type: "number",
+          minimum: 100,
+          maximum: 10000,
+          default: 1500,
+          description: "Token budget for the XML response",
+        },
+      },
+      additionalProperties: false,
+    },
+    annotations: {
+      title: "Commitments",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+  },
+  {
+    name: "commitments_update",
+    description:
+      "Resolve a tracked commitment once the user confirms it is handled: " +
+      "mark it done, dropped, or superseded by another commitment. Accepts " +
+      "the full id or a unique prefix (6+ characters).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: {
+          type: "string",
+          minLength: 6,
+          description: "Commitment id (from the commitments tool) or a unique prefix",
+        },
+        status: {
+          type: "string",
+          enum: ["done", "dropped", "superseded"],
+          description: "Resolution",
+        },
+        superseded_by: {
+          type: "string",
+          description: "Id of the commitment that replaces this one (required when status is superseded)",
+        },
+      },
+      required: ["id", "status"],
+      additionalProperties: false,
+    },
+    annotations: {
+      title: "Update Commitment",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+  },
+  {
+    name: "ingest_turn",
+    description:
+      "Record one user/assistant turn of an external agent conversation " +
+      "(e.g. a Hermes profile) in engram's episodic layer so it becomes " +
+      "searchable and feeds the nightly dream extraction. Idempotent: " +
+      "re-sending the same session_id + turn_index updates the turn in " +
+      "place. The conversation carries the given tenant scope, and every " +
+      "memory later extracted from it inherits that scope.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        session_id: {
+          type: "string",
+          minLength: 1,
+          description: "Caller's conversation/session identifier (stable across turns)",
+        },
+        turn_index: {
+          type: "integer",
+          minimum: 0,
+          description: "0-based position of this turn within the session",
+        },
+        scope: {
+          type: "string",
+          minLength: 1,
+          description: "Tenant scope of the conversation (e.g. \"hermes:career\")",
+        },
+        user_text: {
+          type: "string",
+          description: "The user's message for this turn",
+        },
+        assistant_text: {
+          type: "string",
+          description: "The assistant's reply for this turn",
+        },
+        tool_calls: {
+          type: "array",
+          description: "Tools invoked during the turn (input/output are truncated to 1000 chars)",
+          items: {
+            type: "object",
+            properties: {
+              name: { type: "string", minLength: 1 },
+              input: { description: "Tool input (any JSON)" },
+              output: { description: "Tool output/result summary (any JSON)" },
             },
-            description: "Filter by relationship types",
+            required: ["name"],
+            additionalProperties: false,
           },
         },
-        required: ["entity"],
-        additionalProperties: false,
-      },
-      annotations: {
-        title: "Explore Knowledge Graph",
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false,
-      },
-    },
-    {
-      name: "reflect",
-      description:
-        "View emergent patterns and structure in the knowledge graph. " +
-        "Shows topic communities with meaningful names, bridge entities " +
-        "connecting different domains, temporal patterns, and graph health. " +
-        "Use after working on a topic to understand how it connects to " +
-        "other knowledge domains.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          mode: {
-            type: "string",
-            enum: ["communities", "bridges", "temporal", "health", "all"],
-            default: "all",
-            description: "What to reflect on.",
-          },
-          refresh: {
-            type: "boolean",
-            default: false,
-            description: "Force a fresh analysis instead of using cached results.",
-          },
+        timestamp: {
+          type: "string",
+          description: "ISO-8601 time of the turn (default: now)",
         },
-        additionalProperties: false,
-      },
-      annotations: {
-        title: "Reflect on Knowledge Graph",
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false,
-      },
-    },
-    {
-      name: "recall_session",
-      description:
-        "Create or continue an iterative search session for multi-step memory " +
-        "exploration. Omit session_id to start a new session; provide session_id " +
-        "to refine with a new query. Sessions track accumulated results and " +
-        "remaining token budget. Use recall_drill to expand individual results.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          query: {
-            type: "string",
-            minLength: 2,
-            description: "Search query",
-          },
-          session_id: {
-            type: "string",
-            format: "uuid",
-            description: "Existing session ID to refine (omit to create new)",
-          },
-          budget: {
-            type: "number",
-            minimum: 100,
-            maximum: 10000,
-            default: 3000,
-            description: "Max total token budget for this session",
-          },
-          sources: {
-            type: "array",
-            items: { type: "string", enum: ["episodic", "semantic", "graph"] },
-            default: ["episodic", "semantic"],
-            description: "Which memory stores to search",
-          },
-          scope: {
-            type: "string",
-            minLength: 1,
-            description:
-              "Tenant identity for this call (e.g. \"hermes:career\"); reads " +
-              "default to global + this scope. Overrides ENGRAM_SCOPE for this call only.",
-          },
-          read_scopes: {
-            type: "array",
-            items: { type: "string", minLength: 1 },
-            minItems: 1,
-            description:
-              "Explicit scopes to read from (e.g. [\"global\", \"hermes:career\"]). " +
-              "Overrides ENGRAM_READ_SCOPES for this call only.",
-          },
-          reinforce: {
-            type: "boolean",
-            default: true,
-            description:
-              "Reinforce the semantic memories this call returns (FSRS: bumps " +
-              "access_count/last_accessed and grows stability). Set false for " +
-              "read-only or diagnostic callers that must not mutate the store.",
-          },
+        source: {
+          type: "string",
+          minLength: 1,
+          default: DEFAULT_TURN_SOURCE,
+          description: "Platform/source label; part of the conversation key (default \"hermes\")",
         },
-        required: ["query"],
-        additionalProperties: false,
       },
-      annotations: {
-        title: "Recall Session",
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: false,
-        openWorldHint: false,
-      },
+      required: ["session_id", "turn_index", "scope", "user_text", "assistant_text"],
+      additionalProperties: false,
     },
-    {
-      name: "recall_drill",
-      description:
-        "Drill into a specific result from a recall session to get expanded " +
-        "context. For episodic results: shows surrounding conversation exchanges. " +
-        "For semantic results: shows source conversation segments. " +
-        "For graph results: shows entity with full relationship neighborhood.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          session_id: {
-            type: "string",
-            format: "uuid",
-            description: "Session ID from recall_session",
-          },
-          result_index: {
-            type: "number",
-            minimum: 0,
-            description: "0-based index into session results",
-          },
-          reinforce: {
-            type: "boolean",
-            default: true,
-            description:
-              "Reinforce the semantic memories this call returns (FSRS: bumps " +
-              "access_count/last_accessed and grows stability). Set false for " +
-              "read-only or diagnostic callers that must not mutate the store.",
-          },
-        },
-        required: ["session_id", "result_index"],
-        additionalProperties: false,
-      },
-      annotations: {
-        title: "Drill Into Result",
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false,
-      },
+    annotations: {
+      title: "Ingest Turn",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
     },
-    {
-      name: "explore_selective",
-      description:
-        "Explore the knowledge graph selectively by expanding only branches " +
-        "relevant to specified criteria. Unlike explore (fixed-depth BFS), this " +
-        "uses embedding similarity to prune irrelevant neighbors and recursively " +
-        "follows only relevant paths. Use when you want to find connections related " +
-        "to a specific topic or question.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          entity: {
-            type: "string",
-            minLength: 1,
-            description:
-              "Starting entity name (e.g., 'TypeScript', 'engram', 'SQLite')",
-          },
-          criteria: {
-            type: "string",
-            minLength: 1,
-            description:
-              "What makes a neighbor relevant (e.g., 'build tooling', 'performance optimization')",
-          },
-          max_depth: {
-            type: "number",
-            minimum: 1,
-            maximum: 5,
-            default: 3,
-            description: "Maximum traversal depth (1-5)",
-          },
-          max_nodes: {
-            type: "number",
-            minimum: 1,
-            maximum: 50,
-            default: 50,
-            description: "Safety cap on total nodes returned (1-50)",
-          },
-          relationship_types: {
-            type: "array",
-            items: {
-              type: "string",
-              enum: [
-                "uses",
-                "depends_on",
-                "related_to",
-                "part_of",
-                "configured_by",
-                "solved_by",
-                "contains",
-              ],
-            },
-            description: "Filter by relationship types",
-          },
-        },
-        required: ["entity", "criteria"],
-        additionalProperties: false,
-      },
-      annotations: {
-        title: "Selective Graph Exploration",
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false,
-      },
-    },
-    {
-      name: "fetch_snippets",
-      description:
-        "Fetch multiple line ranges from a single file in one call. Ranges are " +
-        "merged when overlapping, padded with optional context lines, and joined " +
-        "with gap markers. More efficient than multiple show calls for targeted " +
-        "code reading.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          path: { type: "string", minLength: 1 },
-          ranges: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                start: { type: "number", minimum: 1 },
-                end: { type: "number", minimum: 1 },
-              },
-              required: ["start", "end"],
-            },
-            minItems: 1,
-            maxItems: 20,
-            description: "Line ranges to fetch (max 20)",
-          },
-          context: {
-            type: "number",
-            minimum: 0,
-            maximum: 50,
-            default: 0,
-            description: "Number of padding lines around each range (0-50)",
-          },
-          session_id: {
-            type: "string",
-            format: "uuid",
-            description: "Optional session ID for token budget tracking",
-          },
-        },
-        required: ["path", "ranges"],
-        additionalProperties: false,
-      },
-      annotations: {
-        title: "Fetch Snippets",
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false,
-      },
-    },
-    {
-      name: "scan_file",
-      description:
-        "Scan a file server-side with regex patterns and return structured matches " +
-        "with surrounding context. The file is read on the server and never loaded " +
-        "into conversation context. Supports multiple patterns, context windows, " +
-        "overlap deduplication, and function context detection.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          path: {
-            type: "string",
-            minLength: 1,
-            description: "Absolute path to the file to scan",
-          },
-          patterns: {
-            type: "array",
-            items: { type: "string" },
-            minItems: 1,
-            maxItems: 10,
-            description: "Regex patterns to search for (max 10)",
-          },
-          context_lines: {
-            type: "number",
-            minimum: 0,
-            maximum: 10,
-            default: 2,
-            description: "Lines of context before and after each match (0-10)",
-          },
-          group_by: {
-            type: "string",
-            enum: ["pattern", "location"],
-            default: "location",
-            description: "Order results by file location or grouped by pattern",
-          },
-          max_matches: {
-            type: "number",
-            minimum: 1,
-            maximum: 500,
-            default: 100,
-            description: "Maximum matches to return (1-500)",
-          },
-          deduplicate_overlaps: {
-            type: "boolean",
-            default: true,
-            description: "Merge overlapping context windows to avoid duplicate lines",
-          },
-          session_id: {
-            type: "string",
-            format: "uuid",
-            description: "Optional session ID for token budget tracking",
-          },
-        },
-        required: ["path", "patterns"],
-        additionalProperties: false,
-      },
-      annotations: {
-        title: "Scan File",
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false,
-      },
-    },
-    {
-      name: "index_file_structure",
-      description:
-        "Parse a source file to extract function, class, and module definitions, " +
-        "then index them as entities in the knowledge graph with 'contains' relationships. " +
-        "Enables RLM to discover file contents without reading the full file.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          path: {
-            type: "string",
-            minLength: 1,
-            description: "Absolute path to the source file to index",
-          },
-        },
-        required: ["path"],
-        additionalProperties: false,
-      },
-      annotations: {
-        title: "Index File Structure",
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false,
-      },
-    },
-    {
-      name: "commitments",
-      description:
-        "List tracked commitments — first-person promises, intentions and " +
-        "follow-ups owed by others, extracted nightly from conversations " +
-        "(\"mention once, never dropped\"). Default: pending items, overdue " +
-        "first, then by due date, then newest. Use include_due_within_days to " +
-        "surface only what is due soon or overdue.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          status: {
-            type: "string",
-            enum: ["pending", "done", "dropped", "superseded", "all"],
-            default: "pending",
-            description: "Lifecycle state to list",
-          },
-          include_due_within_days: {
-            type: "number",
-            minimum: 0,
-            description: "Only items with a due date within this many days (overdue items included)",
-          },
-          limit: {
-            type: "number",
-            minimum: 1,
-            maximum: 500,
-            default: 20,
-            description: "Max items",
-          },
-          budget: {
-            type: "number",
-            minimum: 100,
-            maximum: 10000,
-            default: 1500,
-            description: "Token budget for the XML response",
-          },
-        },
-        additionalProperties: false,
-      },
-      annotations: {
-        title: "Commitments",
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false,
-      },
-    },
-    {
-      name: "commitments_update",
-      description:
-        "Resolve a tracked commitment once the user confirms it is handled: " +
-        "mark it done, dropped, or superseded by another commitment. Accepts " +
-        "the full id or a unique prefix (6+ characters).",
-      inputSchema: {
-        type: "object",
-        properties: {
-          id: {
-            type: "string",
-            minLength: 6,
-            description: "Commitment id (from the commitments tool) or a unique prefix",
-          },
-          status: {
-            type: "string",
-            enum: ["done", "dropped", "superseded"],
-            description: "Resolution",
-          },
-          superseded_by: {
-            type: "string",
-            description: "Id of the commitment that replaces this one (required when status is superseded)",
-          },
-        },
-        required: ["id", "status"],
-        additionalProperties: false,
-      },
-      annotations: {
-        title: "Update Commitment",
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false,
-      },
-    },
-    {
-      name: "ingest_turn",
-      description:
-        "Record one user/assistant turn of an external agent conversation " +
-        "(e.g. a Hermes profile) in engram's episodic layer so it becomes " +
-        "searchable and feeds the nightly dream extraction. Idempotent: " +
-        "re-sending the same session_id + turn_index updates the turn in " +
-        "place. The conversation carries the given tenant scope, and every " +
-        "memory later extracted from it inherits that scope.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          session_id: {
-            type: "string",
-            minLength: 1,
-            description: "Caller's conversation/session identifier (stable across turns)",
-          },
-          turn_index: {
-            type: "integer",
-            minimum: 0,
-            description: "0-based position of this turn within the session",
-          },
-          scope: {
-            type: "string",
-            minLength: 1,
-            description: "Tenant scope of the conversation (e.g. \"hermes:career\")",
-          },
-          user_text: {
-            type: "string",
-            description: "The user's message for this turn",
-          },
-          assistant_text: {
-            type: "string",
-            description: "The assistant's reply for this turn",
-          },
-          tool_calls: {
-            type: "array",
-            description: "Tools invoked during the turn (input/output are truncated to 1000 chars)",
-            items: {
-              type: "object",
-              properties: {
-                name: { type: "string", minLength: 1 },
-                input: { description: "Tool input (any JSON)" },
-                output: { description: "Tool output/result summary (any JSON)" },
-              },
-              required: ["name"],
-              additionalProperties: false,
-            },
-          },
-          timestamp: {
-            type: "string",
-            description: "ISO-8601 time of the turn (default: now)",
-          },
-          source: {
-            type: "string",
-            minLength: 1,
-            default: DEFAULT_TURN_SOURCE,
-            description: "Platform/source label; part of the conversation key (default \"hermes\")",
-          },
-        },
-        required: ["session_id", "turn_index", "scope", "user_text", "assistant_text"],
-        additionalProperties: false,
-      },
-      annotations: {
-        title: "Ingest Turn",
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false,
-      },
-    },
-  ],
-}));
+  },
+];
+
+function registerToolHandlers(srv: Server, callTool: ToolHandler = handleToolCall) {
+  srv.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: MCP_TOOL_DEFINITIONS,
+  }));
 
   // ─── Tool Handlers ─────────────────────────────────────────────
 

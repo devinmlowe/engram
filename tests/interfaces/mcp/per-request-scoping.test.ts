@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
@@ -155,37 +155,35 @@ describe("per-request scope / read_scopes params", () => {
   });
 });
 
-// ListTools advertises the params (same source-pin convention as the e2e and
-// contract tests). Nesting matters: the keys must sit inside `properties`,
-// not beside it — `additionalProperties: false` would reject them otherwise.
+// ListTools advertises the params. Nesting matters: the keys must sit inside
+// `properties`, not beside it — `additionalProperties: false` would reject
+// them otherwise — so this reads the exported definitions, not the source.
 describe("per-request scope params are advertised in the tool schemas", () => {
-  const src = readFileSync(new URL("../../../src/interfaces/mcp/server.ts", import.meta.url), "utf-8");
+  let properties: (tool: string) => Record<string, unknown>;
 
-  function propertiesBlock(tool: string): string {
-    const start = src.indexOf(`name: "${tool}",`);
-    expect(start).toBeGreaterThan(-1);
-    const next = src.indexOf('\n      name: "', start + 1);
-    const decl = src.slice(start, next === -1 ? undefined : next);
-    const props = decl.indexOf("properties: {");
-    const required = decl.indexOf("\n        required:");
-    expect(props).toBeGreaterThan(-1);
-    expect(required).toBeGreaterThan(props);
-    return decl.slice(props, required);
-  }
+  beforeAll(async () => {
+    const { MCP_TOOL_DEFINITIONS } = await import("../../../src/interfaces/mcp/server.js");
+    properties = (tool) => {
+      const def = MCP_TOOL_DEFINITIONS.find((t) => t.name === tool);
+      expect(def, tool).toBeDefined();
+      expect(def!.inputSchema.additionalProperties).toBe(false);
+      return def!.inputSchema.properties as Record<string, unknown>;
+    };
+  });
 
   it.each(["recall", "recall_session"])("%s declares scope and read_scopes inside properties", (tool) => {
-    const block = propertiesBlock(tool);
-    expect(block).toContain("scope: {");
-    expect(block).toContain("read_scopes: {");
+    const props = properties(tool);
+    expect(props.scope).toBeDefined();
+    expect(props.read_scopes).toBeDefined();
   });
 
   it.each(["remember", "remember_batch"])("%s declares scope inside properties", (tool) => {
-    const block = propertiesBlock(tool);
-    expect(block).toContain("scope: {");
-    expect(block).not.toContain("read_scopes: {");
+    const props = properties(tool);
+    expect(props.scope).toBeDefined();
+    expect(props.read_scopes).toBeUndefined();
   });
 
   it("recall_drill is untouched (drills an already-scoped session result)", () => {
-    expect(propertiesBlock("recall_drill")).not.toContain("scope: {");
+    expect(properties("recall_drill").scope).toBeUndefined();
   });
 });
