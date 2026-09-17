@@ -722,7 +722,12 @@ The one exception is the launchd dream daemon, whose launcher (`scripts/run-drea
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `ANTHROPIC_API_KEY` | — | Enables the Anthropic provider (final tier of the LLM cascade) |
-| `OPENROUTER_API_KEY` | — | Enables the OpenRouter provider (middle tier) |
+| `OPENROUTER_API_KEY` | — | Enables the OpenRouter provider |
+| `ENGRAM_OPENAI_BASE_URL` | `https://api.openai.com/v1` | Generic OpenAI-compatible route: OpenAI, a LiteLLM gateway (`http://localhost:4000`), a self-hosted server. A bare origin gets `/v1` appended |
+| `ENGRAM_OPENAI_MODEL` | — | Model served by that route; setting it activates the `openai` tier |
+| `ENGRAM_OPENAI_API_KEY_ENV` | `OPENAI_API_KEY` | *Name* of the environment variable holding the route's credential. Engram reads it at call time and never stores, prints or commits the value |
+| `ENGRAM_OPENAI_TEMPERATURE` | — | Sent only when set; the generic route omits `temperature` by default because many gateways and reasoning models reject it |
+| `ENGRAM_LLM_PROVIDERS` | `ollama,openai,openrouter,anthropic` | Tier order, comma-separated. A tier left out is never tried; unknown names are ignored with a warning |
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama endpoint; used first if reachable |
 | `ENGRAM_LOCAL_MODEL` | `qwen2.5:7b` | Ollama model name (must be pulled on the Ollama host) |
 | `ENGRAM_LOCAL_MODEL_FALLBACKS` | — | Comma-separated Ollama models tried in order when `ENGRAM_LOCAL_MODEL` is not pulled (e.g. `llama3.1:8b,qwen3:8b`) |
@@ -749,11 +754,21 @@ falls back to `~/.local/share/engram` on every platform, so existing installs ne
 where `XDG_DATA_HOME` is normally unset, the default stays `~/.local/share/engram`). Every component
 (CLI, MCP server, dream daemon, web visualizer) resolves paths through this one rule.
 
-**LLM providers.** Extraction and the dream pipeline try Ollama first (if `OLLAMA_HOST` answers
-and `ENGRAM_LOCAL_MODEL` — or one of `ENGRAM_LOCAL_MODEL_FALLBACKS` — is pulled there; otherwise the
-local tier is skipped with a one-time warning listing the models the host does have),
-then OpenRouter (if `OPENROUTER_API_KEY` is set), then Anthropic (if `ANTHROPIC_API_KEY` is set).
-`engram doctor` shows which local model, if any, the Ollama tier resolved to.
+**LLM providers.** Extraction and the dream pipeline walk a cascade of tiers, by default Ollama
+(if `OLLAMA_HOST` answers and `ENGRAM_LOCAL_MODEL` — or one of `ENGRAM_LOCAL_MODEL_FALLBACKS` — is
+pulled there; otherwise the local tier is skipped with a one-time warning listing the models the
+host does have), then the generic **OpenAI-compatible** route (if `ENGRAM_OPENAI_MODEL` is set:
+OpenAI, a LiteLLM or other gateway, a self-hosted server, with the credential read from the env var
+named by `ENGRAM_OPENAI_API_KEY_ENV`), then OpenRouter (if `OPENROUTER_API_KEY` is set), then
+Anthropic (if `ANTHROPIC_API_KEY` is set). `ENGRAM_LLM_PROVIDERS` reorders or restricts the tiers,
+e.g. `openai,anthropic`. `engram doctor` shows the order, each tier's endpoint/model and which env
+var its key comes from (never the key), and which local model the Ollama tier resolved to.
+
+The security boundary for the generic route: Engram is told a *variable name*, not a secret. Each
+deployment maps its own credential to that variable outside the repository (shell profile, the
+service env file `~/.config/engram/env`, a wrapper, or the supervisor's environment); no token is
+ever written to config, logs or `--plan` output. OpenRouter and the generic route share one
+OpenAI-wire client, so request compatibility fixes apply to both.
 At least one must be configured for `engram extract` and `engram dream`; search, `remember`,
 `remember_batch`, and the web visualizer do not need an LLM.
 

@@ -737,7 +737,10 @@ const COMMITMENTS_MAX_TOKENS = 2048;
  * on its own (SPEC.md INV-3).
  */
 export function hasCommitmentsProvider(): boolean {
-  return Boolean(process.env.OPENROUTER_API_KEY || process.env.ANTHROPIC_API_KEY || process.env.ENGRAM_LOCAL_MODEL);
+  return Boolean(
+    process.env.OPENROUTER_API_KEY || process.env.ANTHROPIC_API_KEY || process.env.ENGRAM_LOCAL_MODEL ||
+    process.env.ENGRAM_OPENAI_MODEL, // generic OpenAI-compatible route (#45)
+  );
 }
 
 /**

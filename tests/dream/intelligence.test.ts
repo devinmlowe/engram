@@ -758,12 +758,14 @@ describe("cascade diagnostics", () => {
     await expect(promise).rejects.toThrow(/401/);
 
     const err = await promise.catch((e: unknown) => e as CascadeError);
-    expect(err.tierErrors.map((t) => t.tier)).toEqual(["ollama", "openrouter", "anthropic"]);
+    // #45: the generic openai tier sits between ollama and openrouter and is skipped (config) when unconfigured
+    expect(err.tierErrors.map((t) => t.tier)).toEqual(["ollama", "openai", "openrouter", "anthropic"]);
     expect(err.tierErrors[0].errorClass).toBe("config");
-    expect(err.tierErrors[1]).toMatchObject({ errorClass: "provider" });
-    expect(err.tierErrors[1].message).toMatch(/401/);
-    expect(err.tierErrors[2]).toMatchObject({ errorClass: "config" });
-    expect(err.tierErrors[2].message).toMatch(/ANTHROPIC_API_KEY/);
+    expect(err.tierErrors[1]).toMatchObject({ tier: "openai", errorClass: "config" });
+    expect(err.tierErrors[2]).toMatchObject({ errorClass: "provider" });
+    expect(err.tierErrors[2].message).toMatch(/401/);
+    expect(err.tierErrors[3]).toMatchObject({ errorClass: "config" });
+    expect(err.tierErrors[3].message).toMatch(/ANTHROPIC_API_KEY/);
   });
 
   it("generate() reports the same per-tier failures", async () => {

@@ -15,10 +15,13 @@ import type {
   GenerationOptions,
   TierError,
   TierOutcome,
+  LlmProvider,
 } from "./types.js";
 import { CascadeError, tierErrorMessage } from "./types.js";
 import { resolveOllamaModel, ollamaGenerateStructured, ollamaGenerate } from "./providers/ollama.js";
 import { openrouterGenerateStructured, openrouterGenerate, classifyHttpStatus } from "./providers/openrouter.js";
+import { openaiGenerateStructured, openaiGenerate, openaiRoute, resolveOpenAIRouteConfig, OPENAI_BASE_URL_ENV } from "./providers/openai-compatible.js";
+import { ALL_PROVIDERS, DEFAULT_PROVIDER_ORDER } from "./types.js";
 import {
   apiGenerateStructured,
   apiGenerate,
@@ -36,7 +39,11 @@ export type {
   TierError,
   TierErrorClass,
 } from "./types.js";
-export { CascadeError } from "./types.js";
+export { CascadeError, ALL_PROVIDERS, DEFAULT_PROVIDER_ORDER } from "./types.js";
+export {
+  resolveOpenAIRouteConfig, normalizeBaseUrl, openaiRoute,
+  OPENAI_BASE_URL_ENV, OPENAI_MODEL_ENV, OPENAI_API_KEY_ENV_ENV, OPENAI_TEMPERATURE_ENV, DEFAULT_OPENAI_API_KEY_ENV,
+} from "./providers/openai-compatible.js";
 
 // ─── Re-export provider functions for external use ───────────────
 
@@ -84,7 +91,76 @@ export function buildIntelligenceConfig(
     apiModel: config.dream.apiModel,
     apiFallbackModel: config.dream.apiFallbackModel,
     timeoutMs: DEFAULT_TIMEOUT_MS,
+    openai: resolveOpenAIRouteConfig(process.env),
+    providerOrder: parseProviderOrder(process.env.ENGRAM_LLM_PROVIDERS),
   };
+}
+
+export const PROVIDER_ORDER_ENV = "ENGRAM_LLM_PROVIDERS";
+
+/**
+ * ENGRAM_LLM_PROVIDERS: comma-separated tier names in the order to try
+ * (e.g. "openai,anthropic"). Unknown names are dropped with a one-time
+ * warning; an empty or absent value means DEFAULT_PROVIDER_ORDER. A tier
+ * left out is never tried, whatever else is configured.
+ */
+export function parseProviderOrder(raw: string | undefined, warn: (m: string) => void = console.warn): LlmProvider[] {
+  const names = (raw ?? "").split(",").map((s) => s.trim().toLowerCase()).filter((s) => s.length > 0);
+  if (names.length === 0) return [...DEFAULT_PROVIDER_ORDER];
+  const order: LlmProvider[] = [];
+  for (const n of names) {
+    if ((ALL_PROVIDERS as readonly string[]).includes(n)) {
+      if (!order.includes(n as LlmProvider)) order.push(n as LlmProvider);
+    } else {
+      warn(`[llm] ${PROVIDER_ORDER_ENV}: unknown provider "${n}" ignored (known: ${ALL_PROVIDERS.join(", ")})`);
+    }
+  }
+  return order.length > 0 ? order : [...DEFAULT_PROVIDER_ORDER];
+}
+
+export interface ProviderStatus {
+  tier: LlmProvider;
+  /** true when the tier is configured well enough to be tried (Ollama: reachable and model pulled is checked separately). */
+  configured: boolean;
+  /** Never contains a credential value. */
+  detail: string;
+}
+
+/**
+ * Diagnostics for `engram doctor`: the tier order and each tier's config
+ * state. Names env vars, endpoints and models; never key values.
+ */
+export function describeProviders(
+  config: IntelligenceConfig,
+  env: Record<string, string | undefined> = process.env,
+): { order: LlmProvider[]; tiers: ProviderStatus[] } {
+  const order = config.providerOrder ?? [...DEFAULT_PROVIDER_ORDER];
+  const tiers: ProviderStatus[] = order.map((tier) => {
+    switch (tier) {
+      case "ollama":
+        return { tier, configured: true, detail: `${config.ollamaModel} at ${config.ollamaUrl} (probed live by the ollama check)` };
+      case "openai": {
+        const r = openaiRoute(config, env);
+        if ("failure" in r) return { tier, configured: false, detail: r.failure.message };
+        return {
+          tier, configured: true,
+          detail: `${config.openai!.model} at ${config.openai!.baseUrl}, key from ${config.openai!.apiKeyEnv}${config.openai!.temperature !== undefined ? `, temperature ${config.openai!.temperature}` : ", no temperature sent"}`,
+        };
+      }
+      case "openrouter":
+        return env.OPENROUTER_API_KEY
+          ? { tier, configured: Boolean(config.openrouterModel), detail: config.openrouterModel ? `${config.openrouterModel} via openrouter.ai, key from OPENROUTER_API_KEY` : "skipped: no OpenRouter model configured" }
+          : { tier, configured: false, detail: "skipped: OPENROUTER_API_KEY not set" };
+      case "anthropic":
+        return env.ANTHROPIC_API_KEY
+          ? { tier, configured: true, detail: `${config.apiModel} (fallback ${config.apiFallbackModel}), key from ANTHROPIC_API_KEY` }
+          : { tier, configured: false, detail: "skipped: ANTHROPIC_API_KEY not set" };
+    }
+  });
+  if (!order.includes("openai") && config.openai) {
+    tiers.push({ tier: "openai", configured: false, detail: `configured (${OPENAI_BASE_URL_ENV}) but not in ${PROVIDER_ORDER_ENV}; never tried` });
+  }
+  return { order, tiers };
 }
 
 // ─── Cascade Diagnostics ─────────────────────────────────────────
@@ -189,12 +265,14 @@ export async function generateStructured<T>(
   config: IntelligenceConfig,
   options: GenerationOptions = {},
 ): Promise<GenerationResult<T>> {
-  return runCascade<T>([
-    () => ollamaTier<T>(config, options.skipLocal ?? false, (model) =>
+  const tiers: Record<LlmProvider, () => Promise<TierOutcome<T>>> = {
+    ollama: () => ollamaTier<T>(config, options.skipLocal ?? false, (model) =>
       ollamaGenerateStructured<T>(systemPrompt, userPrompt, schema, { ...config, ollamaModel: model }, options)),
-    () => openrouterGenerateStructured<T>(systemPrompt, userPrompt, schema, config, options),
-    () => anthropicTier<T>(() => apiGenerateStructured<T>(systemPrompt, userPrompt, schema, config, options)),
-  ]);
+    openai: () => openaiGenerateStructured<T>(systemPrompt, userPrompt, schema, config, options),
+    openrouter: () => openrouterGenerateStructured<T>(systemPrompt, userPrompt, schema, config, options),
+    anthropic: () => anthropicTier<T>(() => apiGenerateStructured<T>(systemPrompt, userPrompt, schema, config, options)),
+  };
+  return runCascade<T>((config.providerOrder ?? DEFAULT_PROVIDER_ORDER).map((p) => tiers[p]));
 }
 
 /**
@@ -209,10 +287,12 @@ export async function generate(
   userPrompt: string,
   config: IntelligenceConfig,
 ): Promise<GenerationResult<string>> {
-  return runCascade<string>([
-    () => ollamaTier<string>(config, false, (model) =>
+  const tiers: Record<LlmProvider, () => Promise<TierOutcome<string>>> = {
+    ollama: () => ollamaTier<string>(config, false, (model) =>
       ollamaGenerate(systemPrompt, userPrompt, { ...config, ollamaModel: model })),
-    () => openrouterGenerate(systemPrompt, userPrompt, config),
-    () => anthropicTier<string>(() => apiGenerate(systemPrompt, userPrompt, config)),
-  ]);
+    openai: () => openaiGenerate(systemPrompt, userPrompt, config),
+    openrouter: () => openrouterGenerate(systemPrompt, userPrompt, config),
+    anthropic: () => anthropicTier<string>(() => apiGenerate(systemPrompt, userPrompt, config)),
+  };
+  return runCascade<string>((config.providerOrder ?? DEFAULT_PROVIDER_ORDER).map((p) => tiers[p]));
 }
