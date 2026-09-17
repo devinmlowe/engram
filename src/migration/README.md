@@ -22,5 +22,5 @@ Data migration utilities for importing conversation history from the legacy supe
 ## See Also
 
 - [docs/research/data-migration-strategy.md](../../docs/research/data-migration-strategy.md) — Migration analysis and design
-- [SPEC-legacy.md](../../SPEC-legacy.md) — Phase 2 migration specification
+- [SPEC-legacy.md](../../docs/history/SPEC-legacy.md) — Phase 2 migration specification (archived)
 - [tests/migration/](../../tests/migration/) — Migration test suite

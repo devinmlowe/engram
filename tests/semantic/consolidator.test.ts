@@ -12,11 +12,15 @@ import {
   findNearestMemories,
   recordAccess,
 } from "../../src/semantic/memory.js";
-import { createTestDb } from "../helpers.js";
+import { createTestDb, cosineSimilarity } from "../helpers.js";
 import type { TestDb } from "../helpers.js";
 import type { Memory } from "../../src/semantic/types.js";
 import type { ExtractedFact } from "../../src/semantic/types.js";
-import { INITIAL_STABILITY } from "../../src/semantic/types.js";
+import {
+  INITIAL_STABILITY,
+  TRANSIENT_STABILITY,
+  TRANSIENT_IMPORTANCE_CAP,
+} from "../../src/semantic/types.js";
 
 // ─── Mocks ──────────────────────────────────────────────────────
 
@@ -411,5 +415,320 @@ describe("consolidateFacts", () => {
     // Second fact should merge with the first one inserted
     expect(results[1].action).toBe("merge");
     expect(results[1].mergedWithId).toBe(results[0].memoryId);
+  });
+});
+
+// ─── W9: dream noise reduction ──────────────────────────────────
+
+/** A unit vector within `noise` of `base` (cosine stays above 0.95). */
+function perturbEmbedding(base: number[], noise: number, seed: number): number[] {
+  const n = seededEmbedding(seed, base.length);
+  const v = base.map((x, i) => x + noise * n[i]);
+  const norm = Math.sqrt(v.reduce((s, x) => s + x * x, 0));
+  return v.map((x) => x / norm);
+}
+
+function countMemories(): number {
+  return (t.db.prepare("SELECT COUNT(*) AS n FROM memories").get() as { n: number }).n;
+}
+
+describe("consolidateFacts — intra-batch near-duplicate collapse (W9a)", () => {
+  it("three near-identical statements in one batch yield one memory with unioned source exchanges", async () => {
+    // Distinct embeddings per content prove the collapse happened on
+    // normalised text, not on the vector path.
+    let seed = 700;
+    mockedEmbedDocument.mockImplementation(async () => seededEmbedding(seed++));
+
+    const facts = [
+      createTestFact({ content: "The BLE SPEC is missing mcumgr/SMP DFU service references.", sourceExchangeIds: ["ex-1"] }),
+      createTestFact({ content: "The BLE SPEC is missing mcumgr/SMP DFU service references", sourceExchangeIds: ["ex-2"] }),
+      createTestFact({ content: "the ble spec is missing mcumgr/smp dfu service references.", sourceExchangeIds: ["ex-3", "ex-1"] }),
+    ];
+
+    const results = await consolidateFacts(t.db, facts, "conv-001");
+
+    // One result per input fact, in input order; members point at the survivor.
+    expect(results).toHaveLength(3);
+    expect(results[0].action).toBe("insert");
+    expect(results[1].action).toBe("merge");
+    expect(results[1].mergedWithId).toBe(results[0].memoryId);
+    expect(results[2].action).toBe("merge");
+    expect(results[2].mergedWithId).toBe(results[0].memoryId);
+    // members are flagged so the dream report can count them (#23)
+    expect(results[0].collapsed).toBeUndefined();
+    expect(results[1].collapsed).toBe(true);
+    expect(results[2].collapsed).toBe(true);
+
+    expect(countMemories()).toBe(1);
+    const memory = getMemory(t.db, results[0].memoryId);
+    expect(memory?.sourceExchanges).toEqual(["ex-1", "ex-2", "ex-3"]);
+    // Only the survivor is embedded — no wasted embedding calls for members.
+    expect(mockedEmbedDocument).toHaveBeenCalledTimes(1);
+  });
+
+  it("cosine-near duplicates within a batch collapse before insert (mock embeddings)", async () => {
+    const base = seededEmbedding(900);
+    const near = perturbEmbedding(base, 0.1, 901);
+    const far = seededEmbedding(902);
+    mockedEmbedDocument.mockImplementation(async (content: string) => {
+      if (content.startsWith("Variant L")) return base;
+      if (content.startsWith("The Variant L")) return near;
+      return far;
+    });
+
+    const facts = [
+      createTestFact({ content: "Variant L SPEC replaced J-Link programming tools with the Programmer dongle.", sourceExchangeIds: ["ex-10"], confidence: 0.4 }),
+      createTestFact({ content: "The Variant L SPEC swapped J-Link tools for the Programmer dongle.", sourceExchangeIds: ["ex-11"], confidence: 0.8 }),
+      createTestFact({ content: "The user's shell is Fish.", sourceExchangeIds: ["ex-12"] }),
+    ];
+
+    const results = await consolidateFacts(t.db, facts, "conv-001");
+
+    expect(results).toHaveLength(3);
+    expect(results[0].action).toBe("insert");
+    expect(results[1].action).toBe("merge");
+    expect(results[1].mergedWithId).toBe(results[0].memoryId);
+    expect(results[1].similarity).toBeGreaterThanOrEqual(0.95);
+    expect(results[1].collapsed).toBe(true);
+    expect(results[2].action).toBe("insert");
+    expect(results[2].memoryId).not.toBe(results[0].memoryId);
+    expect(results[2].collapsed).toBeUndefined();
+
+    expect(countMemories()).toBe(2);
+    const survivor = getMemory(t.db, results[0].memoryId);
+    // higher-confidence member supplies the content; sources are unioned
+    expect(survivor?.content).toBe("The Variant L SPEC swapped J-Link tools for the Programmer dongle.");
+    expect(survivor?.confidence).toBe(0.8);
+    expect(survivor?.sourceExchanges).toEqual(["ex-10", "ex-11"]);
+  });
+
+  it("still merges a batch member into an existing DB memory (DB dedup unchanged)", async () => {
+    const shared = seededEmbedding(950);
+    mockedEmbedDocument.mockResolvedValue(shared);
+    const existing = createTestMemory({ id: "mem-existing", content: "Existing memory" });
+    insertMemory(t.db, existing, shared);
+
+    const results = await consolidateFacts(t.db, [
+      createTestFact({ content: "Existing memory, restated" }),
+      createTestFact({ content: "Existing memory, restated again" }),
+    ], "conv-001");
+
+    expect(results.map((r) => r.action)).toEqual(["merge", "merge"]);
+    expect(results.every((r) => r.mergedWithId === "mem-existing")).toBe(true);
+    expect(countMemories()).toBe(1);
+  });
+});
+
+describe("deduplicateFact — transient-status handling (W9b)", () => {
+  it("stores status facts with the transient stability tier and capped importance", async () => {
+    mockedEmbedDocument.mockResolvedValue(seededEmbedding(1000));
+    const result = await deduplicateFact(
+      t.db,
+      createTestFact({
+        type: "fact",
+        content: "Phase 6A (Adaptive Chunking) for Engram is complete, adding 23 new tests, all passing.",
+        importance: 0.7,
+      }),
+      "conv-001",
+    );
+    expect(result.action).toBe("insert");
+    const memory = getMemory(t.db, result.memoryId);
+    expect(memory?.importance).toBe(TRANSIENT_IMPORTANCE_CAP);
+    expect(memory?.stability).toBe(TRANSIENT_STABILITY);
+    expect(memory?.stability).toBeLessThan(INITIAL_STABILITY.fact);
+    // Persisted, not just in-memory: the raw column carries the tier.
+    const row = t.db.prepare("SELECT stability FROM memories WHERE id = ?").get(result.memoryId) as { stability: number };
+    expect(row.stability).toBe(TRANSIENT_STABILITY);
+  });
+
+  it("leaves durable facts on the type's default stability with importance intact", async () => {
+    mockedEmbedDocument.mockResolvedValue(seededEmbedding(1001));
+    const result = await deduplicateFact(
+      t.db,
+      createTestFact({ type: "decision", content: "We decided to use SQLite with sqlite-vec for the database layer.", importance: 0.7 }),
+      "conv-001",
+    );
+    const memory = getMemory(t.db, result.memoryId);
+    expect(memory?.importance).toBe(0.7);
+    expect(memory?.stability).toBeUndefined();
+  });
+
+  it("applies the transient policy on the conflict UPDATE path too", async () => {
+    const existingEmb = seededEmbedding(1002);
+    insertMemory(t.db, createTestMemory({ id: "mem-old", content: "The migration is not started.", importance: 0.6 }), existingEmb);
+    mockedEmbedDocument.mockResolvedValue(perturbEmbedding(existingEmb, 0.35, 1003));
+    mockedClassifyNli.mockResolvedValue({ entailment: 0.1, contradiction: 0.85, neutral: 0.05 });
+    setupMockConflictClient("update", "Newer status supersedes");
+
+    const result = await deduplicateFact(
+      t.db,
+      createTestFact({ content: "The migration is in progress.", importance: 0.6 }),
+      "conv-001",
+    );
+    expect(result.action).toBe("conflict");
+    const memory = getMemory(t.db, result.memoryId);
+    expect(memory?.importance).toBe(TRANSIENT_IMPORTANCE_CAP);
+    expect(memory?.stability).toBe(TRANSIENT_STABILITY);
+  });
+});
+
+describe("deduplicateFact — model-supplied confidence (W9c)", () => {
+  it("persists the model's confidence when present", async () => {
+    mockedEmbedDocument.mockResolvedValue(seededEmbedding(1100));
+    const result = await deduplicateFact(t.db, createTestFact({ content: "Confident fact", confidence: 0.83 }), "conv-001");
+    expect(getMemory(t.db, result.memoryId)?.confidence).toBe(0.83);
+  });
+
+  it("falls back to 0.5 only when confidence is absent", async () => {
+    mockedEmbedDocument.mockResolvedValue(seededEmbedding(1101));
+    const result = await deduplicateFact(t.db, createTestFact({ content: "Unscored fact" }), "conv-001");
+    expect(getMemory(t.db, result.memoryId)?.confidence).toBe(0.5);
+  });
+
+  it("clamps out-of-range confidence into [0, 1]", async () => {
+    mockedEmbedDocument.mockResolvedValueOnce(seededEmbedding(1102)).mockResolvedValueOnce(seededEmbedding(1103));
+    const high = await deduplicateFact(t.db, createTestFact({ content: "Overconfident fact", confidence: 1.7 }), "conv-001");
+    const low = await deduplicateFact(t.db, createTestFact({ content: "Negative confidence fact", confidence: -0.3 }), "conv-001");
+    expect(getMemory(t.db, high.memoryId)?.confidence).toBe(1);
+    expect(getMemory(t.db, low.memoryId)?.confidence).toBe(0);
+  });
+
+  it("carries confidence through the conflict KEEP_BOTH path", async () => {
+    const existingEmb = seededEmbedding(1104);
+    insertMemory(t.db, createTestMemory({ id: "mem-old2", content: "The default port is 3000." }), existingEmb);
+    mockedEmbedDocument.mockResolvedValue(perturbEmbedding(existingEmb, 0.35, 1105));
+    mockedClassifyNli.mockResolvedValue({ entailment: 0.1, contradiction: 0.85, neutral: 0.05 });
+    setupMockConflictClient("keep_both", "Both ports are used in different environments");
+
+    const result = await deduplicateFact(
+      t.db,
+      createTestFact({ content: "The default port is 3001.", confidence: 0.91 }),
+      "conv-001",
+    );
+    expect(result.action).toBe("conflict");
+    expect(getMemory(t.db, result.memoryId)?.confidence).toBe(0.91);
+  });
+});
+
+// ─── W12: no supersession ping-pong ─────────────────────────────
+
+/**
+ * Live DB 2026-09-16: in the >=5-copy duplicate groups 170/194 rows were
+ * inactive with superseded_by set — contradictory pairs from re-extracted
+ * historical conversations ("SPEC is missing X" / "SPEC now includes X")
+ * superseding each other back and forth across runs.
+ */
+describe("resolveMemoryConflict refuses supersession ping-pong (W12)", () => {
+  const CONTRADICTION = { entailment: 0.05, contradiction: 0.85, neutral: 0.1 };
+
+  /** Seed A (base embedding) and supersede it with B via a mocked UPDATE. */
+  async function seedChain(base: number[]): Promise<{ aId: string; bId: string; bEmbedding: number[] }> {
+    const aId = "mem-A";
+    insertMemory(t.db, createTestMemory({ id: aId, content: "The BLE SPEC is missing mcumgr/SMP DFU service references." }), base);
+    const bEmbedding = perturbEmbedding(base, 0.35, 2001);
+    mockedEmbedDocument.mockResolvedValue(bEmbedding);
+    mockedClassifyNli.mockResolvedValue(CONTRADICTION);
+    setupMockConflictClient("update", "The SPEC was updated");
+    const b = await deduplicateFact(
+      t.db,
+      createTestFact({ content: "The BLE SPEC now includes a DFU Service section." }),
+      "conv-B",
+    );
+    expect(b.action).toBe("conflict");
+    expect(getMemory(t.db, aId)?.supersededBy).toBe(b.memoryId);
+    return { aId, bId: b.memoryId, bEmbedding };
+  }
+
+  function conflictRows(): Array<{ memory_id: string; conflicting_memory_id: string; resolution: string | null; description: string }> {
+    return t.db.prepare("SELECT memory_id, conflicting_memory_id, resolution, description FROM conflicts ORDER BY rowid").all() as never;
+  }
+
+  it("feeding A's content again after B superseded A creates no memory, keeps B active, records a conflict", async () => {
+    const base = seededEmbedding(2000);
+    const { aId, bId } = await seedChain(base);
+    const resolutions = vi.fn().mockResolvedValue({
+      content: [{ type: "tool_use", id: "t", name: "resolve_conflict", input: { action: "update", reasoning: "flip back" } }],
+    });
+    setConsolidatorClient({ messages: { create: resolutions } } as unknown as import("@anthropic-ai/sdk").default);
+
+    // Same statement as A, as a fresh candidate: nearest active neighbour is B
+    // (NLI band, contradiction), and B's predecessor A normalised-equals it.
+    mockedEmbedDocument.mockResolvedValue(base);
+    const result = await deduplicateFact(
+      t.db,
+      createTestFact({ content: "The BLE SPEC is missing mcumgr/SMP DFU service references" }),
+      "conv-A-again",
+    );
+
+    expect(result.action).toBe("skip");
+    expect(result.memoryId).toBe(bId);
+    expect(result.conflictId).toBeDefined();
+    expect(resolutions).not.toHaveBeenCalled();
+    expect(countMemories()).toBe(2);
+    expect(getMemory(t.db, bId)?.isActive).toBe(true);
+    expect(getMemory(t.db, bId)?.supersededBy).toBeUndefined();
+    expect(getMemory(t.db, aId)?.isActive).toBe(false);
+
+    const rows = conflictRows();
+    expect(rows).toHaveLength(2); // the original A→B update, plus the refusal
+    expect(rows[1]).toMatchObject({ memory_id: bId, conflicting_memory_id: aId, resolution: null });
+    expect(rows[1].description).toMatch(/ping-pong/i);
+  });
+
+  it("detects the predecessor by embedding cosine when the wording differs", async () => {
+    const base = seededEmbedding(2100);
+    const { bId } = await seedChain(base);
+    setupMockConflictClient("update", "flip back");
+
+    mockedEmbedDocument.mockResolvedValue(perturbEmbedding(base, 0.05, 2101)); // cosine ~0.999 with A
+    const result = await deduplicateFact(
+      t.db,
+      createTestFact({ content: "mcumgr/SMP DFU service references are absent from the BLE SPEC." }),
+      "conv-A-reworded",
+    );
+
+    expect(result.action).toBe("skip");
+    expect(result.memoryId).toBe(bId);
+    expect(countMemories()).toBe(2);
+  });
+
+  it("a genuinely new contradiction still supersedes normally", async () => {
+    const base = seededEmbedding(2200);
+    const { bId, bEmbedding } = await seedChain(base);
+    setupMockConflictClient("update", "The DFU service was removed again");
+
+    // Near B (NLI band) but far from A's vector and text.
+    const cEmbedding = perturbEmbedding(bEmbedding, 0.35, 2201);
+    expect(cosineSimilarity(cEmbedding, base)).toBeLessThan(0.95);
+    mockedEmbedDocument.mockResolvedValue(cEmbedding);
+    const result = await deduplicateFact(
+      t.db,
+      createTestFact({ content: "The BLE SPEC dropped DFU entirely in favour of USB-only updates." }),
+      "conv-C",
+    );
+
+    expect(result.action).toBe("conflict");
+    expect(getMemory(t.db, bId)?.isActive).toBe(false);
+    expect(getMemory(t.db, bId)?.supersededBy).toBe(result.memoryId);
+    expect(countMemories()).toBe(3);
+  });
+
+  it("walks the superseded_by chain at most 5 hops", async () => {
+    // m0 <- m1 <- ... <- m6 (m6 active). m0 carries the candidate's content:
+    // 6 hops up from m6, beyond the bound, so the normal path runs.
+    const base = seededEmbedding(2300);
+    const content = (i: number) => (i === 0 ? "Chain root statement." : `Chain statement ${i}.`);
+    for (let i = 0; i <= 6; i++) {
+      insertMemory(t.db, createTestMemory({ id: `m${i}`, content: content(i), isActive: i === 6 }), seededEmbedding(2300 + i));
+      if (i > 0) t.db.prepare("UPDATE memories SET superseded_by = ? WHERE id = ?").run(`m${i}`, `m${i - 1}`);
+    }
+    mockedEmbedDocument.mockResolvedValue(perturbEmbedding(seededEmbedding(2306), 0.35, 2399));
+    mockedClassifyNli.mockResolvedValue(CONTRADICTION);
+    setupMockConflictClient("update", "supersedes m6");
+
+    const result = await deduplicateFact(t.db, createTestFact({ content: "Chain root statement" }), "conv-chain");
+    expect(result.action).toBe("conflict");
+    expect(getMemory(t.db, "m6")?.supersededBy).toBe(result.memoryId);
+    void base;
   });
 });

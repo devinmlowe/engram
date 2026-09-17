@@ -9,7 +9,7 @@ const program = new Command();
 program
   .name("engram")
   .description("Cognitive memory system for Claude Code")
-  .version("0.1.0");
+  .version("0.2.0");
 
 // ─── sync ──────────────────────────────────────────────────────
 
@@ -69,6 +69,10 @@ program
   )
   .option("--budget <tokens>", "Token budget for results", "1500")
   .option("--json", "Print the raw RecallResponse as JSON (ids, metadata, dateFilter)")
+  .option(
+    "--no-reinforce",
+    "Do not reinforce returned memories (skip FSRS access_count/stability growth)",
+  )
   .action(async (query, opts) => {
     const { unifiedSearch, formatRecallXml } = await import(
       "../shared/search.js"
@@ -94,6 +98,7 @@ program
         before: opts.before,
         dateHint: opts.dateHint,
         dateBasis: opts.dateBasis as "filed" | "event",
+        reinforce: opts.reinforce !== false,
       }, config);
 
       if (opts.json) {
@@ -282,12 +287,19 @@ program
 
       // Consolidate
       console.log("\nConsolidating...");
-      initConsolidator();
+      await initConsolidator();
 
+      // W2: extracted facts inherit the conversation's tenant scope (ADR-010)
+      const convScope = (
+        db.prepare("SELECT scope FROM conversations WHERE id = ?").get(conversationId) as
+          | { scope: string | null }
+          | undefined
+      )?.scope ?? "global";
       const consolidationResults = await consolidateFacts(
         db,
         result.facts,
         conversationId,
+        { scope: convScope },
       );
 
       // Report
@@ -729,11 +741,21 @@ program
     const db = getDatabase(config);
     try {
       const depth = parseInt(opts.depth, 10);
-      const result = exploreEntity(db, {
-        entity,
-        depth: Math.min(Math.max(depth, 1), 3),
-        relationshipTypes: opts.type ? [opts.type] : undefined,
-      });
+      let result;
+      try {
+        result = exploreEntity(db, {
+          entity,
+          depth: Math.min(Math.max(depth, 1), 3),
+          relationshipTypes: opts.type ? [opts.type] : undefined,
+        });
+      } catch (err) {
+        // graph SPEC POST-2: unknown entity is a descriptive throw
+        if (err instanceof Error && err.message.startsWith("Entity not found")) {
+          console.error(err.message);
+          process.exit(1);
+        }
+        throw err;
+      }
       console.log(`\n${result.centerEntity.name} (${result.centerEntity.type})`);
       if (result.centerEntity.description) {
         console.log(`  ${result.centerEntity.description}`);
@@ -774,9 +796,10 @@ program
   )
   .option("--conversation <id>", "Process a specific conversation")
   .option("--dry-run", "Show what would be processed without making changes")
+  .option("--force", "Re-extract conversations even when unchanged since their last extraction")
   .option("--verbose", "Show detailed progress")
   .action(async (opts) => {
-    const { runDream } = await import("../../dream/daemon.js");
+    const { runDream, formatDreamSummary } = await import("../../dream/daemon.js");
     const { initEmbeddings } = await import("../../_core/embeddings/index.js");
     const config = loadConfig();
     const db = getDatabase(config);
@@ -792,6 +815,7 @@ program
         phases,
         conversationId: opts.conversation,
         dryRun: opts.dryRun,
+        force: opts.force,
         verbose: opts.verbose,
         onProgress: (phase, processed, total, errors) => {
           if (opts.verbose) {
@@ -806,26 +830,8 @@ program
         process.stdout.write("\n");
       }
 
-      console.log("\nDream complete:");
-      for (const phase of report.phases) {
-        console.log(
-          `  ${phase.phase}: ${phase.itemsProcessed} items, ${phase.errors} errors (${phase.durationMs}ms)`,
-        );
-      }
       console.log("");
-      console.log(`  New memories:      ${report.newMemories}`);
-      console.log(`  Updated memories:  ${report.updatedMemories}`);
-      console.log(`  New entities:      ${report.newEntities}`);
-      console.log(`  New relationships: ${report.newRelationships}`);
-      console.log(`  Conflicts:         ${report.conflictsDetected}`);
-      console.log(`  Pruned:            ${report.memoriesPruned}`);
-      console.log(
-        `  Commitments:       ${report.commitmentsExtracted ?? 0} new ` +
-          `(${report.commitmentCandidates ?? 0} candidates, ${report.commitmentRejected ?? 0} rejected, ${report.commitmentDuplicates ?? 0} duplicates)`,
-      );
-
-      const durationSec = report.completedAt - report.startedAt;
-      console.log(`  Duration:          ${durationSec}s`);
+      for (const line of formatDreamSummary(report)) console.log(line);
     } finally {
       closeDatabase();
     }
@@ -1041,6 +1047,93 @@ program
     } else {
       console.log("\nHealth: some checks failed");
       process.exit(1);
+    }
+  });
+
+// ─── export ─────────────────────────────────────────────────────
+
+program
+  .command("export")
+  .description(
+    "Export memories, entities, relationships, and commitments as JSONL (embeddings are regenerated on import)",
+  )
+  .option("-o, --out <file>", "Write to a file instead of stdout")
+  .option("-s, --scope <scope...>", "Only memories in these scopes (default: all scopes)")
+  .option("--include-inactive", "Include superseded/inactive memories (default: active only)")
+  .option(
+    "--kinds <list>",
+    "Comma-separated record kinds: memories,entities,relationships,commitments",
+    "memories,entities,relationships,commitments",
+  )
+  .action(async (opts) => {
+    const { writeFileSync } = await import("node:fs");
+    const { exportLines, ALL_KINDS } = await import("./transfer.js");
+
+    const kinds = String(opts.kinds)
+      .split(",")
+      .map((k: string) => k.trim())
+      .filter(Boolean);
+    const unknown = kinds.filter((k) => !(ALL_KINDS as readonly string[]).includes(k));
+    if (unknown.length > 0) {
+      console.error(`Unknown kind(s): ${unknown.join(", ")}. Valid: ${ALL_KINDS.join(", ")}`);
+      process.exit(1);
+    }
+
+    const config = loadConfig();
+    const db = getDatabase(config);
+    try {
+      const lines = exportLines(db, {
+        scopes: opts.scope,
+        includeInactive: Boolean(opts.includeInactive),
+        kinds: kinds as (typeof ALL_KINDS)[number][],
+      });
+      const body = lines.join("\n") + "\n";
+      if (opts.out) {
+        writeFileSync(opts.out, body, "utf-8");
+        console.error(`Exported ${lines.length - 1} records to ${opts.out}`);
+      } else {
+        process.stdout.write(body);
+      }
+    } finally {
+      closeDatabase();
+    }
+  });
+
+// ─── import ─────────────────────────────────────────────────────
+
+program
+  .command("import <file>")
+  .description(
+    "Import a JSONL export (idempotent by id; vectors and FTS are regenerated from content)",
+  )
+  .option("-s, --scope <scope>", "Override the scope on every imported memory")
+  .option("-n, --dry-run", "Validate and report what would change without writing")
+  .action(async (file, opts) => {
+    const { readFileSync } = await import("node:fs");
+    const { importLines, formatImportSummary, ImportFormatError } = await import("./transfer.js");
+    const { initEmbeddings } = await import("../../_core/embeddings/index.js");
+
+    const lines = readFileSync(file, "utf-8").split(/\r?\n/);
+    const config = loadConfig();
+    const db = getDatabase(config);
+    try {
+      if (!opts.dryRun) await initEmbeddings(config);
+      const summary = await importLines(db, lines, {
+        scope: opts.scope,
+        dryRun: Boolean(opts.dryRun),
+        onProgress: (done, total) => {
+          if (!opts.dryRun) console.error(`  ${done}/${total} records`);
+        },
+      });
+      for (const line of formatImportSummary(summary)) console.log(line);
+    } catch (err) {
+      if (err instanceof ImportFormatError) {
+        console.error(err.message);
+        process.exit(1);
+      }
+      throw err;
+    } finally {
+      closeDatabase();
     }
   });
 

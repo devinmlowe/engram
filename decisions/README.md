@@ -27,7 +27,7 @@ Architecture Decision Records (ADRs) — documents that capture significant desi
 | [007](./007-hybrid-type-ownership.md) | Hybrid type ownership — core types vs domain-specific |
 | [008](./008-parameter-naming.md) | Parameter naming conventions (snake_case MCP, camelCase internal) |
 | [009](./009-web-visualization-theming.md) | Web visualization theming — centralized Everforest palette |
-| [010](./adr-010-memory-provider-integration.md) | External memory-provider integration via MCP (superseded; original removed for privacy) |
+| [010](./010-memory-provider-integration.md) | External memory-provider integration via MCP (superseded; original removed for privacy) |
 
 ## See Also
 

@@ -72,17 +72,20 @@ export interface ExtractedRelationship {
   context?: string; // natural language description of the relationship
 }
 
+/** Cascade tier that served an extraction (see _core/llm). */
+export type GraphExtractionTier = "local" | "openrouter" | "haiku" | "sonnet";
+
 export interface EntityExtractionResult {
   entities: ExtractedEntity[];
   model: string;
-  tier: "haiku" | "sonnet";
+  tier: GraphExtractionTier;
   durationMs: number;
 }
 
 export interface RelationshipExtractionResult {
   relationships: ExtractedRelationship[];
   model: string;
-  tier: "haiku" | "sonnet";
+  tier: GraphExtractionTier;
   durationMs: number;
 }
 

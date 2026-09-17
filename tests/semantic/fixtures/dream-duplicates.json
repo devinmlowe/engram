@@ -1,0 +1,59 @@
+{
+  "_comment": "Redacted copies of dream-extracted memory contents sampled from the live DB on 2026-09-16 (330 groups shared a 60-char prefix; the top groups were byte-identical 7-18x). Paths, names, employers and run ids are redacted. Near-identical variants (case/whitespace/trailing punctuation) are included deliberately to exercise normalised collapse. Entries that merely share a prefix but differ materially (result-rlm-v2 vs v3, the two team roles) must NOT collapse.",
+  "facts": [
+    { "type": "fact", "content": "Variant L SPEC references generic debug probes instead of the Programmer dongle for initial programming.", "importance": 0.5, "sourceExchangeIds": ["ex-101"] },
+    { "type": "fact", "content": "Variant L SPEC references generic debug probes instead of the Programmer dongle for initial programming", "importance": 0.5, "sourceExchangeIds": ["ex-102"] },
+    { "type": "fact", "content": "variant L SPEC references generic debug probes instead of the programmer dongle for initial programming.", "importance": 0.6, "sourceExchangeIds": ["ex-103"] },
+
+    { "type": "convention", "content": "The user requires the assistant to output all results to a single file: `<repo>/docs/research/markdeep-eval/result-rlm-v2.md` using a specific markdown format.", "importance": 0.7, "sourceExchangeIds": ["ex-201"] },
+    { "type": "convention", "content": "The user requires the assistant to output all results to a single file:  `<repo>/docs/research/markdeep-eval/result-rlm-v2.md` using a specific markdown format.", "importance": 0.7, "sourceExchangeIds": ["ex-202"] },
+    { "type": "convention", "content": "The user requires the assistant to output all results to a single file: `<repo>/docs/research/markdeep-eval/result-rlm-v3.md` using a specific markdown format.", "importance": 0.7, "sourceExchangeIds": ["ex-203"] },
+
+    { "type": "solution", "content": "Variant L SPEC replaced J-Link/BMP/DAP-Link programming tools with the Programmer dongle.", "importance": 0.5, "sourceExchangeIds": ["ex-301"] },
+    { "type": "solution", "content": "Variant L SPEC replaced J-Link/BMP/DAP-Link programming tools with the Programmer dongle.", "importance": 0.5, "sourceExchangeIds": ["ex-302"] },
+
+    { "type": "decision", "content": "The programmer dongle KiCad project will be kept 'flat', with project files directly in `configurations/programmer-dongle/`.", "importance": 0.7, "sourceExchangeIds": ["ex-401"] },
+    { "type": "decision", "content": "The programmer dongle KiCad project will be kept \"flat\", with project files directly in `configurations/programmer-dongle/`.", "importance": 0.7, "sourceExchangeIds": ["ex-402"] },
+    { "type": "decision", "content": "The programmer dongle KiCad project will be kept 'flat', with project files directly in `configurations/programmer-dongle/`.", "importance": 0.7, "sourceExchangeIds": ["ex-403"] },
+
+    { "type": "fact", "content": "The Engram project's MCP server is fully operational with 5 tools loaded.", "importance": 0.5, "sourceExchangeIds": ["ex-501"] },
+    { "type": "fact", "content": "The Engram project's MCP server is fully operational with 5 tools loaded.", "importance": 0.5, "sourceExchangeIds": ["ex-502"] },
+    { "type": "fact", "content": "The Engram project's MCP server is fully operational with 5 tools loaded", "importance": 0.5, "sourceExchangeIds": ["ex-503"] },
+
+    { "type": "fact", "content": "The BLE SPEC is missing mcumgr/SMP DFU service references.", "importance": 0.5, "sourceExchangeIds": ["ex-601"] },
+    { "type": "fact", "content": "The BLE SPEC is missing mcumgr/SMP DFU service references.", "importance": 0.5, "sourceExchangeIds": ["ex-602"] },
+    { "type": "fact", "content": "The BLE SPEC is missing mcumgr/SMP DFU service references.", "importance": 0.5, "sourceExchangeIds": ["ex-603"] },
+
+    { "type": "solution", "content": "The BLE interface SPEC now includes a DFU Service -- mcumgr SMP section with advertising node table, update flow, and rollback behavior.", "importance": 0.6, "sourceExchangeIds": ["ex-701"] },
+    { "type": "solution", "content": "The BLE interface SPEC now includes a DFU Service -- mcumgr SMP section with advertising node table, update flow, and rollback behavior.", "importance": 0.6, "sourceExchangeIds": ["ex-702"] },
+
+    { "type": "fact", "content": "The current date for the email monitoring run is 2026-08-09 and the run ID is <run-id>.", "importance": 0.5, "sourceExchangeIds": ["ex-801"] },
+    { "type": "fact", "content": "The current date for the email monitoring run is 2026-08-09 and the run ID is <run-id>.", "importance": 0.5, "sourceExchangeIds": ["ex-802"] },
+
+    { "type": "fact", "content": "The user's current working directory is '/Users/<user>/git/asr-server'.", "importance": 0.3, "sourceExchangeIds": ["ex-901"] },
+    { "type": "fact", "content": "The user's current working directory is '/Users/<user>/git/asr-server'.", "importance": 0.3, "sourceExchangeIds": ["ex-902"] },
+
+    { "type": "decision", "content": "The `PreCompact` hook for Engram Memory was removed from `~/.claude/settings.json` because it did not function as intended; compaction proceeded before Claude could act on the `systemMessage`.", "importance": 0.7, "sourceExchangeIds": ["ex-1001"] },
+    { "type": "decision", "content": "The `PreCompact` hook for Engram Memory was removed from `~/.claude/settings.json` because it did not function as intended; compaction proceeded before Claude could act on the `systemMessage`.", "importance": 0.7, "sourceExchangeIds": ["ex-1002"] },
+
+    { "type": "fact", "content": "10 unique candidate emails were found after deduplication, but none related to the tracked opportunities.", "importance": 0.3, "sourceExchangeIds": ["ex-1101"] },
+    { "type": "fact", "content": "10 unique candidate emails were found after deduplication, but none related to the tracked opportunities.", "importance": 0.3, "sourceExchangeIds": ["ex-1102"] },
+
+    { "type": "fact", "content": "The engram MCP server's tools are not available in the current session, possibly due to the server not connecting or missing/stale built JS at `dist/mcp/server.js`.", "importance": 0.5, "sourceExchangeIds": ["ex-1201"] },
+    { "type": "fact", "content": "The engram MCP server's tools are not available in the current session, possibly due to the server not connecting or missing/stale built JS at `dist/mcp/server.js`.", "importance": 0.5, "sourceExchangeIds": ["ex-1202"] },
+
+    { "type": "convention", "content": "The user has an alias `n8n-start` in their Fish shell configuration that switches to Node.js 20 and starts n8n.", "importance": 0.5, "sourceExchangeIds": ["ex-1301"] },
+    { "type": "convention", "content": "The user has an alias `n8n-start` in their Fish shell configuration that switches to Node.js 20 and starts n8n.", "importance": 0.5, "sourceExchangeIds": ["ex-1302"] },
+
+    { "type": "fact", "content": "Four deprecated `neomutt` skills are still loaded and appear in the system prompt skills listing, consuming description tokens and creating confusion.", "importance": 0.5, "sourceExchangeIds": ["ex-1401"] },
+    { "type": "fact", "content": "Four deprecated `neomutt` skills are still loaded and appear in the system prompt skills listing, consuming description tokens and creating confusion.", "importance": 0.5, "sourceExchangeIds": ["ex-1402"] },
+
+    { "type": "fact", "content": "The ASR server currently uses the `models/ggml-base.bin` (GGML format, ~148MB) model.", "importance": 0.5, "sourceExchangeIds": ["ex-1501"] },
+    { "type": "fact", "content": "The ASR server currently uses the `models/ggml-base.bin` (GGML format, ~148MB) model.", "importance": 0.5, "sourceExchangeIds": ["ex-1502"] },
+
+    { "type": "fact", "content": "Engram uses priority-weighted budget allocation (semantic > graph > episodic), XML output, primacy placement, and RRF fusion for context engineering.", "importance": 0.6, "sourceExchangeIds": ["ex-1601"] },
+
+    { "type": "fact", "content": "The user's role is 'preprocessor-dev' on the 'vad-optimization' team.", "importance": 0.4, "sourceExchangeIds": ["ex-1701"] },
+    { "type": "fact", "content": "The user's role is 'integrator' on the 'vad-optimization' team.", "importance": 0.4, "sourceExchangeIds": ["ex-1702"] }
+  ]
+}

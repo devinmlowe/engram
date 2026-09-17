@@ -17,18 +17,65 @@ share one config file; pick with `"transport"` in `$HERMES_HOME/engram.json`.
 
 | Hook | Behaviour |
 |------|-----------|
-| `is_available()` | `GET {base_url}/health` → True iff HTTP 200 and `status == "ok"` |
-| `prefetch(query)` | Calls the `recall` MCP tool with the user message and a small token budget; injects the XML result as turn context. Any failure returns `""`. |
-| `get_tool_schemas()` | Exactly one model tool: `engram_memory_save(content, type?, importance?)` |
-| `handle_tool_call()` | Proxies `engram_memory_save` to the `remember` MCP tool |
+| `is_available()` | Config/deps only, **no network** (MemoryProvider contract): `engram.json` parses (or is absent) and `base_url` is an http(s) URL. |
+| `initialize(session_id, …)` | Loads config, derives the profile scope, applies context gating, probes `GET {base_url}/health` once (feeds `unavailable_reason()` only), then fires one background warm-up `recall` so the daemon's embedder/reranker are hot before the first turn (`limit: 1`, `reinforce: false`; errors ignored). |
+| `prefetch(query)` | Calls the `recall` MCP tool with the user message and `prefetch_token_budget`; injects the XML result as turn context. Any failure returns `""` — a timeout additionally logs a warning (at most once per 10 min) and is shown in the recall indicator (see Troubleshooting). |
+| `recall_status()` | `Engram — recalled N memories` after a hit; a ⚠️ `Engram (recall timed out after Ns; no memory this turn)` after a timeout; nothing otherwise. |
+| `get_tool_schemas()` | Exactly one model tool: `engram_memory_save(content, type?, importance?)` → the `remember` MCP tool with `source: "user"`. Allowed in **every** agent context. |
+| `sync_turn()` | Primary context only, `sync_turns: true`: enqueues the completed user/assistant turn for the `ingest_turn` MCP tool (see Turn ingestion). Never touches the network on the caller thread. |
+| `on_memory_write()` | Primary context only, `mirror_memory_writes: true`: mirrors Hermes' built-in MEMORY.md / USER.md `add` / `replace` as `remember` (see Built-in memory mirror). `remove` is a no-op. |
 | `system_prompt_block()` | A static, byte-stable instruction block (no timestamps, no counts) |
-| `sync_turn` / `on_session_end` / `on_memory_write` / `on_pre_compress` | No-ops — engram's dream pipeline owns ingestion |
+| `on_session_end` / `on_pre_compress` | No-ops — engram's dream pipeline owns consolidation |
 | `backup_paths()` | `~/.local/share/engram/engram.db` |
+| `shutdown()` | Drains queued turns/writes for up to 2 s, stops the drain thread, closes the MCP session |
 
 A five-failure circuit breaker (120 s cooldown) mirrors the bundled mem0
 provider so a down server never adds latency to every turn. The tool is named
 `engram_memory_save` (not `engram_*`-prefixed like the MCP tools) so it cannot
 collide when the MCP server is also configured.
+
+### Contexts and write gating
+
+Hermes passes `agent_context` (`primary` | `subagent` | `cron` | `flush`) to
+`initialize()`; an absent or empty value counts as `primary`.
+
+| Path | Runs in |
+|------|---------|
+| `sync_turn`, `on_memory_write` (per-turn writes) | `primary` only |
+| `prefetch` (automatic recall) | the contexts listed in `prefetch_contexts` (default `["primary"]`; e.g. add `cron` to give scheduled jobs recall) |
+| `engram_memory_save` (explicit model tool) | every context — a cron job deciding to store a fact is a deliberate one-off write; refusing it would silently lose the fact |
+| warm-up recall in `initialize` | only when the context prefetches and `/health` was ok |
+
+### Scoping
+
+Writes are scoped to `hermes:<profile>`. The profile is the `agent_identity`
+Hermes passes to `initialize()`; without it, it is derived from `hermes_home`
+(`<root>/profiles/<name>` → `name`, the root `~/.hermes` itself → `default`),
+else `default`. So the default profile writes under `hermes:default`, and the
+profile at `~/.hermes/profiles/career` writes under `hermes:career`. Reads use
+the daemon's `ENGRAM_READ_SCOPES` (the plugin sends no `read_scopes`).
+
+### Turn ingestion (`sync_turns`)
+
+Each completed turn becomes one `ingest_turn` call with `session_id`,
+`turn_index`, `scope`, `user_text`, `assistant_text`, `timestamp`,
+`source: "hermes"` and, when the assistant used tools, a compact
+`tool_calls` list. `turn_index` is a per-session, in-process counter starting
+at 0; the server upserts on `(session_id, turn_index)`, so a restarted gateway
+re-ingesting a resumed session updates rows in place instead of duplicating
+them. Turns ride a bounded in-memory queue (16 items, drop-oldest — a dropped
+turn leaves a `turn_index` gap the server tolerates) drained by one background
+thread; items reaching the drain while the breaker is open are skipped (dropped), and `shutdown()` flushes what it can for up to 2 s.
+Ingested turns are what the nightly dream pipeline extracts memories from,
+inheriting the profile scope.
+
+### Built-in memory mirror (`mirror_memory_writes`)
+
+`add` / `replace` of the Hermes MEMORY.md (`memory` → type `fact`) and USER.md
+(`user` → type `preference`) memory tool are mirrored as `remember` under the
+profile scope with `source: "import"` and importance 0.6. `replace` sends only
+the new text: engram's `remember` dedup merges/supersedes the old wording
+there. Writes share the turn queue and drain thread.
 
 ## What the stdio transport does
 
@@ -48,10 +95,13 @@ optional.
 
 | Key | Transport | Default | Meaning |
 |-----|-----------|---------|---------|
-| `transport` | both | `http` | `http` or `stdio` |
-| `base_url` | http | `http://127.0.0.1:9907` | MCP server base URL (`/mcp` and `/health` hang off it) |
-| `timeout_secs` | http | `2` | HTTP timeout for health + per-turn recall |
-| `prefetch_token_budget` | http | `300` | recall token budget per turn |
+| `transport` | both | `http` | `http` or `stdio` (unknown values fall back to `http` with a warning) |
+| `base_url` | http | `http://127.0.0.1:9907` | MCP server base URL (`/mcp` and `/health` hang off it); must be http(s) or `is_available()` is false |
+| `timeout_secs` | http | `4.0` | HTTP timeout for the health probe, the warm-up and per-turn recall. Cold recall on a ~17K-memory store measured ≈ 2 s (warm 0.7–1.1 s); Hermes caps external prefetch at 8 s. Minimum 0.1. |
+| `prefetch_token_budget` | http | `300` | `recall` token budget per turn (clamped to 100–5000) |
+| `sync_turns` | http | `true` | enqueue every primary-context turn to `ingest_turn` |
+| `mirror_memory_writes` | http | `true` | mirror built-in MEMORY.md / USER.md adds and replaces to `remember` |
+| `prefetch_contexts` | http | `["primary"]` | agent contexts that get automatic recall; a JSON list or comma-separated string of `primary`, `subagent`, `cron`, `flush` (unknown names dropped; empty → default) |
 | `repo_path` | stdio | this checkout | engram checkout containing `dist/` |
 | `node_path` | stdio | PATH lookup | node >= 22 binary |
 | `db_path` | stdio | engram default | override the SQLite DB |
@@ -60,7 +110,8 @@ optional.
 | `idle_kill_s` | stdio | `600` | reap the Node child after idle |
 
 ```json
-{ "base_url": "http://127.0.0.1:9907", "timeout_secs": 2, "prefetch_token_budget": 300 }
+{ "base_url": "http://127.0.0.1:9907", "timeout_secs": 4, "prefetch_token_budget": 300,
+  "sync_turns": true, "mirror_memory_writes": true, "prefetch_contexts": ["primary"] }
 ```
 
 ## Layout
@@ -108,6 +159,17 @@ memory:
 ```
 
 Rollback: `hermes memory off` (or delete the plugin directory).
+
+## Troubleshooting (http transport)
+
+| Symptom | Cause / what to check |
+|---------|-----------------------|
+| `hermes memory status` shows engram installed but `unavailable_reason()` says "unreachable at …/health" | The daemon is down. The plugin still activates (`is_available()` is config-only) and degrades: recall returns nothing, writes queue and drop. Check the `ai.hermes.engram-mcp` LaunchAgent / `curl {base_url}/health`. A later successful call clears the reason. |
+| Recall indicator shows ⚠️ `Engram (recall timed out after 4s; no memory this turn)` and the log has `engram recall timed out after 4.0s` | The first recall of a session is cold, or the daemon is loaded. The warm-up on `initialize()` normally hides the cold start; if misses persist, raise `timeout_secs` (≤ 8) or check the daemon's load. The warning repeats at most every 10 minutes; the indicator shows every miss. |
+| Log: `engram circuit breaker tripped after 5 consecutive failures; pausing calls for 120s` | Five failed calls in a row (any tool). Recall returns nothing and queued turns/writes reaching the drain thread are skipped (dropped) until the cooldown ends; nothing is replayed. |
+| Memories land under `hermes:default` instead of the profile | The gateway did not pass `agent_identity` and `hermes_home` was not `<root>/profiles/<name>`. Run the profile's own gateway (its `HERMES_HOME`) or check the `agent_identity` it reports. |
+| Turns are not ingested | Non-primary context (`subagent`/`cron`/`flush` never ingest), `sync_turns: false`, an empty session id, or the breaker is open. Debug-level log lines say which. |
+| Two engram tool sets appear to the model | The MCP server is also wired as `mcp_servers.engram`. That is fine: this plugin's only tool is `engram_memory_save`, chosen not to collide. |
 
 ## Tests
 

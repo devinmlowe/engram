@@ -56,4 +56,4 @@ Research surveys, technology evaluations, and analysis documents that informed d
 ## See Also
 
 - [decisions/](../../decisions/) — Decisions derived from this research
-- [SPEC-legacy.md](../../SPEC-legacy.md) — Original vision document with inline research references
+- [SPEC-legacy.md](../history/SPEC-legacy.md) — Original vision document with inline research references (archived)

@@ -131,7 +131,8 @@ vi.mock("../../src/semantic/decay.js", () => ({
 
 // ─── Imports (after mocks) ───────────────────────────────────────
 
-import { runDream } from "../../src/dream/daemon.js";
+import { runDream, formatDreamSummary } from "../../src/dream/daemon.js";
+import { CascadeError } from "../../src/_core/llm/index.js";
 import { syncConversations } from "../../src/episodic/sync.js";
 import { extractFromConversation } from "../../src/semantic/extractor.js";
 import { consolidateFacts } from "../../src/semantic/consolidator.js";
@@ -401,6 +402,83 @@ describe("Error handling", () => {
     expect(checkpoints[0].item_id).toBe("conv-001");
     expect(checkpoints[0].error_class).toBeTruthy();
   });
+
+  it("extract checkpoint error_message names the failing LLM tier, not only the Anthropic one (#15)", async () => {
+    seedConversation("conv-001");
+
+    const cascade = new CascadeError([
+      { tier: "ollama", errorClass: "config", message: "skipped: Ollama unavailable at http://localhost:11434 or model qwen2.5:7b not pulled" },
+      { tier: "openrouter", errorClass: "provider", message: "OpenRouter API error 401: {\"error\":{\"message\":\"User not found.\",\"code\":401}}" },
+      { tier: "anthropic", errorClass: "config", message: "skipped: ANTHROPIC_API_KEY not set" },
+    ]);
+    // The extractor wraps the cascade with a per-conversation prefix and keeps it as `cause`.
+    vi.mocked(extractFromConversation).mockRejectedValue(
+      new Error(`All extraction tiers failed for conversation conv-001: ${cascade.message}`, { cause: cascade }),
+    );
+
+    await runDream(t.db, t.config);
+
+    const rows = t.db
+      .prepare(
+        "SELECT error_class, error_message FROM dream_checkpoints WHERE phase = 'extract' AND item_id = 'conv-001' AND status = 'error' ORDER BY attempt_count",
+      )
+      .all() as Array<{ error_class: string; error_message: string }>;
+
+    expect(rows.length).toBeGreaterThanOrEqual(1);
+    for (const row of rows) {
+      expect(row.error_message).toMatch(/openrouter \(provider\): OpenRouter API error 401/);
+      expect(row.error_message).toMatch(/anthropic \(config\): skipped: ANTHROPIC_API_KEY not set/);
+      expect(row.error_message.length).toBeLessThanOrEqual(500);
+    }
+    // A rejected key is a provider error — not retried as "unknown".
+    expect(rows[0].error_class).toBe("provider");
+  });
+
+  it("an always-failing cascade leaves exactly one extract error row per conversation per run, with attempt_count counting the retry (#24)", async () => {
+    seedConversation("conv-001");
+    seedConversation("conv-002");
+
+    // Transient class → the retry pass re-attempts, and the second failure
+    // used to insert a second row (unknown/transient + permanent).
+    const cascade = new CascadeError([
+      { tier: "ollama", errorClass: "config", message: "skipped: Ollama not reachable at http://localhost:11434" },
+      { tier: "openrouter", errorClass: "transient", message: "OpenRouter request timed out after 3 attempts" },
+      { tier: "anthropic", errorClass: "config", message: "skipped: ANTHROPIC_API_KEY not set" },
+    ]);
+    vi.mocked(extractFromConversation).mockRejectedValue(
+      new Error(`All extraction tiers failed for conversation: ${cascade.message}`, { cause: cascade }),
+    );
+
+    const rowsFor = (convId: string) =>
+      t.db
+        .prepare(
+          "SELECT run_id, status, error_class, attempt_count FROM dream_checkpoints WHERE phase = 'extract' AND item_id = ? ORDER BY processed_at",
+        )
+        .all(convId) as Array<{ run_id: string; status: string; error_class: string; attempt_count: number }>;
+
+    const first = await runDream(t.db, t.config);
+    expect(first.phases.find((p) => p.phase === "extract")!.errors).toBe(2);
+
+    for (const convId of ["conv-001", "conv-002"]) {
+      const rows = rowsFor(convId);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].status).toBe("error");
+      // initial attempt + the retry pass, on the same row
+      expect(rows[0].attempt_count).toBe(2);
+      // same class on retry → escalated to permanent, once
+      expect(rows[0].error_class).toBe("permanent");
+    }
+
+    // A second run is a new run_id: it gets its own single row and never
+    // duplicates the first run's.
+    await runDream(t.db, t.config);
+    for (const convId of ["conv-001", "conv-002"]) {
+      const rows = rowsFor(convId);
+      expect(rows).toHaveLength(2);
+      expect(new Set(rows.map((r) => r.run_id)).size).toBe(2);
+      expect(rows.map((r) => r.attempt_count)).toEqual([2, 2]);
+    }
+  });
 });
 
 // ─── Phase Runners ───────────────────────────────────────────────
@@ -512,6 +590,90 @@ describe("Phase runners", () => {
       await runDream(t.db, t.config, { phases: ["extract", "consolidate"] });
 
       expect(consolidateFacts).toHaveBeenCalledTimes(1);
+    });
+
+    it("a tool_use-less LLM response is a transient per-batch error: one checkpoint, next batch still consolidated (#30)", async () => {
+      seedConversation("conv-001");
+      seedConversation("conv-002");
+      vi.mocked(extractFromConversation).mockResolvedValue({
+        facts: [{ type: "fact", content: "test fact", importance: 0.7, sourceExchangeIds: [] }],
+        model: "test-model",
+        tier: "haiku",
+        confidence: 8,
+        durationMs: 100,
+      });
+
+      // What the factory throws when neither Anthropic model returns a tool_use block.
+      const cascade = new CascadeError([
+        { tier: "ollama", errorClass: "config", message: "skipped: Ollama not reachable at http://localhost:11434" },
+        { tier: "openrouter", errorClass: "config", message: "skipped: OPENROUTER_API_KEY not set" },
+        { tier: "anthropic", errorClass: "unknown", message: "No tool_use block in API response" },
+      ]);
+      const consolidated: string[] = [];
+      vi.mocked(consolidateFacts).mockImplementation(async (_db, _facts, conversationId) => {
+        if (conversationId === "conv-001") throw cascade;
+        consolidated.push(conversationId);
+        return [{ action: "insert", memoryId: "mem-002" }];
+      });
+
+      const report = await runDream(t.db, t.config, { phases: ["extract", "consolidate"] });
+
+      const phase = report.phases.find((p) => p.phase === "consolidate")!;
+      expect(phase.errors).toBe(1);
+      expect(phase.itemsProcessed).toBe(1);
+      expect(consolidated).toEqual(["conv-002"]);
+
+      const rows = t.db
+        .prepare(
+          "SELECT item_id, status, error_class, error_message, attempt_count FROM dream_checkpoints WHERE phase = 'consolidate' ORDER BY item_id",
+        )
+        .all() as Array<Record<string, unknown>>;
+      expect(rows).toHaveLength(2);
+      expect(rows[0]).toMatchObject({ item_id: "conv-001", status: "error", error_class: "transient", attempt_count: 1 });
+      expect(String(rows[0].error_message)).toMatch(/anthropic \(unknown\): No tool_use block in API response/);
+      expect(rows[1]).toMatchObject({ item_id: "conv-002", status: "success" });
+    });
+  });
+
+  describe("Consolidate phase collapse counter (#23)", () => {
+    it("reports collapsedCandidates from intra-batch and cross-batch collapse, and prints it in the CLI summary", async () => {
+      seedConversation("conv-001");
+      seedConversation("conv-002");
+      // conv-002's candidate is an exact (normalised) duplicate of conv-001's
+      // first → folded by the run-level collapse. conv-001's second is a
+      // near-duplicate (different words) → survives to the batch, where the
+      // consolidator's embedding collapse (mocked) folds it. 3 in, 1 memory out.
+      vi.mocked(extractFromConversation).mockImplementation(async (convId: string) => ({
+        facts: convId === "conv-001"
+          ? [
+              { type: "convention", content: "The project uses ESM modules.", importance: 0.7, sourceExchangeIds: ["e1"] },
+              { type: "convention", content: "The project uses ESM modules throughout.", importance: 0.7, sourceExchangeIds: ["e2"] },
+            ]
+          : [{ type: "convention", content: "The project uses ESM modules!", importance: 0.7, sourceExchangeIds: ["e3"] }],
+        model: "test-model",
+        tier: "haiku",
+        confidence: 8,
+        durationMs: 1,
+      }));
+      vi.mocked(consolidateFacts).mockImplementation(async (_db, facts) =>
+        facts.map((_f, i) =>
+          i === 0
+            ? { action: "insert", memoryId: "mem-esm" }
+            : { action: "merge", memoryId: "mem-esm", mergedWithId: "mem-esm", similarity: 1, collapsed: true },
+        ),
+      );
+
+      const report = await runDream(t.db, t.config, { phases: ["extract", "consolidate"] });
+
+      // cross-batch: conv-002's candidate folded (1); intra-batch: conv-001's second (1)
+      expect(report.collapsedCandidates).toBe(2);
+      const batchSizes = vi.mocked(consolidateFacts).mock.calls.map((c) => c[1].length);
+      expect(batchSizes).toEqual([2, 0]); // conv-002's only candidate was folded into conv-001's batch
+      expect(report.newMemories).toBe(1);
+
+      const summary = formatDreamSummary(report);
+      expect(summary).toContain("  Collapsed dupes:   2");
+      expect(summary.indexOf("  Collapsed dupes:   2")).toBeGreaterThan(summary.indexOf("  Skipped unchanged: 0"));
     });
   });
 
@@ -646,5 +808,172 @@ describe("Run lifecycle", () => {
     expect(progressCalls.length).toBeGreaterThan(0);
     expect(progressCalls[0].phase).toBe("extract");
     expect(progressCalls[0].processed).toBe(1);
+  });
+});
+
+// ─── W9: persisted stability reaches the decay model in prune ───
+
+describe("Prune phase honours persisted stability (W9b)", () => {
+  it("passes memories.stability through to isPruneEligible", async () => {
+    insertActiveMemory("mem-transient");
+    insertActiveMemory("mem-durable");
+    t.db.prepare("UPDATE memories SET stability = 7 WHERE id = 'mem-transient'").run();
+
+    await runDream(t.db, t.config, { phases: ["prune"] });
+
+    const seen = vi.mocked(isPruneEligible).mock.calls.map((c) => c[0] as { id: string; stability?: number });
+    expect(seen.find((m) => m.id === "mem-transient")?.stability).toBe(7);
+    expect(seen.find((m) => m.id === "mem-durable")?.stability).toBeUndefined();
+  });
+});
+
+// ─── W12: unchanged conversations are not re-extracted ──────────
+
+/**
+ * Live DB 2026-09-16: 1,928 conversations carried 31,297 extract checkpoints
+ * (1,193 extracted >= 5 times) because every run re-extracted every
+ * conversation. The extract phase now fingerprints each conversation's
+ * exchanges on its success checkpoint and skips unchanged ones on later runs.
+ */
+describe("Extract phase skips unchanged conversations (W12)", () => {
+  const oneFact = {
+    facts: [{ type: "fact", content: "test fact", importance: 0.7, sourceExchangeIds: [] }],
+    model: "test-model",
+    tier: "haiku",
+    confidence: 8,
+    durationMs: 1,
+  };
+
+  function latestExtractCheckpoint(convId: string): { fingerprint: string | null } | undefined {
+    return t.db
+      .prepare(
+        "SELECT fingerprint FROM dream_checkpoints WHERE phase = 'extract' AND status = 'success' AND item_id = ? ORDER BY rowid DESC LIMIT 1",
+      )
+      .get(convId) as { fingerprint: string | null } | undefined;
+  }
+
+  beforeEach(() => {
+    vi.mocked(extractFromConversation).mockResolvedValue(oneFact);
+  });
+
+  it("a second run over an unchanged conversation extracts nothing and reports skippedUnchanged = 1", async () => {
+    seedConversation("conv-same");
+
+    const report1 = await runDream(t.db, t.config, { phases: ["extract"] });
+    expect(extractFromConversation).toHaveBeenCalledTimes(1);
+    expect(report1.skippedUnchanged ?? 0).toBe(0);
+    expect(latestExtractCheckpoint("conv-same")?.fingerprint).toEqual(expect.any(String));
+
+    vi.mocked(extractFromConversation).mockClear();
+    const report2 = await runDream(t.db, t.config, { phases: ["extract", "consolidate"] });
+
+    expect(extractFromConversation).not.toHaveBeenCalled();
+    expect(report2.skippedUnchanged).toBe(1);
+    expect(report2.phases.find((p) => p.phase === "extract")?.itemsProcessed).toBe(0);
+    expect(report2.newMemories).toBe(0);
+  });
+
+  it("re-extracts a conversation whose exchanges changed", async () => {
+    seedConversation("conv-edited");
+    await runDream(t.db, t.config, { phases: ["extract"] });
+    vi.mocked(extractFromConversation).mockClear();
+
+    t.db
+      .prepare("UPDATE exchanges SET assistant_message = ? WHERE id = ?")
+      .run("A much longer assistant response that changes the transcript", "conv-edited-exch-1");
+
+    const report = await runDream(t.db, t.config, { phases: ["extract"] });
+    expect(extractFromConversation).toHaveBeenCalledTimes(1);
+    expect(report.skippedUnchanged).toBe(0);
+  });
+
+  it("re-extracts a conversation after a same-length in-place edit, and still skips it when untouched (#23)", async () => {
+    seedConversation("conv-inplace");
+    await runDream(t.db, t.config, { phases: ["extract"] });
+    const before = latestExtractCheckpoint("conv-inplace")?.fingerprint;
+
+    // Untouched → same fingerprint, skipped.
+    vi.mocked(extractFromConversation).mockClear();
+    const unchanged = await runDream(t.db, t.config, { phases: ["extract"] });
+    expect(extractFromConversation).not.toHaveBeenCalled();
+    expect(unchanged.skippedUnchanged).toBe(1);
+    expect(latestExtractCheckpoint("conv-inplace")?.fingerprint).toBe(before);
+
+    // ingest_turn-style upsert: same id, index, timestamp and byte length,
+    // different words. A length-only digest called this "unchanged".
+    const current = t.db
+      .prepare("SELECT assistant_message AS m FROM exchanges WHERE id = ?")
+      .get("conv-inplace-exch-1") as { m: string };
+    const edited = current.m.split("").reverse().join("");
+    expect(edited).not.toBe(current.m);
+    expect(edited.length).toBe(current.m.length);
+    t.db.prepare("UPDATE exchanges SET assistant_message = ? WHERE id = ?").run(edited, "conv-inplace-exch-1");
+
+    vi.mocked(extractFromConversation).mockClear();
+    const report = await runDream(t.db, t.config, { phases: ["extract"] });
+    expect(extractFromConversation).toHaveBeenCalledTimes(1);
+    expect(report.skippedUnchanged).toBe(0);
+    expect(latestExtractCheckpoint("conv-inplace")?.fingerprint).not.toBe(before);
+  });
+
+  it("re-extracts a conversation that grew by an exchange", async () => {
+    seedConversation("conv-grown", 2);
+    await runDream(t.db, t.config, { phases: ["extract"] });
+    vi.mocked(extractFromConversation).mockClear();
+
+    insertExchange("conv-grown-exch-2", "conv-grown", 2);
+
+    await runDream(t.db, t.config, { phases: ["extract"] });
+    expect(extractFromConversation).toHaveBeenCalledTimes(1);
+  });
+
+  it("force ignores fingerprints and re-extracts", async () => {
+    seedConversation("conv-forced");
+    await runDream(t.db, t.config, { phases: ["extract"] });
+    vi.mocked(extractFromConversation).mockClear();
+
+    const report = await runDream(t.db, t.config, { phases: ["extract"], force: true });
+    expect(extractFromConversation).toHaveBeenCalledTimes(1);
+    expect(report.skippedUnchanged ?? 0).toBe(0);
+  });
+
+  it("a legacy checkpoint without a fingerprint is extracted once more, then skipped", async () => {
+    seedConversation("conv-legacy");
+    // Older run that checkpointed conv-legacy before fingerprints existed.
+    t.db
+      .prepare("INSERT INTO dream_runs (id, started_at, completed_at) VALUES ('run-legacy', 1000, 1001)")
+      .run();
+    t.db
+      .prepare(
+        "INSERT INTO dream_checkpoints (id, run_id, phase, item_id, processed_at, status) VALUES ('cp-legacy', 'run-legacy', 'extract', 'conv-legacy', 1001, 'success')",
+      )
+      .run();
+    expect(latestExtractCheckpoint("conv-legacy")?.fingerprint).toBeNull();
+
+    const report1 = await runDream(t.db, t.config, { phases: ["extract"] });
+    expect(extractFromConversation).toHaveBeenCalledTimes(1);
+    expect(report1.skippedUnchanged ?? 0).toBe(0);
+    expect(latestExtractCheckpoint("conv-legacy")?.fingerprint).toEqual(expect.any(String));
+
+    vi.mocked(extractFromConversation).mockClear();
+    const report2 = await runDream(t.db, t.config, { phases: ["extract"] });
+    expect(extractFromConversation).not.toHaveBeenCalled();
+    expect(report2.skippedUnchanged).toBe(1);
+  });
+
+  it("skipped conversations are still checkpointed in the new run (resume accounting)", async () => {
+    seedConversation("conv-cp");
+    await runDream(t.db, t.config, { phases: ["extract"] });
+    await runDream(t.db, t.config, { phases: ["extract"] });
+
+    const run = t.db
+      .prepare("SELECT id FROM dream_runs ORDER BY started_at DESC, rowid DESC LIMIT 1")
+      .get() as { id: string };
+    const row = t.db
+      .prepare(
+        "SELECT fingerprint FROM dream_checkpoints WHERE run_id = ? AND phase = 'extract' AND item_id = 'conv-cp' AND status = 'success'",
+      )
+      .get(run.id) as { fingerprint: string | null } | undefined;
+    expect(row?.fingerprint).toEqual(expect.any(String));
   });
 });

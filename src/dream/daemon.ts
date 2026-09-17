@@ -22,6 +22,7 @@ import type { EngramConfig } from "../_core/types/index.js";
 import { loadConfig } from "../_core/config/index.js";
 import type { ExtractedFact } from "../semantic/types.js";
 import { OpenRouterError } from "../_core/llm/providers/openrouter.js";
+import { CascadeError } from "../_core/llm/index.js";
 import {
   createRun,
   completeRun,
@@ -33,6 +34,8 @@ import {
   getUnprocessedConversations,
   getRetryableItems,
   prioritizeConversations,
+  computeConversationFingerprint,
+  getLatestExtractFingerprints,
 } from "./scheduler.js";
 
 // ─── Types ───────────────────────────────────────────────────────
@@ -56,6 +59,8 @@ export interface DreamOptions {
   conversationId?: string;
   dryRun?: boolean;
   verbose?: boolean;
+  /** Re-extract every conversation even when its fingerprint is unchanged (W12). */
+  force?: boolean;
   onProgress?: (phase: DreamPhase, processed: number, total: number, errors: number) => void;
 }
 
@@ -217,6 +222,8 @@ export async function runDream(
       newMemories: report.newMemories,
       newEntities: report.newEntities,
       memoriesPruned: report.memoriesPruned,
+      skippedUnchanged: report.skippedUnchanged ?? 0,
+      collapsedCandidates: report.collapsedCandidates ?? 0,
       commitmentsExtracted: report.commitmentsExtracted ?? 0,
     });
 
@@ -309,6 +316,32 @@ async function runExtractPhase(
   const checkpointed = getCheckpointedItems(db, runId, "extract");
   let toProcess = conversationIds.filter((id) => !checkpointed.has(id));
 
+  // W12: skip conversations whose exchanges are unchanged since their last
+  // successful extraction (any run). Skipped conversations are checkpointed
+  // in this run with the current fingerprint so resume accounting and the
+  // progress tracker see them as done. `force` bypasses the check; legacy
+  // checkpoints (no fingerprint) are extracted once more, then fingerprinted.
+  const fingerprints = new Map<string, string>();
+  if (!options.force) {
+    const latest = getLatestExtractFingerprints(db);
+    const changed: string[] = [];
+    for (const convId of toProcess) {
+      const fingerprint = computeConversationFingerprint(db, convId);
+      fingerprints.set(convId, fingerprint);
+      if (latest.get(convId) === fingerprint) {
+        recordCheckpoint(db, runId, "extract", convId, { fingerprint });
+      } else {
+        changed.push(convId);
+      }
+    }
+    const skipped = toProcess.length - changed.length;
+    report.skippedUnchanged = (report.skippedUnchanged ?? 0) + skipped;
+    if (skipped > 0) {
+      logEntry(logPath, "extract", `Skipping ${skipped} unchanged conversations (fingerprint match)`);
+    }
+    toProcess = changed;
+  }
+
   // Opt-in cap on fact extraction per run (ENGRAM_DREAM_MAX_CONVERSATIONS).
   // Unset = unlimited (nightly behaviour). Lets a manual end-to-end run stay
   // bounded — a full pass over every conversation takes 10-15 hours.
@@ -359,7 +392,9 @@ async function runExtractPhase(
       report.newRelationships += result.relationshipsCreated;
       report.conflictsDetected += result.conflictsDetected;
 
-      recordCheckpoint(db, runId, "extract", convId);
+      recordCheckpoint(db, runId, "extract", convId, {
+        fingerprint: fingerprints.get(convId) ?? computeConversationFingerprint(db, convId),
+      });
       processed++;
 
       options.onProgress?.("extract", processed, toProcess.length, errors);
@@ -369,7 +404,7 @@ async function runExtractPhase(
       recordFailure(db, runId, "extract", convId, {
         provider: "auto",
         errorClass: classifyError(err),
-        errorMessage: errorMsg.slice(0, 500),
+        errorMessage: checkpointErrorMessage(err),
       });
       errors++;
       // Skip and continue to next conversation
@@ -406,7 +441,9 @@ async function runExtractPhase(
           report.newRelationships += result.relationshipsCreated;
           report.conflictsDetected += result.conflictsDetected;
 
-          recordCheckpoint(db, runId, "extract", item.itemId);
+          recordCheckpoint(db, runId, "extract", item.itemId, {
+            fingerprint: fingerprints.get(item.itemId) ?? computeConversationFingerprint(db, item.itemId),
+          });
           processed++;
           errors--; // Recovered from previous error
 
@@ -417,7 +454,7 @@ async function runExtractPhase(
           recordFailure(db, runId, "extract", item.itemId, {
             provider: "auto",
             errorClass: classifyError(retryErr) === item.errorClass ? "permanent" : classifyError(retryErr),
-            errorMessage: retryMsg.slice(0, 500),
+            errorMessage: checkpointErrorMessage(retryErr),
           });
         }
       }
@@ -479,13 +516,20 @@ async function runConsolidatePhase(
   }
 
   const { initConsolidator, consolidateFacts } = await import("../semantic/consolidator.js");
+  const { collapseAcrossBatches } = await import("../semantic/collapse.js");
   const { initEmbeddings } = await import("../_core/embeddings/index.js");
 
   await initEmbeddings(config);
-  initConsolidator();
+  await initConsolidator();
 
-  // Retrieve pending facts from the extract phase
-  const pendingFacts = loadPendingFacts(db, runId);
+  // Retrieve pending facts from the extract phase. W9a: the same statement
+  // extracted from several conversations in one run is collapsed here (sources
+  // unioned into the first occurrence) before per-batch consolidation.
+  const { batches: pendingFacts, collapsed } = collapseAcrossBatches(loadPendingFacts(db, runId));
+  if (collapsed > 0) {
+    logEntry(logPath, "consolidate", `Collapsed ${collapsed} cross-conversation duplicate candidates before consolidation`);
+  }
+  report.collapsedCandidates = (report.collapsedCandidates ?? 0) + collapsed;
   let processed = 0;
   let errors = 0;
 
@@ -493,12 +537,16 @@ async function runConsolidatePhase(
     if (shuttingDown) break;
 
     try {
-      const results = await consolidateFacts(db, batch.facts, batch.conversationId);
+      // W2: facts inherit the source conversation's tenant scope (ADR-010).
+      const results = await consolidateFacts(db, batch.facts, batch.conversationId, {
+        scope: getConversationScope(db, batch.conversationId),
+      });
 
       for (const r of results) {
         if (r.action === "insert") report.newMemories++;
         if (r.action === "merge") report.updatedMemories++;
         if (r.action === "conflict") report.conflictsDetected++;
+        if (r.collapsed) report.collapsedCandidates = (report.collapsedCandidates ?? 0) + 1;
       }
 
       recordCheckpoint(db, runId, "consolidate", batch.conversationId);
@@ -506,8 +554,15 @@ async function runConsolidatePhase(
 
       options.onProgress?.("consolidate", processed, pendingFacts.length, errors);
     } catch (err) {
+      // Per-batch: record the failure and move on to the next conversation's
+      // facts; one LLM hiccup must not abort the phase.
       const errorMsg = err instanceof Error ? err.message : String(err);
       logEntry(logPath, "consolidate", `Error consolidating facts for ${batch.conversationId}: ${errorMsg}`);
+      recordFailure(db, runId, "consolidate", batch.conversationId, {
+        provider: "auto",
+        errorClass: classifyError(err),
+        errorMessage: checkpointErrorMessage(err),
+      });
       errors++;
     }
   }
@@ -609,7 +664,7 @@ async function runPrunePhase(
   // Fetch all active memories
   const memRows = db
     .prepare(
-      "SELECT id, type, content, confidence, importance, access_count, created_at, last_accessed, source_exchanges, is_active FROM memories WHERE is_active = 1",
+      "SELECT id, type, content, confidence, importance, access_count, created_at, last_accessed, source_exchanges, is_active, stability FROM memories WHERE is_active = 1",
     )
     .all() as Array<{
       id: string;
@@ -622,6 +677,7 @@ async function runPrunePhase(
       last_accessed: number | null;
       source_exchanges: string | null;
       is_active: number;
+      stability: number | null;
     }>;
 
   logEntry(logPath, "prune", `Scanning ${memRows.length} active memories for pruning`);
@@ -644,6 +700,8 @@ async function runPrunePhase(
       lastAccessed: row.last_accessed ?? undefined,
       sourceExchanges: row.source_exchanges ? JSON.parse(row.source_exchanges) : [],
       isActive: row.is_active === 1,
+      // Persisted FSRS tier (W9b transient facts decay on their own schedule)
+      stability: row.stability ?? undefined,
     };
 
     if (isPruneEligible(memory)) {
@@ -760,12 +818,9 @@ async function processConversation(
     dateRange: `${firstTimestamp?.split("T")[0] ?? "unknown"} to ${lastTimestamp?.split("T")[0] ?? "unknown"}`,
   };
 
-  // Determine extraction tier
-  const tier = config.dream.localModel ? "auto" : "auto";
-
-  // 1. Semantic fact extraction
+  // 1. Semantic fact extraction — "auto" lets the LLM cascade pick the tier
   const extractionResult = await extractFromConversation(
-    conversationId, exchanges, metadata, { tier },
+    conversationId, exchanges, metadata, { tier: "auto" },
   );
   const facts: ExtractedFact[] = extractionResult.facts;
 
@@ -840,6 +895,18 @@ async function processConversation(
   };
 }
 
+/**
+ * Tenant scope recorded on a conversation ('global' when the row is missing
+ * or predates the scope column). Consumed by the consolidate phase so
+ * extracted memories land in the same scope as their source turns.
+ */
+function getConversationScope(db: Database.Database, conversationId: string): string {
+  const row = db
+    .prepare("SELECT scope FROM conversations WHERE id = ?")
+    .get(conversationId) as { scope: string | null } | undefined;
+  return row?.scope ?? "global";
+}
+
 // ─── Pending Facts Storage ───────────────────────────────────────
 
 /**
@@ -896,6 +963,50 @@ function updatePhasesCompleted(
  * Maps HTTP status codes, OpenRouterError classes, and error message patterns
  * to one of: transient, provider, permanent, unknown.
  */
+/**
+ * The `engram dream` summary block: per-phase lines, a blank line, then the
+ * run counters. Exported so the CLI output can be asserted without spawning
+ * the CLI.
+ */
+export function formatDreamSummary(report: DreamReport): string[] {
+  const lines = ["Dream complete:"];
+  for (const phase of report.phases) {
+    lines.push(`  ${phase.phase}: ${phase.itemsProcessed} items, ${phase.errors} errors (${phase.durationMs}ms)`);
+  }
+  lines.push("");
+  lines.push(`  New memories:      ${report.newMemories}`);
+  lines.push(`  Updated memories:  ${report.updatedMemories}`);
+  lines.push(`  New entities:      ${report.newEntities}`);
+  lines.push(`  New relationships: ${report.newRelationships}`);
+  lines.push(`  Conflicts:         ${report.conflictsDetected}`);
+  lines.push(`  Pruned:            ${report.memoriesPruned}`);
+  lines.push(`  Skipped unchanged: ${report.skippedUnchanged ?? 0}`);
+  lines.push(`  Collapsed dupes:   ${report.collapsedCandidates ?? 0}`);
+  lines.push(
+    `  Commitments:       ${report.commitmentsExtracted ?? 0} new ` +
+      `(${report.commitmentCandidates ?? 0} candidates, ${report.commitmentRejected ?? 0} rejected, ${report.commitmentDuplicates ?? 0} duplicates)`,
+  );
+  lines.push(`  Duration:          ${report.completedAt - report.startedAt}s`);
+  return lines;
+}
+
+/**
+ * Error text persisted on an extract checkpoint (500-char column). When the
+ * failure was an LLM cascade — thrown directly or wrapped by the extractor —
+ * the cascade's own message is used so the per-tier reasons (e.g. an
+ * OpenRouter 401) lead the text instead of being pushed past the cutoff by
+ * the wrapper's prefix.
+ */
+function checkpointErrorMessage(err: unknown): string {
+  const cascade = err instanceof CascadeError
+    ? err
+    : err instanceof Error && err.cause instanceof CascadeError
+      ? err.cause
+      : null;
+  const msg = cascade ? cascade.message : err instanceof Error ? err.message : String(err);
+  return msg.slice(0, 500);
+}
+
 function classifyError(err: unknown): "transient" | "provider" | "permanent" | "unknown" {
   if (err instanceof OpenRouterError) {
     return err.errorClass;
@@ -908,8 +1019,11 @@ function classifyError(err: unknown): "transient" | "provider" | "permanent" | "
   if (/\b(401|402)\b/.test(msg) || /credit|balance|unauthorized/i.test(msg)) return "provider";
   if (/\b(400|422)\b/.test(msg)) return "permanent";
 
-  // Content patterns
+  // Content patterns. A structured-output response without its tool block
+  // (OpenRouter tool_calls, Anthropic tool_use) is model nondeterminism or
+  // output truncation — a retry can succeed.
   if (/no tool_calls or content/i.test(msg)) return "transient";
+  if (/no tool_use block/i.test(msg)) return "transient";
   if (/parse error|validation error|invalid json/i.test(msg)) return "permanent";
 
   return "unknown";

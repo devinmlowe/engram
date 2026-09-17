@@ -69,4 +69,4 @@ The semantic domain extracts, consolidates, and retrieves structured knowledge f
 | REQ-3 | Unit test | `../tests/semantic/nli.test.ts` |
 | REQ-5 | Integration test | `../tests/semantic/search.test.ts` |
 | REQ-6 | Unit test | `../tests/semantic/decay.test.ts` |
-| INV-2 | Architecture test | `../tests/semantic/types.test.ts` |
+| INV-2 | Type check (design) | Enforced by `tsc --noEmit` (`npm run lint`): the only `ExtractedFact` → `Memory` conversion is `memoryFromFact()` in `../src/semantic/consolidator.ts`, and `Memory` is what `../src/semantic/memory.ts` persists. No runtime test — there is no behaviour to observe |

@@ -7,7 +7,8 @@
  * is set (10x cheaper than Anthropic Haiku for batch workloads).
  */
 
-import type { IntelligenceConfig, GenerationResult } from "../types.js";
+import type { IntelligenceConfig, GenerationOptions, TierOutcome, TierError } from "../types.js";
+import { DEFAULT_TOOL_NAME, DEFAULT_TOOL_DESCRIPTION, tierErrorMessage } from "../types.js";
 
 const DEFAULT_MODEL = "google/gemini-2.5-flash";
 const BASE_URL = "https://openrouter.ai/api/v1";
@@ -60,7 +61,7 @@ export class OpenRouterError extends Error {
   }
 }
 
-function classifyHttpStatus(
+export function classifyHttpStatus(
   status?: number,
 ): "transient" | "provider" | "permanent" | "unknown" {
   if (!status) return "unknown";
@@ -311,16 +312,41 @@ export async function callOpenRouterText(
 // ─── Intelligence-Layer Wrappers ─────────────────────────────────
 
 /**
+ * Config-level reason the OpenRouter tier cannot run, or null when it can.
+ * Distinguishes "never tried" from a runtime failure for cascade diagnostics.
+ */
+function openrouterConfigSkip(config: IntelligenceConfig): { failure: TierError } | null {
+  const reason = !process.env.OPENROUTER_API_KEY
+    ? "skipped: OPENROUTER_API_KEY not set"
+    : !config.openrouterModel
+      ? "skipped: no OpenRouter model configured"
+      : null;
+  return reason ? { failure: { tier: "openrouter", errorClass: "config", message: reason } } : null;
+}
+
+function openrouterFailure(err: unknown): { failure: TierError } {
+  return {
+    failure: {
+      tier: "openrouter",
+      errorClass: err instanceof OpenRouterError ? err.errorClass : "unknown",
+      message: tierErrorMessage(err),
+    },
+  };
+}
+
+/**
  * Structured generation via the shared OpenRouter client.
- * Returns null on failure so the caller can fall through.
+ * Returns a `failure` outcome (never throws) so the caller can fall through.
  */
 export async function openrouterGenerateStructured<T>(
   systemPrompt: string,
   userPrompt: string,
   schema: Record<string, unknown>,
   config: IntelligenceConfig,
-): Promise<GenerationResult<T> | null> {
-  if (!config.openrouterModel) return null;
+  options: GenerationOptions = {},
+): Promise<TierOutcome<T>> {
+  const skip = openrouterConfigSkip(config);
+  if (skip) return skip;
 
   try {
     const startMs = Date.now();
@@ -330,34 +356,40 @@ export async function openrouterGenerateStructured<T>(
         { role: "user", content: userPrompt },
       ],
       {
-        name: "structured_output",
-        description: "Return structured data matching the schema",
+        name: options.toolName ?? DEFAULT_TOOL_NAME,
+        description: options.toolDescription ?? DEFAULT_TOOL_DESCRIPTION,
         parameters: { type: "object", ...schema },
       },
-      { model: config.openrouterModel, timeoutMs: config.timeoutMs },
+      {
+        model: config.openrouterModel,
+        timeoutMs: config.timeoutMs,
+        maxTokens: options.maxTokens,
+      },
     );
 
     return {
       result,
       source: "api",
+      provider: "openrouter",
       model,
       durationMs: Date.now() - startMs,
     };
-  } catch {
-    return null;
+  } catch (err) {
+    return openrouterFailure(err);
   }
 }
 
 /**
  * Free-text generation via the shared OpenRouter client.
- * Returns null on failure so the caller can fall through.
+ * Returns a `failure` outcome (never throws) so the caller can fall through.
  */
 export async function openrouterGenerate(
   systemPrompt: string,
   userPrompt: string,
   config: IntelligenceConfig,
-): Promise<GenerationResult<string> | null> {
-  if (!config.openrouterModel) return null;
+): Promise<TierOutcome<string>> {
+  const skip = openrouterConfigSkip(config);
+  if (skip) return skip;
 
   try {
     const startMs = Date.now();
@@ -372,10 +404,11 @@ export async function openrouterGenerate(
     return {
       result,
       source: "api",
+      provider: "openrouter",
       model,
       durationMs: Date.now() - startMs,
     };
-  } catch {
-    return null;
+  } catch (err) {
+    return openrouterFailure(err);
   }
 }

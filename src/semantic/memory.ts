@@ -13,6 +13,7 @@ import type { Memory, MemoryType, MemorySource, Conflict } from "./types.js";
 import {
   insertVector,
   searchVector,
+  getVector,
   deleteVector,
   insertFtsRow,
   deleteFtsRow,
@@ -126,8 +127,8 @@ export function insertMemory(
       INSERT INTO memories
         (id, type, content, context, confidence, importance, access_count,
          last_accessed, created_at, updated_at, source_exchanges, superseded_by, is_active, source, scope,
-         event_ts, extraction_basis)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         event_ts, extraction_basis, stability)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       memory.id,
       memory.type,
@@ -146,6 +147,9 @@ export function insertMemory(
       memory.scope ?? "global",
       memory.eventTs ?? resolveEventTs(db, memory.sourceExchanges),
       memory.extractionBasis ?? "observed",
+      // NULL = derive from the type's initial stability; a value pins the
+      // FSRS tier at insert (W9b transient facts).
+      memory.stability ?? null,
     );
 
     // 2. Get rowid and insert into FTS5
@@ -299,6 +303,14 @@ export function getMemory(
 
   if (!row) return null;
   return rowToMemory(row);
+}
+
+/** Stored embedding for a memory (active or not); null when none is indexed. */
+export function getMemoryEmbedding(
+  db: Database.Database,
+  id: string,
+): number[] | null {
+  return getVector(db, "vec_memories", id);
 }
 
 /**

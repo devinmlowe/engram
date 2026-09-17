@@ -39,4 +39,6 @@ export interface Conversation {
   primaryTopics?: string[];
   archivePath?: string;
   lastIndexed?: number;
+  /** Tenant scope of origin (ADR-010): 'global' or 'hermes:<profile>'. Column default 'global'. */
+  scope?: string;
 }

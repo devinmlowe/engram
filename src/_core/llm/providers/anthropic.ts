@@ -7,7 +7,12 @@
  */
 
 import Anthropic from "@anthropic-ai/sdk";
-import type { IntelligenceConfig, GenerationResult } from "../types.js";
+import type { IntelligenceConfig, GenerationResult, GenerationOptions } from "../types.js";
+import {
+  DEFAULT_MAX_TOKENS,
+  DEFAULT_TOOL_NAME,
+  DEFAULT_TOOL_DESCRIPTION,
+} from "../types.js";
 
 // ─── Module State ────────────────────────────────────────────────
 
@@ -20,6 +25,22 @@ let client: Anthropic | null = null;
  */
 export function setClient(customClient: Anthropic): void {
   client = customClient;
+}
+
+/**
+ * Whether the Anthropic tier can serve requests: either a client was
+ * injected or an API key is present. Mirrors isOpenRouterAvailable().
+ */
+export function isAnthropicAvailable(): boolean {
+  return client !== null || Boolean(process.env.ANTHROPIC_API_KEY);
+}
+
+/**
+ * Primary → fallback model order, collapsed when both are the same model
+ * (an explicit pin) so a failure is not retried against the same model.
+ */
+function modelsToTry(config: IntelligenceConfig): string[] {
+  return [...new Set([config.apiModel, config.apiFallbackModel])];
 }
 
 /**
@@ -59,13 +80,15 @@ export async function apiGenerateStructured<T>(
   userPrompt: string,
   schema: Record<string, unknown>,
   config: IntelligenceConfig,
+  options: GenerationOptions = {},
 ): Promise<GenerationResult<T>> {
   const startMs = Date.now();
   const anthropic = getClient();
 
+  const toolName = options.toolName ?? DEFAULT_TOOL_NAME;
   const tool: Anthropic.Tool = {
-    name: "structured_output",
-    description: "Return structured data matching the schema",
+    name: toolName,
+    description: options.toolDescription ?? DEFAULT_TOOL_DESCRIPTION,
     input_schema: {
       type: "object" as const,
       ...schema,
@@ -73,17 +96,16 @@ export async function apiGenerateStructured<T>(
   };
 
   // Try primary model, fall back to apiFallbackModel
-  const modelsToTry = [config.apiModel, config.apiFallbackModel];
   let lastError: unknown;
 
-  for (const model of modelsToTry) {
+  for (const model of modelsToTry(config)) {
     try {
       const response = await anthropic.messages.create({
         model,
-        max_tokens: 4096,
+        max_tokens: options.maxTokens ?? DEFAULT_MAX_TOKENS,
         system: systemPrompt,
         tools: [tool],
-        tool_choice: { type: "tool", name: "structured_output" },
+        tool_choice: { type: "tool", name: toolName },
         messages: [{ role: "user", content: userPrompt }],
       });
 
@@ -99,6 +121,7 @@ export async function apiGenerateStructured<T>(
       return {
         result: toolUseBlock.input as T,
         source: "api",
+        provider: "anthropic",
         model,
         durationMs,
       };
@@ -124,14 +147,13 @@ export async function apiGenerate(
   const startMs = Date.now();
   const anthropic = getClient();
 
-  const modelsToTry = [config.apiModel, config.apiFallbackModel];
   let lastError: unknown;
 
-  for (const model of modelsToTry) {
+  for (const model of modelsToTry(config)) {
     try {
       const response = await anthropic.messages.create({
         model,
-        max_tokens: 4096,
+        max_tokens: DEFAULT_MAX_TOKENS,
         system: systemPrompt,
         messages: [{ role: "user", content: userPrompt }],
       });
@@ -147,6 +169,7 @@ export async function apiGenerate(
       return {
         result: text,
         source: "api",
+        provider: "anthropic",
         model,
         durationMs,
       };

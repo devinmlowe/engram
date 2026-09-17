@@ -67,4 +67,4 @@ The dream domain orchestrates autonomous memory consolidation through a five-pha
 | REQ-3 | Unit test | `../tests/dream/scheduler.test.ts` |
 | REQ-4 | Integration test | `../tests/dream/daemon.test.ts` |
 | REQ-6 | Integration test | `../tests/dream/integration.test.ts` |
-| INV-2 | Integration test | `../tests/dream/idempotency.test.ts` |
+| INV-2 | Integration test | `../tests/dream/integration.test.ts` (idempotent re-run), `../tests/dream/scheduler.test.ts` (checkpoint idempotency) |

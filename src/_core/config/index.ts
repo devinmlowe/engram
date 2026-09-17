@@ -135,6 +135,10 @@ export function loadConfig(overrides?: Partial<EngramConfig>): EngramConfig {
       ...overrides?.dream,
       localModel:
         env.ENGRAM_LOCAL_MODEL ?? overrides?.dream?.localModel ?? undefined,
+      localModelFallbacks:
+        env.ENGRAM_LOCAL_MODEL_FALLBACKS !== undefined
+          ? env.ENGRAM_LOCAL_MODEL_FALLBACKS.split(",").map((m) => m.trim()).filter(Boolean)
+          : (overrides?.dream?.localModelFallbacks ?? []),
       openrouterModel:
         env.ENGRAM_OPENROUTER_MODEL ?? overrides?.dream?.openrouterModel ?? undefined,
       chunkingStrategy:

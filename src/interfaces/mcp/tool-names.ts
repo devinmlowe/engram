@@ -19,4 +19,5 @@ export const MCP_TOOL_NAMES = [
   "index_file_structure",
   "commitments",
   "commitments_update",
+  "ingest_turn",
 ] as const;

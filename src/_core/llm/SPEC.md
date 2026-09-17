@@ -21,6 +21,7 @@ Unified LLM client factory with tiered provider cascade. Owns execution mechanic
 - **REQ-4**: The module shall retry transient failures with exponential backoff and jitter. *(traces to ADR-005)*
 - **REQ-5**: The module shall sanitize content (control characters, code fences) before sending to providers. *(traces to ADR-005)*
 - **REQ-6**: The module shall check provider availability before attempting calls (Ollama ping, API key checks). *(traces to L0 PRE-4)*
+- **REQ-7**: When the configured Ollama model is not pulled, the Ollama tier shall use the first pulled entry of `ollamaModelFallbacks` (`ENGRAM_LOCAL_MODEL_FALLBACKS`); with none pulled it shall skip the tier and warn once per process, naming the missing model and the models the host reports. *(traces to L0 INV-3)*
 
 ## Interface Contract
 
@@ -34,6 +35,7 @@ Unified LLM client factory with tiered provider cascade. Owns execution mechanic
 - **POST-1**: Successful calls shall return `GenerationResult<T>` with source provider, model used, and duration.
 - **POST-2**: Permanent errors (401, 400) shall throw immediately without retry.
 - **POST-3**: Transient errors shall be retried up to 3 times before propagating.
+- **POST-4**: When every tier fails, the module shall throw a `CascadeError` whose `tierErrors` and message name each tier and its reason, distinguishing a configuration skip (`config`: missing key, model not pulled) from a runtime failure. Config skips are warned once per process; runtime failures are warned on every call.
 
 ### Invariants
 

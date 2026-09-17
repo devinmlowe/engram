@@ -77,14 +77,14 @@ Engram is a local-first cognitive memory system that ingests LLM agent conversat
 | REQ-1 | Integration test | `./tests/episodic/` |
 | REQ-2 | Integration test | `./tests/semantic/` |
 | REQ-3 | Integration test | `./tests/graph/` |
-| REQ-4 | Integration test | `./tests/search/` |
+| REQ-4 | Integration test | `./tests/retrieval/`, `./tests/contracts/search-orchestration.test.ts` |
 | REQ-5 | Integration test | `./tests/dream/` |
-| REQ-6 | Integration test | `./tests/mcp/` |
-| REQ-7 | Integration test | `./tests/cli/` |
-| REQ-8 | Unit test | `./tests/search/budget.test.ts` |
-| REQ-9 | Unit test | `./tests/dream/decay.test.ts` |
-| REQ-10 | Unit test | `./tests/semantic/conflict.test.ts` |
+| REQ-6 | Integration test | `./tests/interfaces/mcp/`, `./tests/e2e/mcp-server.test.ts` |
+| REQ-7 | Integration test | `./tests/interfaces/cli/` |
+| REQ-8 | Unit test | `./tests/retrieval/context.test.ts` (allocateBudget), `./tests/contracts/search-orchestration.test.ts` |
+| REQ-9 | Unit test | `./tests/semantic/decay.test.ts` |
+| REQ-10 | Unit test | `./tests/semantic/nli.test.ts`, `./tests/semantic/memory.test.ts` (conflict tracking) |
 | PRE-1 | Integration test | `./tests/core/db.test.ts` |
 | POST-1 | Integration test | `./tests/core/db.test.ts` |
-| POST-2 | Unit test | `./tests/search/budget.test.ts` |
-| INV-2 | Architecture test | `./tests/invariants.test.ts` |
+| POST-2 | Unit test | `./tests/retrieval/context.test.ts`, `./tests/contracts/search-orchestration.test.ts` |
+| INV-2 | Contract test | `./tests/contracts/data-paths.test.ts` (every component resolves the same DB path) |

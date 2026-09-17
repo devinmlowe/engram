@@ -29,7 +29,7 @@ cd engram
 npm install          # prints a platform preflight verdict, then builds via the "prepare" script
 npm link             # puts `engram` on your PATH (or run `node dist/interfaces/cli/index.js` directly)
 
-engram doctor        # node version, platform/arch, native modules, model cache — all [ok]?
+engram doctor        # node version, platform/arch, native modules, model cache, ollama tier — all [ok]?
 engram init          # creates engram.db in the data dir (default ~/.local/share/engram; see Configuration) and downloads the embedding model
 engram sync          # index conversations from ~/.claude/projects (optional)
 engram search "what did I decide about caching"
@@ -271,11 +271,11 @@ Four domains with shared core infrastructure:
 
 ## MCP Server
 
-14 tools for LLM agent memory operations:
+15 tools for LLM agent memory operations:
 
 | Tool | Purpose |
 |------|---------|
-| `recall` | Hybrid search (vector + FTS5 + graph) with token budget |
+| `recall` | Hybrid search (vector + FTS5 + graph) with token budget; reinforces returned memories (FSRS bookkeeping, `reinforce: false` opts out) and accepts per-call `scope` / `read_scopes` |
 | `remember` | Store a single memory (fact, decision, pattern, etc.) |
 | `show` | Retrieve full conversation or memory context |
 | `explore` | Fixed-depth graph traversal from an entity |
@@ -289,6 +289,7 @@ Four domains with shared core infrastructure:
 | `scan_file` | Regex-based file scanning with function context detection |
 | `commitments` | List tracked commitments (promises, intentions, follow-ups owed by others) — overdue first |
 | `commitments_update` | Mark a commitment done, dropped, or superseded |
+| `ingest_turn` | Record one user/assistant turn of an external agent session (`session_id`, `turn_index`, `scope`, `user_text`, `assistant_text`) — idempotent upsert into the episodic layer; extracted memories inherit the scope |
 
 ### Transports: stdio (default) and HTTP
 
@@ -342,14 +343,24 @@ service restart, never a re-install:
 git fetch origin
 git status --short        # resolve any local changes first
 git pull origin main
-# if package-lock.json changed in the diff, reinstall dependencies:
-#   npm install
-npm install               # also rebuilds via the "prepare" hook and runs the
-                          # install preflight (node >= 22, platform checks)
+npm ci                    # exact dependencies from package-lock.json; rebuilds via
+                          # the "prepare" hook and runs the install preflight
+npm run build             # only needed if you skipped npm ci
+```
+
+Schema migrations are additive and checkpointed; they run on the next database
+open (any `engram` command), so there is no separate migration step. Read
+[CHANGELOG.md](./CHANGELOG.md) for the release's upgrade notes — 0.2.0, for
+example, re-extracts every conversation once on the first dream run (bound it
+with `ENGRAM_DREAM_MAX_CONVERSATIONS`) and needs the Hermes plugin redeployed:
+
+```bash
+interfaces/hermes-plugin/deploy.sh                       # default profile
+ENGRAM_PLUGIN_PROFILES="a b" interfaces/hermes-plugin/deploy.sh   # + named profiles
 ```
 
 Then restart whatever supervises the running processes so they load the new
-`dist/` output:
+`dist/` output (and restart Hermes gateways so they load the redeployed plugin):
 
 | Platform | MCP HTTP daemon | Dream daemon | Visualizer |
 |---|---|---|---|
@@ -361,7 +372,7 @@ Verify after restarting:
 
 ```bash
 engram health      # database, embedding model, MCP entry point
-engram doctor      # node version, platform/arch, native modules, model cache
+engram doctor      # node version, platform/arch, native modules, model cache, ollama tier
 engram search "smoke test"   # end-to-end recall through the new build
 ```
 
@@ -377,20 +388,22 @@ engram sync            # Ingest conversations from Claude Code projects
 engram search <query>  # Hybrid search across all memory layers
 engram remember <text> # Store a memory
 engram extract         # LLM-based fact extraction from a conversation
-engram dream           # Run autonomous consolidation pipeline
+engram dream           # Run autonomous consolidation pipeline (--force re-extracts unchanged conversations)
 engram reflect         # Show emergent graph patterns
 engram explore <name>  # Explore entity connections
 engram entities        # List/search entities
 engram relationships   # Show relationships for an entity
 engram stats           # Database statistics
 engram health          # System health check (database, model, Ollama, MCP entry point)
-engram doctor          # Runtime diagnostics: node, platform/arch, better-sqlite3, sqlite-vec, model cache (--json)
+engram doctor          # Runtime diagnostics: node, platform/arch, better-sqlite3, sqlite-vec, model cache, ollama tier (--json)
 engram migrate --source <db>   # Import a legacy conversation-index SQLite DB (--source is required; no default path)
 engram validate --source <db>  # Validate migration integrity against that source DB
 engram backfill-event-ts  # Backfill event-time timestamps (temporal recall)
 engram commitments [status]        # List tracked commitments (same XML as the MCP tool)
 engram commitment-done <id>        # Mark a commitment done (--status dropped|superseded)
 engram commitments-extract <conv>  # Re-scan one conversation (no checkpoint; proves dedupe)
+engram export [--out f] [--scope s...] [--include-inactive] [--kinds ...]  # JSONL v1 of memories/entities/relationships/commitments (no embeddings)
+engram import <file> [--scope override] [--dry-run]  # Idempotent by id (newer wins); vectors + FTS regenerated from content
 engram mcp             # Start the MCP server (stdio; see Transports section)
 ```
 
@@ -501,7 +514,7 @@ Run via `engram dream`, the web UI dream button, or nightly at 02:00 via `script
 
 ```bash
 npm run build        # TypeScript compilation
-npm run test:run     # Run tests (vitest, 56 test files)
+npm run test:run     # Run tests (vitest, 111 test files)
 npm run mcp          # Start MCP server
 npm run dev          # Dev CLI via tsx
 npm run dream        # Run dream consolidation
@@ -540,7 +553,8 @@ The one exception is the launchd dream daemon, whose launcher (`scripts/run-drea
 | `ANTHROPIC_API_KEY` | — | Enables the Anthropic provider (final tier of the LLM cascade) |
 | `OPENROUTER_API_KEY` | — | Enables the OpenRouter provider (middle tier) |
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama endpoint; used first if reachable |
-| `ENGRAM_LOCAL_MODEL` | `qwen2.5:7b` | Ollama model name |
+| `ENGRAM_LOCAL_MODEL` | `qwen2.5:7b` | Ollama model name (must be pulled on the Ollama host) |
+| `ENGRAM_LOCAL_MODEL_FALLBACKS` | — | Comma-separated Ollama models tried in order when `ENGRAM_LOCAL_MODEL` is not pulled (e.g. `llama3.1:8b,qwen3:8b`) |
 | `ENGRAM_OPENROUTER_MODEL` | `google/gemini-2.5-flash-lite` | OpenRouter model name |
 | `ENGRAM_DATA_DIR` | platform default (see below) | Root for database, archive, and logs |
 | `ENGRAM_DB_PATH` | `$ENGRAM_DATA_DIR/engram.db` | SQLite database location |
@@ -561,14 +575,18 @@ falls back to `~/.local/share/engram` on every platform, so existing installs ne
 where `XDG_DATA_HOME` is normally unset, the default stays `~/.local/share/engram`). Every component
 (CLI, MCP server, dream daemon, web visualizer) resolves paths through this one rule.
 
-**LLM providers.** Extraction and the dream pipeline try Ollama first (if `OLLAMA_HOST` answers),
+**LLM providers.** Extraction and the dream pipeline try Ollama first (if `OLLAMA_HOST` answers
+and `ENGRAM_LOCAL_MODEL` — or one of `ENGRAM_LOCAL_MODEL_FALLBACKS` — is pulled there; otherwise the
+local tier is skipped with a one-time warning listing the models the host does have),
 then OpenRouter (if `OPENROUTER_API_KEY` is set), then Anthropic (if `ANTHROPIC_API_KEY` is set).
+`engram doctor` shows which local model, if any, the Ollama tier resolved to.
 At least one must be configured for `engram extract` and `engram dream`; search, `remember`,
 `remember_batch`, and the web visualizer do not need an LLM.
 
 ## References
 
 - [SPEC.md](./SPEC.md) — Full system specification with requirements and interface contract
-- [SPEC-legacy.md](./SPEC-legacy.md) — Original vision document with detailed design rationale
+- [CHANGELOG.md](./CHANGELOG.md) — Release notes and upgrade steps per version
+- [docs/history/SPEC-legacy.md](./docs/history/SPEC-legacy.md) — Original vision document with detailed design rationale (archived)
 - [plans/](./plans/) — Implementation plans (phases 1–4, phase 6 RLM, phase 7 extensions)
 - [decisions/](./decisions/) — Architecture Decision Records

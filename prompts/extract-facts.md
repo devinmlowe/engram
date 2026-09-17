@@ -56,6 +56,7 @@ Not all dimensions apply to every fact — use them as a lens to ensure comprehe
    - Generic technical explanations available in public documentation
    - Speculative discussion that didn't lead to a concrete action or decision
 7. If nothing in the conversation is extractable, return an **empty array**.
+8. **Prefer durable knowledge over transient status, and emit your own confidence.** Progress reports and point-in-time state ("Phase 3 is complete", "added 12 tests", "currently blocked on X", "the run ID is ...", "version bumped to 1.2") are rarely worth remembering — extract the underlying decision, convention, or solution instead, or skip them; if a status fact must be kept, score its importance at 0.3 or lower. For every fact also set `confidence` (0-1): how certain you are that the statement is accurate and correctly categorised, independent of its importance.
 
 ## Few-Shot Examples
 
@@ -77,6 +78,7 @@ Assistant: Got it, I'll use Fish shell syntax going forward. Here's the updated 
     "context": "When generating shell commands or scripts, use Fish syntax (e.g., 'set' instead of 'export', no '&&' chaining).",
     "importance": 0.7,
     "source_exchange_indexes": [3],
+    "confidence": 0.95,
     "extraction_basis": "explicit"
   }
 ]
@@ -104,6 +106,7 @@ Assistant: Good choice — better-sqlite3 is synchronous and fast, and sqlite-ve
     "context": "All imports must use .js extensions even in .ts files (ESM resolution requirement).",
     "importance": 0.7,
     "source_exchange_indexes": [12],
+    "confidence": 0.95,
     "extraction_basis": "explicit"
   },
   {
@@ -112,6 +115,7 @@ Assistant: Good choice — better-sqlite3 is synchronous and fast, and sqlite-ve
     "context": "Chosen for synchronous performance and built-in vector similarity search without external services.",
     "importance": 0.7,
     "source_exchange_indexes": [15],
+    "confidence": 0.95,
     "extraction_basis": "explicit"
   }
 ]
@@ -139,6 +143,7 @@ Assistant: Great. The pipeline is now: raw output -> layer_norm -> slice to 256 
     "context": "The correct post-processing pipeline for nomic embeddings is: raw mean-pooled output -> layer_norm -> slice to target dimensions -> L2 normalize.",
     "importance": 0.7,
     "source_exchange_indexes": [8, 9],
+    "confidence": 0.85,
     "extraction_basis": "observed"
   }
 ]
@@ -170,6 +175,7 @@ Assistant: Running `npm test`... All 47 tests pass.
     "context": "When creating test files, use vitest conventions. The user verifies changes by running the test suite.",
     "importance": 0.5,
     "source_exchange_indexes": [5, 14, 22],
+    "confidence": 0.65,
     "extraction_basis": "inferred"
   }
 ]
@@ -205,6 +211,7 @@ Assistant: Committed: "Add auth integration tests". Ready to merge.
     "context": "The user's workflow involves frequent intermediate commits rather than a single large commit at the end.",
     "importance": 0.5,
     "source_exchange_indexes": [2, 7, 11, 18],
+    "confidence": 0.7,
     "extraction_basis": "inferred"
   }
 ]

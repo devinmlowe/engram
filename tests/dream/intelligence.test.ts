@@ -6,6 +6,7 @@ import {
   generate,
   resetIntelligence,
   setClient,
+  CascadeError,
   type IntelligenceConfig,
 } from "../../src/_core/llm/index.js";
 import { loadConfig } from "../../src/_core/config/index.js";
@@ -709,5 +710,183 @@ describe("edge cases", () => {
 
     expect(result.source).toBe("api");
     expect(result.result).toEqual({ facts: [{ content: "Recovered" }] });
+  });
+});
+
+// ─── Cascade diagnostics (#15) ───────────────────────────────────
+
+describe("cascade diagnostics", () => {
+  const schema = { properties: { facts: { type: "array" } }, required: ["facts"] };
+  const savedEnv: Record<string, string | undefined> = {};
+
+  beforeEach(() => {
+    for (const key of ["OPENROUTER_API_KEY", "ANTHROPIC_API_KEY"]) {
+      savedEnv[key] = process.env[key];
+      delete process.env[key];
+    }
+  });
+
+  afterEach(() => {
+    for (const [key, value] of Object.entries(savedEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+
+  /** Ollama down, OpenRouter rejects the key with 401. */
+  function mockOllamaDownOpenRouter401(): void {
+    mockFetch(async (url: string) => {
+      if (url.includes("openrouter.ai")) {
+        return new Response(
+          JSON.stringify({ error: { message: "User not found.", code: 401 } }),
+          { status: 401 },
+        );
+      }
+      throw new TypeError("fetch failed");
+    });
+  }
+
+  it("OpenRouter 401 with no Anthropic key throws a CascadeError naming OpenRouter and 401", async () => {
+    process.env.OPENROUTER_API_KEY = "sk-or-rejected";
+    mockOllamaDownOpenRouter401();
+
+    const config = makeConfig({ openrouterModel: "google/gemini-2.5-flash-lite" });
+    const promise = generateStructured("System", "User", schema, config);
+
+    await expect(promise).rejects.toBeInstanceOf(CascadeError);
+    await expect(promise).rejects.toThrow(/openrouter/i);
+    await expect(promise).rejects.toThrow(/401/);
+
+    const err = await promise.catch((e: unknown) => e as CascadeError);
+    expect(err.tierErrors.map((t) => t.tier)).toEqual(["ollama", "openrouter", "anthropic"]);
+    expect(err.tierErrors[0].errorClass).toBe("config");
+    expect(err.tierErrors[1]).toMatchObject({ errorClass: "provider" });
+    expect(err.tierErrors[1].message).toMatch(/401/);
+    expect(err.tierErrors[2]).toMatchObject({ errorClass: "config" });
+    expect(err.tierErrors[2].message).toMatch(/ANTHROPIC_API_KEY/);
+  });
+
+  it("generate() reports the same per-tier failures", async () => {
+    process.env.OPENROUTER_API_KEY = "sk-or-rejected";
+    mockOllamaDownOpenRouter401();
+
+    const config = makeConfig({ openrouterModel: "google/gemini-2.5-flash-lite" });
+    const err = await generate("System", "User", config).catch((e: unknown) => e as CascadeError);
+
+    expect(err).toBeInstanceOf(CascadeError);
+    expect(err.message).toMatch(/openrouter \(provider\): OpenRouter API error 401/);
+  });
+
+  it("warns 'skipped' for config-skipped tiers and 'failed' for runtime failures", async () => {
+    process.env.OPENROUTER_API_KEY = "sk-or-rejected";
+    mockOllamaDownOpenRouter401();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const config = makeConfig({ openrouterModel: "google/gemini-2.5-flash-lite" });
+    await generateStructured("System", "User", schema, config).catch(() => {});
+
+    const lines = warn.mock.calls.map((c) => String(c[0]));
+    expect(lines.some((l) => /openrouter tier failed \(provider\)/.test(l))).toBe(true);
+    expect(lines.some((l) => /anthropic tier skipped \(config\)/.test(l))).toBe(true);
+    expect(lines.some((l) => /openrouter tier skipped/.test(l))).toBe(false);
+  });
+
+  it("a later tier's success still returns a result after an earlier runtime failure", async () => {
+    process.env.OPENROUTER_API_KEY = "sk-or-rejected";
+    mockOllamaDownOpenRouter401();
+    setClient(makeMockClient(vi.fn().mockResolvedValue({
+      content: [{ type: "tool_use", id: "t1", name: "structured_output", input: { facts: [] } }],
+    })));
+
+    const config = makeConfig({ openrouterModel: "google/gemini-2.5-flash-lite" });
+    const result = await generateStructured("System", "User", schema, config);
+
+    expect(result.provider).toBe("anthropic");
+  });
+});
+
+// ─── Ollama model fallbacks (#16) ────────────────────────────────
+
+describe("Ollama model fallbacks", () => {
+  const schema = { properties: { facts: { type: "array" } }, required: ["facts"] };
+  const savedEnv: Record<string, string | undefined> = {};
+
+  beforeEach(() => {
+    for (const key of ["OPENROUTER_API_KEY", "ANTHROPIC_API_KEY"]) {
+      savedEnv[key] = process.env[key];
+      delete process.env[key];
+    }
+  });
+
+  afterEach(() => {
+    for (const [key, value] of Object.entries(savedEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+
+  /** Ollama up with llama3.1:8b only; records the /api/generate bodies. */
+  function mockOllamaWithLlama(): Array<Record<string, unknown>> {
+    const bodies: Array<Record<string, unknown>> = [];
+    mockFetch(async (url: string, init?: RequestInit) => {
+      if (url.includes("/api/tags")) {
+        return new Response(
+          JSON.stringify({ models: [{ name: "llama3.1:8b" }, { name: "nomic-embed-text:latest" }] }),
+          { status: 200 },
+        );
+      }
+      if (url.includes("/api/generate")) {
+        bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        return new Response(JSON.stringify({ response: JSON.stringify({ facts: [] }) }), { status: 200 });
+      }
+      return new Response("Not Found", { status: 404 });
+    });
+    return bodies;
+  }
+
+  it("uses the first pulled fallback when the configured model is missing", async () => {
+    const bodies = mockOllamaWithLlama();
+    const config = makeConfig({
+      ollamaModel: "qwen2.5:7b",
+      ollamaModelFallbacks: ["qwen3:8b", "llama3.1:8b"],
+    });
+
+    const result = await generateStructured("System", "User", schema, config);
+
+    expect(result.provider).toBe("ollama");
+    expect(result.model).toBe("llama3.1:8b");
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0].model).toBe("llama3.1:8b");
+  });
+
+  it("generate() also resolves the fallback model", async () => {
+    const bodies = mockOllamaWithLlama();
+    const config = makeConfig({ ollamaModel: "qwen2.5:7b", ollamaModelFallbacks: ["llama3.1:8b"] });
+
+    const result = await generate("System", "User", config);
+
+    expect(result.provider).toBe("ollama");
+    expect(bodies[0].model).toBe("llama3.1:8b");
+  });
+
+  it("isOllamaAvailable is true when only a fallback is pulled", async () => {
+    mockOllamaWithLlama();
+    expect(await isOllamaAvailable(makeConfig({ ollamaModel: "qwen2.5:7b" }))).toBe(false);
+    expect(await isOllamaAvailable(makeConfig({ ollamaModel: "qwen2.5:7b", ollamaModelFallbacks: ["llama3.1:8b"] }))).toBe(true);
+  });
+
+  it("with no fallback, warns 'model not found; available: […]' exactly once per process across two calls", async () => {
+    mockOllamaWithLlama();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const config = makeConfig({ ollamaModel: "qwen2.5:7b" });
+
+    for (let i = 0; i < 2; i++) {
+      await generateStructured("System", "User", schema, config).catch(() => {});
+    }
+
+    const notFound = warn.mock.calls
+      .map((c) => String(c[0]))
+      .filter((l) => /Ollama reachable but model qwen2\.5:7b not found; available: \[llama3\.1:8b, nomic-embed-text:latest\]/.test(l));
+    expect(notFound).toHaveLength(1);
   });
 });

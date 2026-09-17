@@ -150,6 +150,7 @@ export function recordCheckpoint(
   runId: string,
   phase: string,
   itemId: string,
+  details: { fingerprint?: string } = {},
 ): void {
   const id = crypto.randomUUID();
   const now = Math.floor(Date.now() / 1000);
@@ -164,13 +165,77 @@ export function recordCheckpoint(
   if (!existing) {
     insertRow(db, "dream_checkpoints", {
       id, run_id: runId, phase, item_id: itemId, processed_at: now, status: "success",
+      fingerprint: details.fingerprint ?? null,
     });
   }
+}
+
+// ─── Conversation Fingerprints (W12) ────────────────────────────
+
+/**
+ * sha256 over the conversation's exchanges in order: id, index, timestamp
+ * and the message text itself (length-prefixed, so field boundaries are
+ * unambiguous). Changes whenever an exchange is added, removed,
+ * re-timestamped or edited — including a same-length in-place edit, which
+ * `ingest_turn` upserts produce and a length-only digest missed (#23).
+ */
+export function computeConversationFingerprint(
+  db: Database.Database,
+  conversationId: string,
+): string {
+  const rows = db
+    .prepare(
+      `SELECT id, exchange_index, timestamp, user_message, assistant_message
+       FROM exchanges WHERE conversation_id = ?
+       ORDER BY exchange_index ASC, id ASC`,
+    )
+    .all(conversationId) as Array<{
+      id: string;
+      exchange_index: number | null;
+      timestamp: string | null;
+      user_message: string | null;
+      assistant_message: string | null;
+    }>;
+
+  const hash = crypto.createHash("sha256");
+  for (const r of rows) {
+    const user = r.user_message ?? "";
+    const assistant = r.assistant_message ?? "";
+    hash.update(`${r.id}|${r.exchange_index ?? ""}|${r.timestamp ?? ""}|${user.length}:`);
+    hash.update(user);
+    hash.update(`|${assistant.length}:`);
+    hash.update(assistant);
+    hash.update("\n");
+  }
+  return hash.digest("hex");
+}
+
+/**
+ * Latest successful extract checkpoint per conversation across all runs,
+ * mapped to its fingerprint (null for legacy checkpoints recorded before
+ * fingerprints existed). Conversations never extracted are absent.
+ */
+export function getLatestExtractFingerprints(
+  db: Database.Database,
+): Map<string, string | null> {
+  const rows = db
+    .prepare(
+      "SELECT item_id, fingerprint FROM dream_checkpoints WHERE phase = 'extract' AND status = 'success' ORDER BY processed_at ASC, rowid ASC",
+    )
+    .all() as Array<{ item_id: string; fingerprint: string | null }>;
+  const latest = new Map<string, string | null>();
+  for (const r of rows) latest.set(r.item_id, r.fingerprint);
+  return latest;
 }
 
 /**
  * Record a failure checkpoint for an item. Preserves error details for debugging
  * and retry logic. Does NOT block the item from being retried.
+ *
+ * One error row per (run, phase, item): a repeat failure in the same run —
+ * the extract retry pass, or a resumed run — updates that row in place
+ * (latest class/message, `attempt_count` + 1) instead of inserting a second
+ * one, so a run's error count is a count of failed items, not of attempts.
  */
 export function recordFailure(
   db: Database.Database,
@@ -183,30 +248,33 @@ export function recordFailure(
     errorMessage?: string;
   },
 ): void {
-  const id = crypto.randomUUID();
   const now = Math.floor(Date.now() / 1000);
+  const provider = details.provider ?? null;
+  const errorClass = details.errorClass ?? "unknown";
+  const errorMessage = details.errorMessage ?? null;
 
-  // Count previous attempts for this item in this run+phase
-  const prevRow = db
+  const existing = db
     .prepare(
-      "SELECT COUNT(*) as count FROM dream_checkpoints WHERE run_id = ? AND phase = ? AND item_id = ?",
+      `SELECT id FROM dream_checkpoints
+       WHERE run_id = ? AND phase = ? AND item_id = ? AND status = 'error'
+       ORDER BY processed_at DESC, rowid DESC LIMIT 1`,
     )
-    .get(runId, phase, itemId) as { count: number };
+    .get(runId, phase, itemId) as { id: string } | undefined;
+
+  if (existing) {
+    db.prepare(
+      `UPDATE dream_checkpoints
+       SET processed_at = ?, provider = ?, error_class = ?, error_message = ?,
+           attempt_count = COALESCE(attempt_count, 1) + 1
+       WHERE id = ?`,
+    ).run(now, provider, errorClass, errorMessage, existing.id);
+    return;
+  }
 
   db.prepare(
     `INSERT INTO dream_checkpoints (id, run_id, phase, item_id, processed_at, status, provider, error_class, error_message, attempt_count)
-     VALUES (?, ?, ?, ?, ?, 'error', ?, ?, ?, ?)`,
-  ).run(
-    id,
-    runId,
-    phase,
-    itemId,
-    now,
-    details.provider ?? null,
-    details.errorClass ?? "unknown",
-    details.errorMessage ?? null,
-    prevRow.count + 1,
-  );
+     VALUES (?, ?, ?, ?, ?, 'error', ?, ?, ?, 1)`,
+  ).run(crypto.randomUUID(), runId, phase, itemId, now, provider, errorClass, errorMessage);
 }
 
 /**

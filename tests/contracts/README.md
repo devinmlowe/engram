@@ -9,6 +9,7 @@ Tests that verify cross-module interfaces and invariants — ensuring modules in
 - Search orchestration contracts (RRF math, budget enforcement)
 - Embedding singleton behavior
 - Chunking and recall/remember interface contracts
+- SPEC/README reference integrity (cited test/source paths exist; MCP tool count matches `tool-names.ts`)
 
 ## Out of Scope
 

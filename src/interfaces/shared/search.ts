@@ -25,6 +25,7 @@ import {
 } from "../../_core/search/index.js";
 import type { RecallSession, DrillResult, QualityMetrics } from "../../_core/search/session.js";
 import { computeQualityMetrics } from "../../_core/search/session.js";
+import { recordAccess } from "../../semantic/memory.js";
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -51,6 +52,12 @@ export interface UnifiedSearchParams {
   anniversary?: Anniversary;
   /** Reference "now" for hint parsing — injectable for deterministic tests. */
   now?: Date;
+  /**
+   * Reinforce the semantic memories this call RETURNS (FSRS growth via
+   * recordAccess). Default true; pass false for read-only/diagnostic callers
+   * (visualizer, tests) that must not mutate access stats.
+   */
+  reinforce?: boolean;
 }
 
 export interface RecallSessionResult {
@@ -64,6 +71,43 @@ export interface RecallSessionResult {
 export interface RecallDrillResult {
   drill: DrillResult;
   resultId: string;
+}
+
+// ─── Retrieval Reinforcement (W8) ───────────────────────────────
+
+/**
+ * Reinforce the semantic memories a recall actually returned.
+ *
+ * FSRS: a successful retrieval grows stability (decay.ts onSuccessfulAccess)
+ * and bumps access_count / last_accessed. Only `semantic` results map to the
+ * memories table; episodic exchanges and graph entities are skipped. Each id
+ * is reinforced at most once per call, all in ONE immediate transaction so
+ * a multi-process WAL writer (dream daemon) cannot interleave.
+ *
+ * Failure-tolerant by contract: a reinforcement error is logged and swallowed
+ * — it must never fail the recall that produced the results.
+ */
+export function reinforceRecalledMemories(
+  db: Database.Database,
+  results: readonly SearchResult[],
+): void {
+  const ids = new Set<string>();
+  for (const r of results) {
+    if (r.source === "semantic") ids.add(r.id);
+  }
+  if (ids.size === 0) return;
+
+  try {
+    db.transaction(() => {
+      for (const id of ids) recordAccess(db, id);
+    }).immediate();
+  } catch (error) {
+    console.error(
+      `[engram] recall reinforcement failed for ${ids.size} memories: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
 }
 
 // ─── Core Operation ─────────────────────────────────────────────
@@ -113,6 +157,7 @@ export async function unifiedSearch(
   );
 
   if (dateFilter) response.dateFilter = dateFilter;
+  if (params.reinforce !== false) reinforceRecalledMemories(db, response.results);
   return response;
 }
 
@@ -131,6 +176,10 @@ export async function createOrRefineRecallSession(
     sessionId?: string;
     budget?: number;
     sources?: SearchSource[];
+    /** Restrict semantic results to these tenant scopes (ADR-010). */
+    scopes?: string[];
+    /** Reinforce returned semantic memories (default true). */
+    reinforce?: boolean;
   },
   config?: EngramConfig,
 ): Promise<RecallSessionResult> {
@@ -162,11 +211,13 @@ export async function createOrRefineRecallSession(
         sources,
         mode: "hybrid",
         budget: remainingBudget,
+        scopes: params.scopes,
       },
       config,
     );
 
     store.addResults(params.sessionId, response.results, params.query);
+    if (params.reinforce !== false) reinforceRecalledMemories(db, response.results);
 
     return {
       sessionId: params.sessionId,
@@ -188,11 +239,13 @@ export async function createOrRefineRecallSession(
       sources,
       mode: "hybrid",
       budget: Math.min(maxBudget, 1500), // First search gets half the budget
+      scopes: params.scopes,
     },
     config,
   );
 
   store.addResults(session.id, response.results);
+  if (params.reinforce !== false) reinforceRecalledMemories(db, response.results);
 
   return {
     sessionId: session.id,
@@ -210,6 +263,7 @@ export async function drillRecallResult(
   db: Database.Database,
   sessionId: string,
   resultIndex: number,
+  options: { reinforce?: boolean } = {},
 ): Promise<RecallDrillResult> {
   const store = getSessionStore();
   const session = store.get(sessionId);
@@ -228,6 +282,8 @@ export async function drillRecallResult(
   store.markExpanded(sessionId, result.id);
 
   const drill = await drillIntoResult(result, db);
+  // Drilling is a deliberate, successful retrieval of this one result.
+  if (options.reinforce !== false) reinforceRecalledMemories(db, [result]);
 
   return {
     drill,

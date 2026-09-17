@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getTenantScoping } from "../../src/interfaces/mcp/scoping.js";
+import { getTenantScoping, resolveCallScoping } from "../../src/interfaces/mcp/scoping.js";
 
 // ADR-010: the Hermes plugin scopes its MCP child via env —
 // ENGRAM_SCOPE (write scope) and ENGRAM_READ_SCOPES (comma list).
@@ -39,5 +39,42 @@ describe("getTenantScoping (ADR-010)", () => {
     const s = getTenantScoping({ ENGRAM_SCOPE: "", ENGRAM_READ_SCOPES: "" });
     expect(s.writeScope).toBeUndefined();
     expect(s.readScopes).toBeUndefined();
+  });
+});
+
+// Per-request overrides (W1): tool params `scope` / `read_scopes` win over the
+// env defaults for that call only; absent params fall back to env behavior.
+describe("resolveCallScoping (per-request override)", () => {
+  it("no params → identical to env-derived scoping", () => {
+    expect(resolveCallScoping({}, {})).toEqual(getTenantScoping({}));
+    const env = { ENGRAM_SCOPE: "hermes:career", ENGRAM_READ_SCOPES: "global,hermes:pmp" };
+    expect(resolveCallScoping(env, {})).toEqual(getTenantScoping(env));
+  });
+
+  it("scope param sets writeScope and defaults readScopes to global + own when env has none", () => {
+    const s = resolveCallScoping({}, { scope: "hermes:career" });
+    expect(s.writeScope).toBe("hermes:career");
+    expect(s.readScopes).toEqual(["global", "hermes:career"]);
+  });
+
+  it("scope param overrides ENGRAM_SCOPE but keeps an explicit ENGRAM_READ_SCOPES", () => {
+    const env = { ENGRAM_SCOPE: "hermes:pmp", ENGRAM_READ_SCOPES: "global,hermes:pmp" };
+    const s = resolveCallScoping(env, { scope: "hermes:career" });
+    expect(s.writeScope).toBe("hermes:career");
+    expect(s.readScopes).toEqual(["global", "hermes:pmp"]);
+  });
+
+  it("read_scopes param overrides env read scopes and leaves writeScope alone", () => {
+    const env = { ENGRAM_SCOPE: "hermes:pmp" };
+    const s = resolveCallScoping(env, { read_scopes: [" hermes:career "] });
+    expect(s.writeScope).toBe("hermes:pmp");
+    expect(s.readScopes).toEqual(["hermes:career"]);
+  });
+
+  it("rejects empty / whitespace scope strings and empty read_scopes", () => {
+    expect(() => resolveCallScoping({}, { scope: "" })).toThrow(/scope/);
+    expect(() => resolveCallScoping({}, { scope: "   " })).toThrow(/scope/);
+    expect(() => resolveCallScoping({}, { read_scopes: [] })).toThrow(/read_scopes/);
+    expect(() => resolveCallScoping({}, { read_scopes: ["global", " "] })).toThrow(/read_scopes/);
   });
 });

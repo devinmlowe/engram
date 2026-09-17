@@ -117,7 +117,8 @@ export interface EngramConfig {
   };
 
   dream: {
-    localModel?: string; // MLX model path
+    localModel?: string; // Ollama model tag (ENGRAM_LOCAL_MODEL)
+    localModelFallbacks?: string[]; // Ollama tags tried in order when localModel is not pulled (ENGRAM_LOCAL_MODEL_FALLBACKS)
     openrouterModel?: string; // OpenRouter model ID (e.g. google/gemini-2.5-flash-lite)
     apiModel: string; // claude haiku
     apiFallbackModel: string; // claude sonnet

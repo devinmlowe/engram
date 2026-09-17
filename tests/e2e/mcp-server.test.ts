@@ -140,10 +140,10 @@ describe("MCP Server Tool Definitions", () => {
       "utf-8",
     );
     const listBlock = serverSource.slice(
-      serverSource.indexOf("ListToolsRequestSchema, async"),
-      serverSource.indexOf("server.setRequestHandler(CallToolRequestSchema"),
+      serverSource.indexOf("export const MCP_TOOL_DEFINITIONS"),
+      serverSource.indexOf("function registerToolHandlers("),
     );
-    const registered = [...listBlock.matchAll(/^\s{6}name: "([a-z_]+)"/gm)].map((m) => m[1]);
+    const registered = [...listBlock.matchAll(/^\s{4}name: "([a-z_]+)"/gm)].map((m) => m[1]);
     expect([...registered].sort()).toEqual([...MCP_TOOL_NAMES].sort());
   });
 

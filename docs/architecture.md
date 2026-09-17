@@ -146,7 +146,7 @@ Claude Code conversations (~/.claude/projects/*/...)
 
 ## Module Map
 
-### `src/core/` — Foundation
+### `src/_core/` — Foundation
 
 | File | Responsibility |
 |------|---------------|
@@ -200,13 +200,13 @@ Claude Code conversations (~/.claude/projects/*/...)
 | `scheduler.ts` | Phase scheduling and checkpoint management |
 | `intelligence.ts` | LLM routing (local → API), confidence-based tier selection |
 
-### `src/mcp/` — MCP Server
+### `src/interfaces/mcp/` — MCP Server
 
 | File | Responsibility |
 |------|---------------|
 | `server.ts` | MCP server setup, tool definitions, request handlers |
 
-### `src/cli/` — Command-Line Interface
+### `src/interfaces/cli/` — Command-Line Interface
 
 | File | Responsibility |
 |------|---------------|

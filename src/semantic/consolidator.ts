@@ -12,10 +12,20 @@
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import Anthropic from "@anthropic-ai/sdk";
+import type Anthropic from "@anthropic-ai/sdk";
 import type Database from "better-sqlite3";
 import type { Memory, MemoryType } from "./types.js";
-import { isOpenRouterAvailable, callOpenRouterTool } from "../_core/llm/providers/openrouter.js";
+import {
+  buildIntelligenceConfig,
+  generateStructured,
+  isAnthropicAvailable,
+  isOllamaAvailable,
+  isOpenRouterAvailable,
+  resetIntelligence,
+  setClient as setIntelligenceClient,
+  type IntelligenceConfig,
+} from "../_core/llm/index.js";
+import { loadConfig } from "../_core/config/index.js";
 import type {
   ExtractedFact,
   DeduplicationResult,
@@ -25,6 +35,7 @@ import { embedDocument } from "../_core/embeddings/index.js";
 import {
   findNearestMemories,
   getMemory,
+  getMemoryEmbedding,
   insertMemory,
   recordAccess,
   deactivateMemory,
@@ -32,15 +43,16 @@ import {
   applyContradiction,
 } from "./memory.js";
 import { classifyNli } from "./nli.js";
+import { collapseExact, collapseByEmbedding, normalizeContent } from "./collapse.js";
+import { applyTransientPolicy } from "./transient.js";
 
 // ─── Module State ───────────────────────────────────────────────
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-let client: Anthropic | null = null;
-
-const CONFLICT_MODEL = "claude-haiku-4-5-20251001";
+/** Output budget for a conflict resolution (short structured verdict). */
+const CONFLICT_MAX_TOKENS = 1024;
 
 // ─── Similarity Thresholds ──────────────────────────────────────
 
@@ -54,68 +66,69 @@ const NLI_THRESHOLD = 0.85;
 const ENTAILMENT_THRESHOLD = 0.7;
 const CONTRADICTION_THRESHOLD = 0.7;
 
+/** How far up a memory's superseded_by chain the ping-pong guard looks (W12). */
+const SUPERSESSION_CHAIN_MAX_HOPS = 5;
+
 // ─── Initialization ─────────────────────────────────────────────
 
 /**
- * Initialize the conflict resolution clients.
+ * Verify that at least one tier of the LLM cascade can resolve conflicts.
  *
- * Creates the Anthropic client if an API key is available.
- * OpenRouter is used via the shared client when OPENROUTER_API_KEY is set.
- * At least one provider must be configured.
+ * Credentials and clients are owned by the _core/llm factory; this only
+ * checks reachability so callers fail fast with a clear message. Per
+ * SPEC.md INV-3 a reachable local Ollama model is sufficient on its own.
  */
-export function initConsolidator(anthropicApiKey?: string): void {
-  if (client) return;
-
-  const apiKey = anthropicApiKey ?? process.env.ANTHROPIC_API_KEY;
-  if (apiKey) {
-    client = new Anthropic({ apiKey });
-  }
-
-  if (!client && !isOpenRouterAvailable()) {
-    throw new Error(
-      "No conflict resolution provider configured. " +
-        "Set ANTHROPIC_API_KEY or OPENROUTER_API_KEY environment variable.",
-    );
-  }
+export async function initConsolidator(): Promise<void> {
+  if (isAnthropicAvailable() || isOpenRouterAvailable()) return;
+  if (await isOllamaAvailable(intelligenceConfig())) return;
+  throw new Error(
+    "No conflict resolution provider configured. " +
+      "Set ANTHROPIC_API_KEY or OPENROUTER_API_KEY, or run Ollama with the configured local model.",
+  );
 }
 
 /**
- * Reset the consolidator state (for testing).
+ * Reset the consolidator state (for testing). Clears the factory's client.
  */
 export function resetConsolidator(): void {
-  client = null;
+  resetIntelligence();
 }
 
 /**
- * Set a custom Anthropic client (for testing with mocks).
+ * Inject a custom Anthropic client into the factory (for testing with mocks).
  */
 export function setConsolidatorClient(customClient: Anthropic): void {
-  client = customClient;
+  setIntelligenceClient(customClient);
+}
+
+/** Cascade configuration derived from the application config. */
+function intelligenceConfig(): IntelligenceConfig {
+  return buildIntelligenceConfig(loadConfig());
 }
 
 // ─── Conflict Resolution Tool Schema ────────────────────────────
 
-const RESOLVE_CONFLICT_TOOL: Anthropic.Tool = {
-  name: "resolve_conflict",
-  description: "Resolve a memory conflict between two contradictory memories",
-  input_schema: {
-    type: "object" as const,
-    properties: {
-      action: {
-        type: "string",
-        enum: ["update", "keep_both", "noop"],
-      },
-      reasoning: {
-        type: "string",
-        description: "Explanation for the chosen resolution",
-      },
-      updated_content: {
-        type: "string",
-        description: "Updated content for the memory (only for update action)",
-      },
+const RESOLVE_CONFLICT_TOOL_NAME = "resolve_conflict";
+const RESOLVE_CONFLICT_TOOL_DESCRIPTION =
+  "Resolve a memory conflict between two contradictory memories";
+
+/** JSON schema for the resolution verdict (factory adds `type: object`). */
+const RESOLVE_CONFLICT_SCHEMA: Record<string, unknown> = {
+  properties: {
+    action: {
+      type: "string",
+      enum: ["update", "keep_both", "noop"],
     },
-    required: ["action", "reasoning"],
+    reasoning: {
+      type: "string",
+      description: "Explanation for the chosen resolution",
+    },
+    updated_content: {
+      type: "string",
+      description: "Updated content for the memory (only for update action)",
+    },
   },
+  required: ["action", "reasoning"],
 };
 
 // ─── Core Functions ─────────────────────────────────────────────
@@ -128,20 +141,71 @@ function distanceToCosineSim(distance: number): number {
   return 1 - (distance * distance) / 2;
 }
 
+/** Per-conversation consolidation options. */
+export interface ConsolidateOptions {
+  /**
+   * Tenant scope inherited from the source conversation (ADR-010 / W2).
+   * Novel memories are stamped with it and dedup candidates are confined to
+   * it. Defaults to 'global' (Claude Code transcripts).
+   */
+  scope?: string;
+}
+
 /**
  * Process a batch of extracted facts through consolidation.
- * Facts are processed sequentially — order matters for within-batch dedup.
+ *
+ * W9a: candidates in the same batch are collapsed against each other before
+ * any of them touches the store — first on normalised content, then on
+ * embedding cosine at the auto-merge threshold. Survivors are then
+ * deduplicated against the DB sequentially (order matters). The result list
+ * has one entry per input fact, in input order: a collapsed member reports
+ * a `merge` into whatever memory its survivor resolved to.
  */
 export async function consolidateFacts(
   db: Database.Database,
   facts: ExtractedFact[],
   conversationId: string,
+  options: ConsolidateOptions = {},
 ): Promise<DeduplicationResult[]> {
-  const results: DeduplicationResult[] = [];
+  if (facts.length === 0) return [];
 
-  for (const fact of facts) {
-    const result = await deduplicateFact(db, fact, conversationId);
-    results.push(result);
+  const exact = collapseExact(facts);
+  const embeddings: number[][] = [];
+  for (const fact of exact.survivors) {
+    embeddings.push(await embedDocument(fact.content));
+  }
+  const near = collapseByEmbedding(exact.survivors, embeddings, AUTO_MERGE_THRESHOLD);
+
+  const survivorResults: DeduplicationResult[] = [];
+  for (let i = 0; i < near.survivors.length; i++) {
+    survivorResults.push(
+      await deduplicateEmbeddedFact(
+        db,
+        near.survivors[i],
+        near.embeddings[i],
+        conversationId,
+        options,
+      ),
+    );
+  }
+
+  const results: DeduplicationResult[] = [];
+  const reported = new Set<number>();
+  for (let i = 0; i < facts.length; i++) {
+    const survivor = near.memberOf[exact.memberOf[i]];
+    const base = survivorResults[survivor];
+    if (!reported.has(survivor)) {
+      reported.add(survivor);
+      results.push(base);
+    } else {
+      results.push({
+        action: "merge",
+        memoryId: base.memoryId,
+        mergedWithId: base.memoryId,
+        similarity: 1,
+        collapsed: true,
+      });
+    }
   }
 
   return results;
@@ -162,14 +226,29 @@ export async function deduplicateFact(
   db: Database.Database,
   fact: ExtractedFact,
   conversationId: string,
+  options: ConsolidateOptions = {},
 ): Promise<DeduplicationResult> {
   // 1. Embed the fact content
   const embedding = await embedDocument(fact.content);
+  return deduplicateEmbeddedFact(db, fact, embedding, conversationId, options);
+}
 
-  // 2. Find nearest neighbors — within the global scope only: dream facts
-  // are written as 'global' (insertNovelMemory), and a tenant's hermes:*
-  // memory must never absorb, reinforce, or be deactivated by a global fact
-  const neighbors = findNearestMemories(db, embedding, 5, "global");
+/** Steps 2–4 of `deduplicateFact` for a fact whose embedding is already known. */
+async function deduplicateEmbeddedFact(
+  db: Database.Database,
+  fact: ExtractedFact,
+  embedding: number[],
+  conversationId: string,
+  options: ConsolidateOptions,
+): Promise<DeduplicationResult> {
+  const scope = options.scope ?? "global";
+
+  // 2. Find nearest neighbors — within the conversation's own scope only:
+  // a memory in one tenant scope must never absorb, reinforce, or be
+  // deactivated by a fact from another (ADR-010). Claude Code transcripts
+  // consolidate against 'global'; a hermes:<profile> conversation against
+  // that profile's memories.
+  const neighbors = findNearestMemories(db, embedding, 5, scope);
 
   // 3. Check each neighbor against thresholds
   for (const neighbor of neighbors) {
@@ -215,6 +294,7 @@ export async function deduplicateFact(
           fact,
           embedding,
           conversationId,
+          scope,
         );
       }
 
@@ -223,10 +303,52 @@ export async function deduplicateFact(
   }
 
   // 4. No match found — insert as novel memory
-  return insertNovelMemory(db, fact, embedding, conversationId);
+  return insertNovelMemory(db, fact, embedding, conversationId, scope);
 }
 
 // ─── Novel Memory Insertion ─────────────────────────────────────
+
+/** Confidence stored when the extractor did not supply one (W9c). */
+const DEFAULT_CONFIDENCE = 0.5;
+
+/** Model-supplied confidence clamped to [0, 1]; 0.5 only when absent. */
+function effectiveConfidence(fact: ExtractedFact): number {
+  const c = fact.confidence;
+  if (typeof c !== "number" || Number.isNaN(c)) return DEFAULT_CONFIDENCE;
+  return Math.max(0, Math.min(1, c));
+}
+
+/**
+ * Build the Memory row for a fact about to be written. Single place where
+ * confidence (W9c) and the transient-status policy (W9b: importance cap +
+ * short stability tier) are applied, so every insert path agrees.
+ */
+function memoryFromFact(
+  id: string,
+  fact: ExtractedFact,
+  content: string,
+  scope: string,
+  now: number,
+): Memory {
+  const policy = applyTransientPolicy({ content, importance: fact.importance });
+  const memory: Memory = {
+    id,
+    type: fact.type,
+    content,
+    context: fact.context,
+    confidence: effectiveConfidence(fact),
+    importance: policy.importance,
+    accessCount: 0,
+    createdAt: now,
+    sourceExchanges: fact.sourceExchangeIds,
+    isActive: true,
+    source: "dream",
+    scope,
+    extractionBasis: fact.extractionBasis,
+  };
+  if (policy.stability !== undefined) memory.stability = policy.stability;
+  return memory;
+}
 
 /**
  * Insert a new memory from a novel fact (no existing match).
@@ -236,24 +358,12 @@ function insertNovelMemory(
   fact: ExtractedFact,
   embedding: number[],
   conversationId: string,
+  scope: string,
 ): DeduplicationResult {
   const newId = crypto.randomUUID();
   const now = Math.floor(Date.now() / 1000);
 
-  const memory: Memory = {
-    id: newId,
-    type: fact.type,
-    content: fact.content,
-    context: fact.context,
-    confidence: 0.5,
-    importance: fact.importance,
-    accessCount: 0,
-    createdAt: now,
-    sourceExchanges: fact.sourceExchangeIds,
-    isActive: true,
-    source: "dream",
-    extractionBasis: fact.extractionBasis,
-  };
+  const memory = memoryFromFact(newId, fact, fact.content, scope, now);
 
   insertMemory(db, memory, embedding);
 
@@ -277,29 +387,43 @@ async function resolveMemoryConflict(
   newFact: ExtractedFact,
   newEmbedding: number[],
   conversationId: string,
+  scope: string,
 ): Promise<DeduplicationResult> {
+  const now = Math.floor(Date.now() / 1000);
+
+  // W12: refuse supersession ping-pong. If the candidate restates a memory
+  // that `existingMemory` (transitively) already superseded, the existing
+  // chain is authoritative — record the conflict for review, create nothing.
+  const predecessor = findSupersededAncestorMatching(db, existingMemory, newFact, newEmbedding);
+  if (predecessor) {
+    const conflictId = crypto.randomUUID();
+    insertConflict(db, {
+      id: conflictId,
+      memoryId: existingMemory.id,
+      conflictingMemoryId: predecessor.id,
+      description:
+        `Supersession ping-pong refused: candidate "${newFact.content.slice(0, 120)}" ` +
+        `restates memory ${predecessor.id}, which ${existingMemory.id} already superseded ` +
+        `(conversation ${conversationId}).`,
+      createdAt: now,
+    });
+    return { action: "skip", memoryId: existingMemory.id, conflictId };
+  }
+
   const resolution = await callConflictResolution(existingMemory, newFact);
 
   const newId = crypto.randomUUID();
-  const now = Math.floor(Date.now() / 1000);
 
   switch (resolution.action) {
     case "update": {
       // New memory supersedes old
-      const newMemory: Memory = {
-        id: newId,
-        type: newFact.type,
-        content: resolution.updatedContent ?? newFact.content,
-        context: newFact.context,
-        confidence: 0.5,
-        importance: newFact.importance,
-        accessCount: 0,
-        createdAt: now,
-        sourceExchanges: newFact.sourceExchangeIds,
-        isActive: true,
-        source: "dream",
-        extractionBasis: newFact.extractionBasis,
-      };
+      const newMemory = memoryFromFact(
+        newId,
+        newFact,
+        resolution.updatedContent ?? newFact.content,
+        scope,
+        now,
+      );
 
       applyContradiction(db, existingMemory.id);
       deactivateMemory(db, existingMemory.id, newId);
@@ -325,20 +449,7 @@ async function resolveMemoryConflict(
 
     case "keep_both": {
       // Insert new alongside existing
-      const newMemory: Memory = {
-        id: newId,
-        type: newFact.type,
-        content: newFact.content,
-        context: newFact.context,
-        confidence: 0.5,
-        importance: newFact.importance,
-        accessCount: 0,
-        createdAt: now,
-        sourceExchanges: newFact.sourceExchangeIds,
-        isActive: true,
-        source: "dream",
-        extractionBasis: newFact.extractionBasis,
-      };
+      const newMemory = memoryFromFact(newId, newFact, newFact.content, scope, now);
 
       // Both stay active, but the existing memory was contradicted: persist
       // the FSRS penalty so its retrievability decays faster
@@ -375,9 +486,64 @@ async function resolveMemoryConflict(
 }
 
 /**
+ * Walk `memory`'s superseded_by chain upward (the memories it replaced, and
+ * theirs, …) for at most SUPERSESSION_CHAIN_MAX_HOPS hops and return the
+ * first ancestor whose content matches the candidate — normalised-equal text
+ * or embedding cosine at/above the auto-merge threshold.
+ */
+function findSupersededAncestorMatching(
+  db: Database.Database,
+  memory: Memory,
+  fact: ExtractedFact,
+  factEmbedding: number[],
+): Memory | null {
+  const predecessorsOf = db.prepare("SELECT id FROM memories WHERE superseded_by = ?");
+  const wanted = normalizeContent(fact.content);
+  const visited = new Set<string>([memory.id]);
+  let frontier = [memory.id];
+
+  for (let hop = 0; hop < SUPERSESSION_CHAIN_MAX_HOPS && frontier.length > 0; hop++) {
+    const next: string[] = [];
+    for (const id of frontier) {
+      const rows = predecessorsOf.all(id) as Array<{ id: string }>;
+      for (const { id: predId } of rows) {
+        if (visited.has(predId)) continue;
+        visited.add(predId);
+        const pred = getMemory(db, predId);
+        if (!pred) continue;
+        if (normalizeContent(pred.content) === wanted) return pred;
+        const predEmbedding = getMemoryEmbedding(db, predId);
+        if (predEmbedding && cosineSimilarity(predEmbedding, factEmbedding) >= AUTO_MERGE_THRESHOLD) {
+          return pred;
+        }
+        next.push(predId);
+      }
+    }
+    frontier = next;
+  }
+  return null;
+}
+
+function cosineSimilarity(a: readonly number[], b: readonly number[]): number {
+  let dot = 0;
+  let na = 0;
+  let nb = 0;
+  const n = Math.min(a.length, b.length);
+  for (let i = 0; i < n; i++) {
+    dot += a[i] * b[i];
+    na += a[i] * a[i];
+    nb += b[i] * b[i];
+  }
+  const denom = Math.sqrt(na) * Math.sqrt(nb);
+  return denom === 0 ? 0 : dot / denom;
+}
+
+/**
  * Call the LLM to resolve a memory conflict.
- * Reads the conflict resolution prompt and uses tool_use for structured output.
- * Prefers OpenRouter when available, falls back to Anthropic API.
+ *
+ * Reads the conflict resolution prompt and runs it through the _core/llm
+ * factory cascade (Ollama → OpenRouter → Anthropic primary → fallback) for
+ * structured output. Model ids come from config (dream.apiModel).
  */
 async function callConflictResolution(
   existingMemory: Memory,
@@ -386,70 +552,24 @@ async function callConflictResolution(
   const systemPrompt = loadConflictPrompt();
   const userMessage = formatConflictInput(existingMemory, newFact);
 
-  // OpenRouter path
-  if (!client && isOpenRouterAvailable()) {
-    try {
-      const { result } = await callOpenRouterTool<Record<string, unknown>>(
-        [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userMessage },
-        ],
-        {
-          name: RESOLVE_CONFLICT_TOOL.name,
-          description: RESOLVE_CONFLICT_TOOL.description ?? "",
-          parameters: RESOLVE_CONFLICT_TOOL.input_schema as Record<string, unknown>,
-        },
-        { maxTokens: 1024 },
-      );
-
-      const action = normalizeAction(result.action as string);
-      return {
-        action,
-        reasoning: (result.reasoning as string) || "No reasoning provided.",
-        updatedContent:
-          action === "update" ? (result.updated_content as string) : undefined,
-      };
-    } catch {
-      // Fall through to Anthropic if OpenRouter fails
-    }
-  }
-
-  // Anthropic path
-  if (!client) {
-    throw new Error(
-      "No conflict resolution provider available. Set ANTHROPIC_API_KEY or OPENROUTER_API_KEY.",
-    );
-  }
-
-  const response = await client.messages.create({
-    model: CONFLICT_MODEL,
-    max_tokens: 1024,
-    tools: [RESOLVE_CONFLICT_TOOL],
-    tool_choice: { type: "tool", name: "resolve_conflict" },
-    system: systemPrompt,
-    messages: [{ role: "user", content: userMessage }],
-  });
-
-  // Extract tool_use block
-  const toolUseBlock = response.content.find(
-    (block) => block.type === "tool_use",
+  const { result } = await generateStructured<Record<string, unknown>>(
+    systemPrompt,
+    userMessage,
+    RESOLVE_CONFLICT_SCHEMA,
+    intelligenceConfig(),
+    {
+      toolName: RESOLVE_CONFLICT_TOOL_NAME,
+      toolDescription: RESOLVE_CONFLICT_TOOL_DESCRIPTION,
+      maxTokens: CONFLICT_MAX_TOKENS,
+    },
   );
 
-  if (!toolUseBlock || toolUseBlock.type !== "tool_use") {
-    return {
-      action: "noop",
-      reasoning: "LLM did not return a structured resolution.",
-    };
-  }
-
-  const input = toolUseBlock.input as Record<string, unknown>;
-  const action = normalizeAction(input.action as string);
-
+  const action = normalizeAction(result.action as string);
   return {
     action,
-    reasoning: (input.reasoning as string) || "No reasoning provided.",
+    reasoning: (result.reasoning as string) || "No reasoning provided.",
     updatedContent:
-      action === "update" ? (input.updated_content as string) : undefined,
+      action === "update" ? (result.updated_content as string) : undefined,
   };
 }
 

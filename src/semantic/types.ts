@@ -58,6 +58,12 @@ export interface ExtractedFact {
   content: string;
   context?: string;
   importance: number; // 0-1, LLM-judged
+  /**
+   * 0-1, the model's own certainty that the statement is accurate and
+   * correctly categorised (W9c). Absent when the model did not emit one;
+   * the consolidator then falls back to 0.5.
+   */
+  confidence?: number;
   sourceExchangeIds: string[];
   extractionBasis?: "explicit" | "inferred" | "observed";
 }
@@ -97,6 +103,8 @@ export interface DeduplicationResult {
   mergedWithId?: string;
   conflictId?: string;
   similarity?: number;
+  /** True for a batch member folded into a sibling candidate before any DB lookup (W9a). */
+  collapsed?: boolean;
 }
 
 export interface ConflictResolution {
@@ -126,6 +134,17 @@ export const INITIAL_STABILITY: Record<MemoryType, number> = {
   solution: 45,
   convention: 75,
 };
+
+/**
+ * Stability tier for transient status facts (W9b): progress reports and
+ * point-in-time state ("phase N is complete", "currently blocked", run ids).
+ * Deliberately below every type's initial stability so they decay out of
+ * recall quickly instead of crowding durable knowledge.
+ */
+export const TRANSIENT_STABILITY = 7;
+
+/** Importance ceiling applied to transient status facts (W9b). */
+export const TRANSIENT_IMPORTANCE_CAP = 0.3;
 
 /** Growth rate for stability on successful access */
 export const STABILITY_GROWTH_RATE = 0.2;

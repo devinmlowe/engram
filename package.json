@@ -1,6 +1,6 @@
 {
   "name": "engram",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Cognitive memory system for Claude Code — episodic storage, semantic extraction, knowledge graph, and dream-state consolidation",
   "type": "module",
   "main": "dist/interfaces/cli/index.js",
@@ -13,11 +13,13 @@
     "launchd",
     ".claude-plugin",
     ".mcp.json",
-    "scripts/preflight.cjs"
+    "scripts/preflight.cjs",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build": "tsc",
     "prepare": "npm run build",
+    "prepublishOnly": "npm run build && npm run test:run",
     "postinstall": "node scripts/preflight.cjs",
     "dev": "tsx src/interfaces/cli/index.ts",
     "test": "vitest",
