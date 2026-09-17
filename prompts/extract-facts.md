@@ -78,6 +78,7 @@ Assistant: Got it, I'll use Fish shell syntax going forward. Here's the updated 
     "context": "When generating shell commands or scripts, use Fish syntax (e.g., 'set' instead of 'export', no '&&' chaining).",
     "importance": 0.7,
     "source_exchange_indexes": [3],
+    "confidence": 0.95,
     "extraction_basis": "explicit"
   }
 ]
@@ -105,6 +106,7 @@ Assistant: Good choice — better-sqlite3 is synchronous and fast, and sqlite-ve
     "context": "All imports must use .js extensions even in .ts files (ESM resolution requirement).",
     "importance": 0.7,
     "source_exchange_indexes": [12],
+    "confidence": 0.95,
     "extraction_basis": "explicit"
   },
   {
@@ -113,6 +115,7 @@ Assistant: Good choice — better-sqlite3 is synchronous and fast, and sqlite-ve
     "context": "Chosen for synchronous performance and built-in vector similarity search without external services.",
     "importance": 0.7,
     "source_exchange_indexes": [15],
+    "confidence": 0.95,
     "extraction_basis": "explicit"
   }
 ]
@@ -140,6 +143,7 @@ Assistant: Great. The pipeline is now: raw output -> layer_norm -> slice to 256 
     "context": "The correct post-processing pipeline for nomic embeddings is: raw mean-pooled output -> layer_norm -> slice to target dimensions -> L2 normalize.",
     "importance": 0.7,
     "source_exchange_indexes": [8, 9],
+    "confidence": 0.85,
     "extraction_basis": "observed"
   }
 ]
@@ -171,6 +175,7 @@ Assistant: Running `npm test`... All 47 tests pass.
     "context": "When creating test files, use vitest conventions. The user verifies changes by running the test suite.",
     "importance": 0.5,
     "source_exchange_indexes": [5, 14, 22],
+    "confidence": 0.65,
     "extraction_basis": "inferred"
   }
 ]
@@ -206,6 +211,7 @@ Assistant: Committed: "Add auth integration tests". Ready to merge.
     "context": "The user's workflow involves frequent intermediate commits rather than a single large commit at the end.",
     "importance": 0.5,
     "source_exchange_indexes": [2, 7, 11, 18],
+    "confidence": 0.7,
     "extraction_basis": "inferred"
   }
 ]

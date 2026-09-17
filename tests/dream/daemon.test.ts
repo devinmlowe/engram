@@ -131,7 +131,7 @@ vi.mock("../../src/semantic/decay.js", () => ({
 
 // ─── Imports (after mocks) ───────────────────────────────────────
 
-import { runDream } from "../../src/dream/daemon.js";
+import { runDream, formatDreamSummary } from "../../src/dream/daemon.js";
 import { CascadeError } from "../../src/_core/llm/index.js";
 import { syncConversations } from "../../src/episodic/sync.js";
 import { extractFromConversation } from "../../src/semantic/extractor.js";
@@ -635,6 +635,48 @@ describe("Phase runners", () => {
     });
   });
 
+  describe("Consolidate phase collapse counter (#23)", () => {
+    it("reports collapsedCandidates from intra-batch and cross-batch collapse, and prints it in the CLI summary", async () => {
+      seedConversation("conv-001");
+      seedConversation("conv-002");
+      // conv-002's candidate is an exact (normalised) duplicate of conv-001's
+      // first → folded by the run-level collapse. conv-001's second is a
+      // near-duplicate (different words) → survives to the batch, where the
+      // consolidator's embedding collapse (mocked) folds it. 3 in, 1 memory out.
+      vi.mocked(extractFromConversation).mockImplementation(async (convId: string) => ({
+        facts: convId === "conv-001"
+          ? [
+              { type: "convention", content: "The project uses ESM modules.", importance: 0.7, sourceExchangeIds: ["e1"] },
+              { type: "convention", content: "The project uses ESM modules throughout.", importance: 0.7, sourceExchangeIds: ["e2"] },
+            ]
+          : [{ type: "convention", content: "The project uses ESM modules!", importance: 0.7, sourceExchangeIds: ["e3"] }],
+        model: "test-model",
+        tier: "haiku",
+        confidence: 8,
+        durationMs: 1,
+      }));
+      vi.mocked(consolidateFacts).mockImplementation(async (_db, facts) =>
+        facts.map((_f, i) =>
+          i === 0
+            ? { action: "insert", memoryId: "mem-esm" }
+            : { action: "merge", memoryId: "mem-esm", mergedWithId: "mem-esm", similarity: 1, collapsed: true },
+        ),
+      );
+
+      const report = await runDream(t.db, t.config, { phases: ["extract", "consolidate"] });
+
+      // cross-batch: conv-002's candidate folded (1); intra-batch: conv-001's second (1)
+      expect(report.collapsedCandidates).toBe(2);
+      const batchSizes = vi.mocked(consolidateFacts).mock.calls.map((c) => c[1].length);
+      expect(batchSizes).toEqual([2, 0]); // conv-002's only candidate was folded into conv-001's batch
+      expect(report.newMemories).toBe(1);
+
+      const summary = formatDreamSummary(report);
+      expect(summary).toContain("  Collapsed dupes:   2");
+      expect(summary.indexOf("  Collapsed dupes:   2")).toBeGreaterThan(summary.indexOf("  Skipped unchanged: 0"));
+    });
+  });
+
   describe("Reflect phase", () => {
     it("runs reflection pipeline", async () => {
       await runDream(t.db, t.config, { phases: ["reflect"] });
@@ -843,6 +885,35 @@ describe("Extract phase skips unchanged conversations (W12)", () => {
     const report = await runDream(t.db, t.config, { phases: ["extract"] });
     expect(extractFromConversation).toHaveBeenCalledTimes(1);
     expect(report.skippedUnchanged).toBe(0);
+  });
+
+  it("re-extracts a conversation after a same-length in-place edit, and still skips it when untouched (#23)", async () => {
+    seedConversation("conv-inplace");
+    await runDream(t.db, t.config, { phases: ["extract"] });
+    const before = latestExtractCheckpoint("conv-inplace")?.fingerprint;
+
+    // Untouched → same fingerprint, skipped.
+    vi.mocked(extractFromConversation).mockClear();
+    const unchanged = await runDream(t.db, t.config, { phases: ["extract"] });
+    expect(extractFromConversation).not.toHaveBeenCalled();
+    expect(unchanged.skippedUnchanged).toBe(1);
+    expect(latestExtractCheckpoint("conv-inplace")?.fingerprint).toBe(before);
+
+    // ingest_turn-style upsert: same id, index, timestamp and byte length,
+    // different words. A length-only digest called this "unchanged".
+    const current = t.db
+      .prepare("SELECT assistant_message AS m FROM exchanges WHERE id = ?")
+      .get("conv-inplace-exch-1") as { m: string };
+    const edited = current.m.split("").reverse().join("");
+    expect(edited).not.toBe(current.m);
+    expect(edited.length).toBe(current.m.length);
+    t.db.prepare("UPDATE exchanges SET assistant_message = ? WHERE id = ?").run(edited, "conv-inplace-exch-1");
+
+    vi.mocked(extractFromConversation).mockClear();
+    const report = await runDream(t.db, t.config, { phases: ["extract"] });
+    expect(extractFromConversation).toHaveBeenCalledTimes(1);
+    expect(report.skippedUnchanged).toBe(0);
+    expect(latestExtractCheckpoint("conv-inplace")?.fingerprint).not.toBe(before);
   });
 
   it("re-extracts a conversation that grew by an exchange", async () => {

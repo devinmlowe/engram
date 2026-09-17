@@ -43,6 +43,11 @@ export interface DreamReport {
   clustersPruned?: number;
   /** Extract phase: conversations skipped because their fingerprint was unchanged (W12). */
   skippedUnchanged?: number;
+  /**
+   * Consolidate phase: candidate facts folded into a near-duplicate sibling
+   * before insertion — across the run's batches and within each batch (W9a).
+   */
+  collapsedCandidates?: number;
   // Commitments pass (extract phase): candidates seen, deduped, inserted
   commitmentsExtracted?: number;
   commitmentCandidates?: number;

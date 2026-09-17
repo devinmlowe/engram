@@ -789,7 +789,7 @@ program
   .option("--force", "Re-extract conversations even when unchanged since their last extraction")
   .option("--verbose", "Show detailed progress")
   .action(async (opts) => {
-    const { runDream } = await import("../../dream/daemon.js");
+    const { runDream, formatDreamSummary } = await import("../../dream/daemon.js");
     const { initEmbeddings } = await import("../../_core/embeddings/index.js");
     const config = loadConfig();
     const db = getDatabase(config);
@@ -820,27 +820,8 @@ program
         process.stdout.write("\n");
       }
 
-      console.log("\nDream complete:");
-      for (const phase of report.phases) {
-        console.log(
-          `  ${phase.phase}: ${phase.itemsProcessed} items, ${phase.errors} errors (${phase.durationMs}ms)`,
-        );
-      }
       console.log("");
-      console.log(`  New memories:      ${report.newMemories}`);
-      console.log(`  Updated memories:  ${report.updatedMemories}`);
-      console.log(`  New entities:      ${report.newEntities}`);
-      console.log(`  New relationships: ${report.newRelationships}`);
-      console.log(`  Conflicts:         ${report.conflictsDetected}`);
-      console.log(`  Pruned:            ${report.memoriesPruned}`);
-      console.log(`  Skipped unchanged: ${report.skippedUnchanged ?? 0}`);
-      console.log(
-        `  Commitments:       ${report.commitmentsExtracted ?? 0} new ` +
-          `(${report.commitmentCandidates ?? 0} candidates, ${report.commitmentRejected ?? 0} rejected, ${report.commitmentDuplicates ?? 0} duplicates)`,
-      );
-
-      const durationSec = report.completedAt - report.startedAt;
-      console.log(`  Duration:          ${durationSec}s`);
+      for (const line of formatDreamSummary(report)) console.log(line);
     } finally {
       closeDatabase();
     }

@@ -223,6 +223,7 @@ export async function runDream(
       newEntities: report.newEntities,
       memoriesPruned: report.memoriesPruned,
       skippedUnchanged: report.skippedUnchanged ?? 0,
+      collapsedCandidates: report.collapsedCandidates ?? 0,
       commitmentsExtracted: report.commitmentsExtracted ?? 0,
     });
 
@@ -528,6 +529,7 @@ async function runConsolidatePhase(
   if (collapsed > 0) {
     logEntry(logPath, "consolidate", `Collapsed ${collapsed} cross-conversation duplicate candidates before consolidation`);
   }
+  report.collapsedCandidates = (report.collapsedCandidates ?? 0) + collapsed;
   let processed = 0;
   let errors = 0;
 
@@ -544,6 +546,7 @@ async function runConsolidatePhase(
         if (r.action === "insert") report.newMemories++;
         if (r.action === "merge") report.updatedMemories++;
         if (r.action === "conflict") report.conflictsDetected++;
+        if (r.collapsed) report.collapsedCandidates = (report.collapsedCandidates ?? 0) + 1;
       }
 
       recordCheckpoint(db, runId, "consolidate", batch.conversationId);
@@ -960,6 +963,33 @@ function updatePhasesCompleted(
  * Maps HTTP status codes, OpenRouterError classes, and error message patterns
  * to one of: transient, provider, permanent, unknown.
  */
+/**
+ * The `engram dream` summary block: per-phase lines, a blank line, then the
+ * run counters. Exported so the CLI output can be asserted without spawning
+ * the CLI.
+ */
+export function formatDreamSummary(report: DreamReport): string[] {
+  const lines = ["Dream complete:"];
+  for (const phase of report.phases) {
+    lines.push(`  ${phase.phase}: ${phase.itemsProcessed} items, ${phase.errors} errors (${phase.durationMs}ms)`);
+  }
+  lines.push("");
+  lines.push(`  New memories:      ${report.newMemories}`);
+  lines.push(`  Updated memories:  ${report.updatedMemories}`);
+  lines.push(`  New entities:      ${report.newEntities}`);
+  lines.push(`  New relationships: ${report.newRelationships}`);
+  lines.push(`  Conflicts:         ${report.conflictsDetected}`);
+  lines.push(`  Pruned:            ${report.memoriesPruned}`);
+  lines.push(`  Skipped unchanged: ${report.skippedUnchanged ?? 0}`);
+  lines.push(`  Collapsed dupes:   ${report.collapsedCandidates ?? 0}`);
+  lines.push(
+    `  Commitments:       ${report.commitmentsExtracted ?? 0} new ` +
+      `(${report.commitmentCandidates ?? 0} candidates, ${report.commitmentRejected ?? 0} rejected, ${report.commitmentDuplicates ?? 0} duplicates)`,
+  );
+  lines.push(`  Duration:          ${report.completedAt - report.startedAt}s`);
+  return lines;
+}
+
 /**
  * Error text persisted on an extract checkpoint (500-char column). When the
  * failure was an LLM cascade — thrown directly or wrapped by the extractor —

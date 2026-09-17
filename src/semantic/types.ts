@@ -103,6 +103,8 @@ export interface DeduplicationResult {
   mergedWithId?: string;
   conflictId?: string;
   similarity?: number;
+  /** True for a batch member folded into a sibling candidate before any DB lookup (W9a). */
+  collapsed?: boolean;
 }
 
 export interface ConflictResolution {

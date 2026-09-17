@@ -454,6 +454,10 @@ describe("consolidateFacts — intra-batch near-duplicate collapse (W9a)", () =>
     expect(results[1].mergedWithId).toBe(results[0].memoryId);
     expect(results[2].action).toBe("merge");
     expect(results[2].mergedWithId).toBe(results[0].memoryId);
+    // members are flagged so the dream report can count them (#23)
+    expect(results[0].collapsed).toBeUndefined();
+    expect(results[1].collapsed).toBe(true);
+    expect(results[2].collapsed).toBe(true);
 
     expect(countMemories()).toBe(1);
     const memory = getMemory(t.db, results[0].memoryId);
@@ -485,8 +489,10 @@ describe("consolidateFacts — intra-batch near-duplicate collapse (W9a)", () =>
     expect(results[1].action).toBe("merge");
     expect(results[1].mergedWithId).toBe(results[0].memoryId);
     expect(results[1].similarity).toBeGreaterThanOrEqual(0.95);
+    expect(results[1].collapsed).toBe(true);
     expect(results[2].action).toBe("insert");
     expect(results[2].memoryId).not.toBe(results[0].memoryId);
+    expect(results[2].collapsed).toBeUndefined();
 
     expect(countMemories()).toBe(2);
     const survivor = getMemory(t.db, results[0].memoryId);

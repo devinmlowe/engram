@@ -687,6 +687,23 @@ describe("computeConversationFingerprint / getLatestExtractFingerprints (W12)", 
     expect(computeConversationFingerprint(t.db, "conv-fp-c")).not.toBe(edited);
   });
 
+  it("changes on a same-length in-place edit and is stable when nothing changed (#23)", () => {
+    insertConversation("conv-fp-d");
+    insertExchangeRow("d-0", "conv-fp-d", 0, "abc");
+    const before = computeConversationFingerprint(t.db, "conv-fp-d");
+    expect(computeConversationFingerprint(t.db, "conv-fp-d")).toBe(before);
+
+    t.db.prepare("UPDATE exchanges SET assistant_message = 'cba' WHERE id = 'd-0'").run();
+    expect(computeConversationFingerprint(t.db, "conv-fp-d")).not.toBe(before);
+
+    // Field boundaries are length-prefixed: moving text across the
+    // user/assistant boundary is a change even though the concatenation is not.
+    t.db.prepare("UPDATE exchanges SET user_message = 'User 0c', assistant_message = 'ba' WHERE id = 'd-0'").run();
+    const shifted = computeConversationFingerprint(t.db, "conv-fp-d");
+    t.db.prepare("UPDATE exchanges SET user_message = 'User 0', assistant_message = 'cba' WHERE id = 'd-0'").run();
+    expect(computeConversationFingerprint(t.db, "conv-fp-d")).not.toBe(shifted);
+  });
+
   it("recordCheckpoint stores the fingerprint and the latest one per conversation wins", () => {
     const run1 = createRun(t.db);
     recordCheckpoint(t.db, run1, "extract", "conv-x", { fingerprint: "fp-old" });

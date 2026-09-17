@@ -174,8 +174,10 @@ export function recordCheckpoint(
 
 /**
  * sha256 over the conversation's exchanges in order: id, index, timestamp
- * and message lengths. Cheap (no message text leaves SQLite) and changes
- * whenever an exchange is added, removed, re-timestamped or re-sized.
+ * and the message text itself (length-prefixed, so field boundaries are
+ * unambiguous). Changes whenever an exchange is added, removed,
+ * re-timestamped or edited — including a same-length in-place edit, which
+ * `ingest_turn` upserts produce and a length-only digest missed (#23).
  */
 export function computeConversationFingerprint(
   db: Database.Database,
@@ -183,8 +185,7 @@ export function computeConversationFingerprint(
 ): string {
   const rows = db
     .prepare(
-      `SELECT id, exchange_index, timestamp,
-              length(user_message) AS lu, length(assistant_message) AS la
+      `SELECT id, exchange_index, timestamp, user_message, assistant_message
        FROM exchanges WHERE conversation_id = ?
        ORDER BY exchange_index ASC, id ASC`,
     )
@@ -192,13 +193,19 @@ export function computeConversationFingerprint(
       id: string;
       exchange_index: number | null;
       timestamp: string | null;
-      lu: number | null;
-      la: number | null;
+      user_message: string | null;
+      assistant_message: string | null;
     }>;
 
   const hash = crypto.createHash("sha256");
   for (const r of rows) {
-    hash.update(`${r.id}|${r.exchange_index ?? ""}|${r.timestamp ?? ""}|${r.lu ?? 0}|${r.la ?? 0}\n`);
+    const user = r.user_message ?? "";
+    const assistant = r.assistant_message ?? "";
+    hash.update(`${r.id}|${r.exchange_index ?? ""}|${r.timestamp ?? ""}|${user.length}:`);
+    hash.update(user);
+    hash.update(`|${assistant.length}:`);
+    hash.update(assistant);
+    hash.update("\n");
   }
   return hash.digest("hex");
 }

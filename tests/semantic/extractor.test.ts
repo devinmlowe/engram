@@ -121,6 +121,21 @@ describe("buildExtractionPrompt", () => {
     expect(prompt).toContain("[Exchange 2]");
   });
 
+  it("every few-shot example carries a confidence value so small models emit one (#23)", () => {
+    const prompt = buildExtractionPrompt(makeExchanges(1), defaultMetadata);
+    const examples = [...prompt.matchAll(/\*\*Extracted facts:\*\*\n```json\n([\s\S]*?)\n```/g)]
+      .flatMap((m) => JSON.parse(m[1]) as Array<Record<string, unknown>>);
+    expect(examples.length).toBeGreaterThanOrEqual(6);
+    for (const ex of examples) {
+      expect(typeof ex.confidence, JSON.stringify(ex)).toBe("number");
+      expect(ex.confidence as number).toBeGreaterThan(0);
+      expect(ex.confidence as number).toBeLessThanOrEqual(1);
+    }
+    // explicit statements are scored more confidently than inferred ones
+    const byBasis = (b: string) => examples.filter((e) => e.extraction_basis === b).map((e) => e.confidence as number);
+    expect(Math.min(...byBasis("explicit"))).toBeGreaterThan(Math.max(...byBasis("inferred")));
+  });
+
   it("handles empty exchanges gracefully", () => {
     const prompt = buildExtractionPrompt([], defaultMetadata);
 

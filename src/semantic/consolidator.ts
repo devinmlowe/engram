@@ -203,6 +203,7 @@ export async function consolidateFacts(
         memoryId: base.memoryId,
         mergedWithId: base.memoryId,
         similarity: 1,
+        collapsed: true,
       });
     }
   }
