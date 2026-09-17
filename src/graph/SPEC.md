@@ -35,7 +35,7 @@ The graph domain manages the knowledge graph — entities, typed relationships, 
 ### Postconditions
 
 - **POST-1**: `searchGraph()` shall return results conforming to `LayerSearchResult[]` contract.
-- **POST-2**: `exploreEntity()` shall return null when entity is not found (not throw).
+- **POST-2**: `exploreEntity()` shall throw an `Error` whose message is `Entity not found: <query>` when neither an entity name nor an alias matches. Callers surface it: the MCP `explore` handler returns it as an `isError` result and the CLI `explore` command prints it and exits 1.
 - **POST-3**: Entity resolution shall produce one of: merge (with existing) or create (new node).
 - **POST-4**: Community detection shall produce coherence scores for each cluster.
 
@@ -73,4 +73,4 @@ The graph domain manages the knowledge graph — entities, typed relationships, 
 | REQ-3 | Unit test | `../tests/graph/analyzer.test.ts` |
 | REQ-6 | Integration test | `../tests/graph/search.test.ts` |
 | REQ-7 | Unit test | `../tests/graph/search.test.ts` (exploreEntity, traverseNeighborhood) |
-| POST-2 | Uncovered | `../tests/graph/search.test.ts` currently asserts `exploreEntity()` *throws* for an unknown entity — spec and implementation disagree; resolve before citing a test |
+| POST-2 | Unit test | `../tests/graph/search.test.ts` ("throws for unknown entity"); the MCP `isError` mapping: `../tests/contracts/interface-parity.test.ts` |

@@ -576,6 +576,6 @@ At least one must be configured for `engram extract` and `engram dream`; search,
 ## References
 
 - [SPEC.md](./SPEC.md) — Full system specification with requirements and interface contract
-- [SPEC-legacy.md](./SPEC-legacy.md) — Original vision document with detailed design rationale
+- [docs/history/SPEC-legacy.md](./docs/history/SPEC-legacy.md) — Original vision document with detailed design rationale (archived)
 - [plans/](./plans/) — Implementation plans (phases 1–4, phase 6 RLM, phase 7 extensions)
 - [decisions/](./decisions/) — Architecture Decision Records

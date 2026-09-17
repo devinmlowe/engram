@@ -16,7 +16,7 @@ The interfaces domain provides all external access points to engram: CLI for dir
 ## Requirements
 
 - **REQ-1**: All interfaces shall use `_core/search/searchMultiSource()` for recall operations — no interface shall implement its own search path. *(traces to L0 REQ-4, REQ-6, REQ-7)*
-- **REQ-2**: CLI and MCP shall expose equivalent capabilities: recall, remember, explore, reflect, dream, sync. *(traces to L0 REQ-6, REQ-7)*
+- **REQ-2**: CLI and MCP shall expose the same memory capabilities — recall (CLI `search` / MCP `recall`), remember, explore, reflect — each routed through the same `interfaces/shared/` operation. Operator actions (`dream`, `sync`, `init`, `migrate`, …) are CLI-only by design; turn-level ingestion for agents is MCP `ingest_turn`. *(traces to L0 REQ-6, REQ-7)*
 - **REQ-3**: MCP output shall be optimized for LLM consumption (XML formatting, token-aware truncation). *(traces to L0 REQ-6)*
 - **REQ-4**: The web interface shall provide graph visualization, word cloud, and dream pipeline management. *(traces to L0 REQ-4)*
 - **REQ-5**: The `remember` operation shall deduplicate against existing memories using embedding similarity. *(traces to L0 REQ-10)*
@@ -63,8 +63,8 @@ The interfaces domain provides all external access points to engram: CLI for dir
 | ID | Method | Location |
 |----|--------|----------|
 | REQ-1 | Unit test (partial) | `../tests/contracts/recall-contract.test.ts` (MCP recall handler routed through the shared search); CLI path uncovered |
-| REQ-2 | Uncovered | No CLI/MCP capability-parity test exists yet |
+| REQ-2 | Contract test | `../tests/contracts/interface-parity.test.ts` (the four shared capabilities are registered on both surfaces and both import them from `interfaces/shared/`) |
 | REQ-3 | Unit test | `../tests/contracts/recall-contract.test.ts` (XML output), `../tests/episodic/search.test.ts` (formatRecallXml) |
 | REQ-5 | Unit test | `../tests/contracts/remember-contract.test.ts`, `../tests/e2e/mcp-server.test.ts` (remember deduplication) |
-| POST-4 | Uncovered | Dedup lives in `../interfaces/shared/`, but no test compares CLI and MCP behaviour |
+| POST-4 | Contract test | `../tests/contracts/interface-parity.test.ts` (both surfaces call `rememberFact()` from `../src/interfaces/shared/remember.ts` and neither inserts memories directly); dedup behaviour itself: `../tests/contracts/remember-contract.test.ts` |
 | INV-3 | Unit test | `../tests/interfaces/mcp/tool-annotations.test.ts` (readOnlyHint per tool, reinforcement sentence on retrieval tools) |

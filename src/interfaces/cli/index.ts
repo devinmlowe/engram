@@ -741,11 +741,21 @@ program
     const db = getDatabase(config);
     try {
       const depth = parseInt(opts.depth, 10);
-      const result = exploreEntity(db, {
-        entity,
-        depth: Math.min(Math.max(depth, 1), 3),
-        relationshipTypes: opts.type ? [opts.type] : undefined,
-      });
+      let result;
+      try {
+        result = exploreEntity(db, {
+          entity,
+          depth: Math.min(Math.max(depth, 1), 3),
+          relationshipTypes: opts.type ? [opts.type] : undefined,
+        });
+      } catch (err) {
+        // graph SPEC POST-2: unknown entity is a descriptive throw
+        if (err instanceof Error && err.message.startsWith("Entity not found")) {
+          console.error(err.message);
+          process.exit(1);
+        }
+        throw err;
+      }
       console.log(`\n${result.centerEntity.name} (${result.centerEntity.type})`);
       if (result.centerEntity.description) {
         console.log(`  ${result.centerEntity.description}`);

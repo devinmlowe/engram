@@ -31,4 +31,4 @@ Phase-level plans defining scope, requirements, and acceptance criteria for each
 
 - [SPEC.md](../SPEC.md) — System specification that drives all plans
 - [docs/plans/](../docs/plans/) — Detailed implementation plans per phase
-- [SPEC-legacy.md](../SPEC-legacy.md) — Original phased vision (phases 0-7)
+- [SPEC-legacy.md](../docs/history/SPEC-legacy.md) — Original phased vision (phases 0-7; archived under docs/history)
