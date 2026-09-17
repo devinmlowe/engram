@@ -31,7 +31,15 @@ memories inherit the profile scope. The caller thread never touches the
 network. ``turn_index`` is a per-session in-memory counter seeded at 0 on
 process start; the server upserts on (session_id, turn_index), so a restart
 re-ingesting index 0.. of a resumed session updates rows in place rather
-than duplicating them. ``on_session_end`` / ``on_memory_write`` remain no-ops.
+than duplicating them. ``on_session_end`` remains a no-op.
+
+Built-in memory mirror (``on_memory_write``): ``add``/``replace`` of the
+Hermes MEMORY.md / USER.md memory tool are mirrored as ``remember`` under
+the same profile scope (``memory`` -> fact, ``user`` -> preference,
+``source = "import"``, modest importance). ``replace`` sends only the NEW
+text; engram's ``remember`` dedups/merges against existing memories, so the
+old wording is superseded there rather than deleted here. ``remove`` is a
+no-op. Writes ride the same bounded queue/drain thread as turns.
 
 The MCP server may ALSO be wired as ``mcp_servers.engram`` in config.yaml.
 That path is untouched by this plugin; the tool name here is chosen so it
@@ -45,6 +53,7 @@ Configuration (non-secret, lives in ``$HERMES_HOME/engram.json``, written by
   timeout_secs           — HTTP timeout for health + prefetch (default 2)
   prefetch_token_budget  — recall token budget per turn (default 300)
   sync_turns             — post each turn to ingest_turn (default true)
+  mirror_memory_writes   — mirror MEMORY.md/USER.md adds+replaces to remember (default true)
 
 The stdio transport reads its own keys from the same file (``repo_path``,
 ``node_path``, ``db_path``, ``budget``, ``read_scopes``, ``idle_kill_s``);
@@ -89,6 +98,7 @@ DEFAULT_BASE_URL = "http://127.0.0.1:9907"
 DEFAULT_TIMEOUT_SECS = 2.0
 DEFAULT_PREFETCH_TOKEN_BUDGET = 300
 DEFAULT_SYNC_TURNS = True
+DEFAULT_MIRROR_MEMORY_WRITES = True
 
 # sync_turn: bounded in-memory queue (drop-oldest) drained by one thread.
 _SYNC_QUEUE_MAX = 16
@@ -99,6 +109,17 @@ _SHUTDOWN_DRAIN_SECS = 2.0
 # (the server clips to 1000 chars anyway; this keeps the POST small).
 _TOOL_IO_MAX_CHARS = 1000
 TURN_SOURCE = "hermes"
+
+# on_memory_write mirror: engram ``remember`` source label + importance.
+_MIRROR_SOURCE = "import"
+_MIRROR_IMPORTANCE = 0.6
+_MIRROR_TYPE_BY_TARGET = {"memory": "fact", "user": "preference"}
+_MIRRORED_ACTIONS = ("add", "replace")
+
+# Queue item kinds -> MCP tool.
+_KIND_TURN = "turn"
+_KIND_WRITE = "write"
+_TOOL_BY_KIND = {_KIND_TURN: "ingest_turn", _KIND_WRITE: "remember"}
 
 # The engram ``recall`` schema bounds ``budget`` to [100, 5000].
 _RECALL_BUDGET_MIN = 100
@@ -214,6 +235,7 @@ def _load_config(hermes_home: Optional[str] = None) -> Dict[str, Any]:
         "timeout_secs": DEFAULT_TIMEOUT_SECS,
         "prefetch_token_budget": DEFAULT_PREFETCH_TOKEN_BUDGET,
         "sync_turns": DEFAULT_SYNC_TURNS,
+        "mirror_memory_writes": DEFAULT_MIRROR_MEMORY_WRITES,
     }
     try:
         path = _config_path(hermes_home)
@@ -232,6 +254,8 @@ def _load_config(hermes_home: Optional[str] = None) -> Dict[str, Any]:
         _RECALL_BUDGET_MIN, _RECALL_BUDGET_MAX,
     )
     config["sync_turns"] = _coerce_bool(config.get("sync_turns"), DEFAULT_SYNC_TURNS)
+    config["mirror_memory_writes"] = _coerce_bool(
+        config.get("mirror_memory_writes"), DEFAULT_MIRROR_MEMORY_WRITES)
     return config
 
 
@@ -759,9 +783,11 @@ class EngramMemoryProvider(MemoryProvider):
         tool_calls = _extract_tool_calls(messages)
         if tool_calls:
             item["tool_calls"] = tool_calls
-        self._enqueue_turn(item)
+        self._enqueue(_KIND_TURN, item)
 
-    def _enqueue_turn(self, item: Dict[str, Any]) -> None:
+    def _enqueue(self, kind: str, args: Dict[str, Any]) -> None:
+        """Push a ``{"kind", "args"}`` item; drop-oldest on overflow; start the drain thread."""
+        item = {"kind": kind, "args": args}
         with self._sync_lock:
             dropped = 0
             while True:
@@ -777,7 +803,7 @@ class EngramMemoryProvider(MemoryProvider):
             with self._sync_cv:
                 self._sync_pending += 1 - dropped
             if dropped:
-                logger.debug("engram sync_turn: queue full; dropped %d oldest turn(s)", dropped)
+                logger.debug("engram sync queue full; dropped %d oldest item(s)", dropped)
             self._ensure_drain_thread()
 
     def _ensure_drain_thread(self) -> None:
@@ -799,37 +825,62 @@ class EngramMemoryProvider(MemoryProvider):
             except queue.Empty:
                 continue
             try:
-                self._post_turn(item)
+                self._post_item(item)
             except Exception as exc:  # never let the worker die
-                logger.debug("engram sync_turn: unexpected error: %s", exc)
+                logger.debug("engram sync drain: unexpected error: %s", exc)
             finally:
                 with self._sync_cv:
                     self._sync_pending -= 1
                     self._sync_cv.notify_all()
 
-    def _post_turn(self, item: Dict[str, Any]) -> None:
-        """Post one queued turn. Skipped (dropped) while the breaker is open;
-        failures count toward the breaker exactly like recall/remember."""
+    def _post_item(self, item: Dict[str, Any]) -> None:
+        """Post one queued item (turn -> ingest_turn, write -> remember). Skipped
+        (dropped) while the breaker is open; failures count toward the breaker
+        exactly like recall and the save tool."""
+        tool = _TOOL_BY_KIND.get(item.get("kind"), "ingest_turn")
+        args = item["args"]
         if self._is_breaker_open():
-            logger.debug("engram sync_turn: breaker open; turn %s/%s skipped",
-                         item["session_id"], item["turn_index"])
+            logger.debug("engram sync drain: breaker open; %s skipped", tool)
             return
         try:
-            self._get_client().call_tool("ingest_turn", item, _TOOL_CALL_TIMEOUT_SECS)
+            self._get_client().call_tool(tool, args, _TOOL_CALL_TIMEOUT_SECS)
             self._record_success()
         except Exception as exc:
             self._record_failure()
-            logger.debug("engram ingest_turn failed (%s/%s): %s",
-                         item["session_id"], item["turn_index"], exc)
+            logger.debug("engram %s failed: %s", tool, exc)
+
+    # -- built-in memory mirror (on_memory_write) ---------------------------
+
+    def on_memory_write(self, action: str, target: str, content: str,
+                        metadata: Optional[Dict[str, Any]] = None) -> None:
+        """Mirror a committed MEMORY.md / USER.md write into engram (non-blocking).
+
+        ``add``/``replace`` enqueue a ``remember`` under the profile scope with
+        the NEW text (``replace`` old text arrives only in ``metadata["old_text"]``
+        and is not sent; engram's remember dedup supersedes it). ``remove`` and
+        unknown actions are no-ops. Nothing runs on the caller thread but the
+        enqueue.
+        """
+        if action not in _MIRRORED_ACTIONS:
+            logger.debug("engram on_memory_write: %s/%s not mirrored", action, target)
+            return
+        if not self._cfg()["mirror_memory_writes"]:
+            return
+        text = (content or "").strip()
+        if not text:
+            return
+        self._enqueue(_KIND_WRITE, {
+            "content": text,
+            "type": _MIRROR_TYPE_BY_TARGET.get(str(target), "fact"),
+            "importance": _MIRROR_IMPORTANCE,
+            "source": _MIRROR_SOURCE,
+            "scope": self._write_scope(),
+        })
 
     # -- ingestion hooks still deliberately no-ops --------------------------
 
     def on_session_end(self, messages: List[Dict[str, Any]]) -> None:
         """No-op in v1 (auto-ingest is out of scope)."""
-
-    def on_memory_write(self, action: str, target: str, content: str,
-                        metadata: Optional[Dict[str, Any]] = None) -> None:
-        """No-op in v1: built-in MEMORY.md writes are not mirrored."""
 
     def on_pre_compress(self, messages: List[Dict[str, Any]]) -> str:
         return ""
@@ -864,6 +915,12 @@ class EngramMemoryProvider(MemoryProvider):
                 "key": "sync_turns",
                 "description": "Post each completed turn to engram's ingest_turn (background, profile-scoped)",
                 "default": DEFAULT_SYNC_TURNS,
+                "type": "boolean",
+            },
+            {
+                "key": "mirror_memory_writes",
+                "description": "Mirror built-in MEMORY.md/USER.md adds and replaces into engram (background, profile-scoped)",
+                "default": DEFAULT_MIRROR_MEMORY_WRITES,
                 "type": "boolean",
             },
         ]

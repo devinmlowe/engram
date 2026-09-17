@@ -105,6 +105,9 @@ class FakeServer:
     def ingest_calls(self):
         return [c[4] for c in self.calls if c[2] == "tools/call" and c[4] and "turn_index" in c[4]]
 
+    def remember_calls(self):
+        return [c[4] for c in self.calls if c[2] == "tools/call" and c[4] and "content" in c[4]]
+
     def __call__(self, req, timeout=None):
         path = req.full_url[len(BASE):]
         body = req.data
@@ -138,7 +141,7 @@ class FakeServer:
         if rpc_method == "tools/call":
             assert session == SESSION, "tools/call sent without the session id"
             name = rpc["params"]["name"]
-            if name == "ingest_turn":
+            if name in ("ingest_turn", "remember"):
                 self.ingest_started.set()
                 if self.gate is not None:
                     assert self.gate.wait(timeout=5), "ingest gate never released"
@@ -342,9 +345,9 @@ def test_system_prompt_block_is_byte_stable(provider, server):
 def test_config_defaults_and_schema(plugin, provider):
     cfg = plugin._load_config()
     assert cfg == {"base_url": "http://127.0.0.1:9907", "timeout_secs": 2.0,
-                   "prefetch_token_budget": 300, "sync_turns": True}
+                   "prefetch_token_budget": 300, "sync_turns": True, "mirror_memory_writes": True}
     keys = [f["key"] for f in provider.get_config_schema()]
-    assert keys == ["base_url", "timeout_secs", "prefetch_token_budget", "sync_turns"]
+    assert keys == ["base_url", "timeout_secs", "prefetch_token_budget", "sync_turns", "mirror_memory_writes"]
     assert not any(f.get("secret") for f in provider.get_config_schema())
 
 
@@ -370,7 +373,7 @@ def test_backup_paths_expanded(provider):
 
 def test_noop_hooks(provider, server):
     assert provider.on_session_end([]) is None
-    assert provider.on_memory_write("add", "memory", "x") is None
+    assert provider.on_memory_write("remove", "memory", "x") is None
     assert provider.on_pre_compress([]) == ""
     assert server.calls == []
 
@@ -527,6 +530,91 @@ def test_shutdown_deadline_bounds_a_stuck_server(provider, server, plugin, monke
     provider.shutdown()
     assert (time.perf_counter() - t0) < 1.5
     server.gate.set()
+
+
+# ---------------------------------------------------------------------------
+# on_memory_write (W4): mirror MEMORY.md / USER.md writes into engram remember
+# ---------------------------------------------------------------------------
+
+def test_memory_write_add_posts_remember_with_scope_and_type(plugin, server, tmp_path):
+    home = tmp_path / "profiles" / "career"
+    home.mkdir(parents=True)
+    p = plugin.EngramMemoryProvider()
+    p.initialize("s", hermes_home=str(home))
+    p.on_memory_write("add", "memory", "Repo uses pnpm, not npm",
+                      metadata={"write_origin": "memory_tool", "session_id": "s"})
+    p.shutdown()
+    (args,) = server.remember_calls()
+    assert args == {"content": "Repo uses pnpm, not npm", "type": "fact", "importance": 0.6,
+                    "source": "import", "scope": "hermes:career"}
+
+
+def test_memory_write_replace_posts_new_content_only(provider, server):
+    provider.on_memory_write("replace", "memory", "Repo uses bun",
+                             metadata={"old_text": "Repo uses pnpm, not npm"})
+    provider.shutdown()
+    (args,) = server.remember_calls()
+    assert args["content"] == "Repo uses bun"
+    assert "pnpm" not in json.dumps(args)
+
+
+def test_memory_write_remove_posts_nothing(provider, server):
+    provider.on_memory_write("remove", "memory", "Repo uses bun", metadata={"old_text": "x"})
+    provider.on_memory_write("delete", "user", "y")        # unknown action: also ignored
+    provider.on_memory_write("add", "memory", "   ")        # blank content: ignored
+    assert provider._sync_thread is None
+    provider.shutdown()
+    assert server.calls == []
+
+
+def test_memory_write_user_target_is_preference(provider, server):
+    provider.on_memory_write("add", "user", "Prefers terse answers")
+    provider.shutdown()
+    (args,) = server.remember_calls()
+    assert args["type"] == "preference" and args["scope"] == "hermes:default"
+
+
+def test_memory_write_returns_fast_without_network_on_caller_thread(provider, server):
+    server.gate = threading.Event()
+    t0 = time.perf_counter()
+    for i in range(5):
+        provider.on_memory_write("add", "memory", f"fact {i}")
+    assert (time.perf_counter() - t0) * 1000 < 10
+    server.gate.set()
+    provider.shutdown()
+    assert len(server.remember_calls()) == 5
+    assert all(name.startswith("engram-sync")
+               for name, call in zip(server.threads, server.calls) if call[0] != "DELETE")
+
+
+def test_memory_write_shares_queue_with_turns_in_order(provider, server):
+    provider.sync_turn("u", "a", session_id="s")
+    provider.on_memory_write("add", "memory", "mid")
+    provider.sync_turn("u2", "a2", session_id="s")
+    provider.shutdown()
+    tools = [c[4].get("turn_index", "remember") for c in server.calls if c[2] == "tools/call"]
+    assert tools == [0, "remember", 1]
+
+
+def test_mirror_memory_writes_disabled_is_noop(plugin, server, tmp_path):
+    (tmp_path / "engram.json").write_text(json.dumps({"mirror_memory_writes": False}))
+    p = plugin.EngramMemoryProvider()
+    p.initialize("s", hermes_home=str(tmp_path))
+    p.on_memory_write("add", "memory", "x")
+    assert p._sync_thread is None
+    p.sync_turn("u", "a", session_id="s")                  # turns are governed by sync_turns, not this key
+    p.shutdown()
+    assert len(server.ingest_calls()) == 1 and server.remember_calls() == []
+
+
+def test_memory_write_breaker_open_skips_post(provider, server, plugin):
+    server.fail["recall"] = urllib.error.URLError("down")
+    for _ in range(plugin._BREAKER_THRESHOLD):
+        provider.prefetch("q")
+    n = len(server.calls)
+    provider.on_memory_write("add", "memory", "x")
+    provider.shutdown()
+    assert len(server.calls) == n and server.remember_calls() == []
 
 
 def test_register_collects_provider(plugin):
