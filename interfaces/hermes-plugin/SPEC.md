@@ -19,8 +19,10 @@ consolidated the former `integrations/hermes-plugin/` stdio provider into it).
   streamable-HTTP MCP server (`base_url`, default `http://127.0.0.1:9907`).
   `is_available()` is `GET /health`; `prefetch()` calls `recall` with
   `prefetch_token_budget`; exactly one model tool, `engram_memory_save`,
-  proxies to `remember`. A five-failure circuit breaker (120 s cooldown) keeps
-  a down server from taxing every turn. Ingestion hooks are no-ops (engram's
+  proxies to `remember`. A five-failure circuit breaker (120 s cooldown, then a
+  single half-open probe whose failure re-opens it without resetting the
+  count) keeps a down server from taxing every turn; queued turns survive
+  transport failures and are dropped only when the live server rejects them. Ingestion hooks are no-ops (engram's
   dream pipeline owns ingestion).
 - **R4** `stdio` transport (`provider.py`, `mcp_client.py`): spawn engram's MCP
   server as a persistent stdio child, lazily and only when
