@@ -495,7 +495,9 @@ describe("update run (git install, macOS, legacy data dir)", () => {
     expect(res.ok).toBe(false);
     const text = res.lines.join("\n");
     expect(text).toContain("counts DROPPED after the update: conversations: 1 -> 0; entities: 1 -> 0");
-    expect(text).toContain("UPDATE FAILED. Rollback steps, in order:");
+    expect(text).toContain("UPDATE FAILED.");
+    expect(text).toContain("Rollback steps, in order");
+    expect(text).toContain("restarted mcp"); // services come back even when verification fails
     expect(text).toContain("stop mcp: launchctl unload");
     expect(text).toContain("git -C " + root + " checkout abc1234 && npm ci");
     expect(text).toContain("move the items back");
@@ -503,7 +505,8 @@ describe("update run (git install, macOS, legacy data dir)", () => {
 
   it("a failed git pull aborts before the data dir moves", async () => {
     const { home, legacy, cfg, probe, setMcp } = setup();
-    const { exec } = fakeExec([
+    const { exec, calls } = fakeExec([
+      [/rev-parse --abbrev-ref/, () => ({ stdout: "main\n" })],
       [/status --porcelain/, () => ({ stdout: "" })],
       [/ls-remote --tags/, () => ({ stdout: "" })],
       [/pull --ff-only/, () => ({ status: 1, stderr: "fatal: Not possible to fast-forward" })],
@@ -511,6 +514,7 @@ describe("update run (git install, macOS, legacy data dir)", () => {
       [/launchctl list com\.engram\.mcp$/, () => ({ stdout: '"PID" = 7;' })],
       [/launchctl list/, () => ({ status: 113 })],
       [/launchctl unload/, () => { setMcp(false); }],
+      [/launchctl load/, () => { setMcp(true); }],
     ]);
     const d = updateDeps("darwin", home, cfg, exec, probe, []);
     const plan = await buildUpdatePlan(d, { noBackup: true });
@@ -518,6 +522,11 @@ describe("update run (git install, macOS, legacy data dir)", () => {
     expect(res.ok).toBe(false);
     expect(res.lines.join("\n")).toContain("git pull failed: fatal: Not possible to fast-forward");
     expect(existsSync(join(legacy, "engram.db"))).toBe(true);
+    // the branch is named explicitly (a branch with no upstream would otherwise fail), and the
+    // services stopped earlier are brought back before the rollback steps are printed
+    expect(calls.some((c) => c.cmd === "git" && c.args.join(" ").endsWith("pull --ff-only origin main"))).toBe(true);
+    expect(calls.filter((c) => c.cmd === "launchctl" && c.args[0] === "load")).toHaveLength(1);
+    expect(res.lines.join("\n")).toContain("restarted mcp");
   });
 
   it("npm installs use npm install -g <package>@<target>", async () => {
