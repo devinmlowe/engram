@@ -271,7 +271,7 @@ Four domains with shared core infrastructure:
 
 ## MCP Server
 
-14 tools for LLM agent memory operations:
+15 tools for LLM agent memory operations:
 
 | Tool | Purpose |
 |------|---------|
@@ -289,6 +289,7 @@ Four domains with shared core infrastructure:
 | `scan_file` | Regex-based file scanning with function context detection |
 | `commitments` | List tracked commitments (promises, intentions, follow-ups owed by others) — overdue first |
 | `commitments_update` | Mark a commitment done, dropped, or superseded |
+| `ingest_turn` | Record one user/assistant turn of an external agent session (`session_id`, `turn_index`, `scope`, `user_text`, `assistant_text`) — idempotent upsert into the episodic layer |
 
 ### Transports: stdio (default) and HTTP
 

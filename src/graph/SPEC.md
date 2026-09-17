@@ -72,5 +72,5 @@ The graph domain manages the knowledge graph — entities, typed relationships, 
 | REQ-2 | Unit test | `../tests/graph/resolver.test.ts` |
 | REQ-3 | Unit test | `../tests/graph/analyzer.test.ts` |
 | REQ-6 | Integration test | `../tests/graph/search.test.ts` |
-| REQ-7 | Unit test | `../tests/graph/explore.test.ts` |
-| POST-2 | Unit test | `../tests/graph/explore.test.ts` |
+| REQ-7 | Unit test | `../tests/graph/search.test.ts` (exploreEntity, traverseNeighborhood) |
+| POST-2 | Uncovered | `../tests/graph/search.test.ts` currently asserts `exploreEntity()` *throws* for an unknown entity — spec and implementation disagree; resolve before citing a test |

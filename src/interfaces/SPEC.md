@@ -61,8 +61,8 @@ The interfaces domain provides all external access points to engram: CLI for dir
 
 | ID | Method | Location |
 |----|--------|----------|
-| REQ-1 | Integration test | `../tests/interfaces/search-parity.test.ts` |
-| REQ-2 | Integration test | `../tests/interfaces/capability-parity.test.ts` |
-| REQ-3 | Unit test | `../tests/mcp/formatting.test.ts` |
-| REQ-5 | Unit test | `../tests/interfaces/remember-dedup.test.ts` |
-| POST-4 | Integration test | `../tests/interfaces/remember-dedup.test.ts` |
+| REQ-1 | Unit test (partial) | `../tests/contracts/recall-contract.test.ts` (MCP recall handler routed through the shared search); CLI path uncovered |
+| REQ-2 | Uncovered | No CLI/MCP capability-parity test exists yet |
+| REQ-3 | Unit test | `../tests/contracts/recall-contract.test.ts` (XML output), `../tests/episodic/search.test.ts` (formatRecallXml) |
+| REQ-5 | Unit test | `../tests/contracts/remember-contract.test.ts`, `../tests/e2e/mcp-server.test.ts` (remember deduplication) |
+| POST-4 | Uncovered | Dedup lives in `../interfaces/shared/`, but no test compares CLI and MCP behaviour |

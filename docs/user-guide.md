@@ -118,7 +118,7 @@ Start a new Claude Code session and check that the tools appear:
 /mcp
 ```
 
-You should see 14 tools. The five core ones are `recall`, `remember`, `show`, `explore`, and `reflect`; the rest are the session and file-analysis tools listed in [api-reference.md](./api-reference.md).
+You should see 15 tools. The five core ones are `recall`, `remember`, `show`, `explore`, and `reflect`; the rest are the session and file-analysis tools listed in [api-reference.md](./api-reference.md).
 
 ---
 

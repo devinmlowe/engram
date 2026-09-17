@@ -69,4 +69,4 @@ The semantic domain extracts, consolidates, and retrieves structured knowledge f
 | REQ-3 | Unit test | `../tests/semantic/nli.test.ts` |
 | REQ-5 | Integration test | `../tests/semantic/search.test.ts` |
 | REQ-6 | Unit test | `../tests/semantic/decay.test.ts` |
-| INV-2 | Architecture test | `../tests/semantic/types.test.ts` |
+| INV-2 | Uncovered | Type-level invariant; enforced by `tsc --noEmit` (`npm run lint`), no runtime test |
