@@ -12,6 +12,7 @@ import { join } from "node:path";
 import type Database from "better-sqlite3";
 import { loadConfig } from "../../_core/config/index.js";
 import { resolveModelCacheDir } from "../../_core/embeddings/model-cache.js";
+import { buildIntelligenceConfig, resolveOllamaModel } from "../../_core/llm/index.js";
 import type { EngramConfig } from "../../_core/types/index.js";
 
 export type DoctorLevel = "ok" | "warn" | "fail";
@@ -24,6 +25,7 @@ export const DOCTOR_CHECK_NAMES = [
   "sqlite-vec",
   "transformers.js",
   "model cache",
+  "ollama",
 ] as const;
 export type DoctorCheckName = (typeof DOCTOR_CHECK_NAMES)[number];
 
@@ -250,12 +252,46 @@ async function checkTransformersAndCache(
   return [transformers, checkModelCache(config.modelCacheDir, defaultDir)];
 }
 
+/**
+ * Which local model the Ollama tier will use, if any. Never required: a
+ * missing local tier only means extraction goes to the cloud tiers.
+ */
+async function checkOllama(config: EngramConfig): Promise<DoctorCheck> {
+  const name = "ollama";
+  const intel = buildIntelligenceConfig(config);
+  try {
+    const probe = await resolveOllamaModel(intel);
+    if (probe.model === intel.ollamaModel) {
+      return { name, level: "ok", required: false, detail: `${probe.model} at ${intel.ollamaUrl} (ollama tier active)` };
+    }
+    if (probe.model) {
+      return {
+        name,
+        level: "ok",
+        required: false,
+        detail: `${probe.model} at ${intel.ollamaUrl} (fallback: ${intel.ollamaModel} is not pulled; ollama tier active)`,
+      };
+    }
+    return {
+      name,
+      level: "warn",
+      required: false,
+      detail: probe.reachable
+        ? `ollama tier inactive: ${intel.ollamaModel} not found at ${intel.ollamaUrl}; available: [${probe.available.join(", ")}] — \`ollama pull ${intel.ollamaModel}\` or set ENGRAM_LOCAL_MODEL / ENGRAM_LOCAL_MODEL_FALLBACKS`
+        : `ollama tier inactive: Ollama not reachable at ${intel.ollamaUrl}; extraction uses the cloud tiers`,
+    };
+  } catch (err) {
+    return { name, level: "warn", required: false, detail: `ollama tier inactive: probe failed: ${errMsg(err)}` };
+  }
+}
+
 /** Run every probe. Never throws; failures are reported as checks. */
 export async function runDoctor(
   config: EngramConfig = loadConfig(),
 ): Promise<DoctorReport> {
   const [betterSqlite, sqliteVec] = await checkNativeSqlite();
   const [transformers, modelCache] = await checkTransformersAndCache(config);
+  const ollama = await checkOllama(config);
   const checks: DoctorCheck[] = [
     checkNode(),
     checkPlatform(),
@@ -263,6 +299,7 @@ export async function runDoctor(
     sqliteVec,
     transformers,
     modelCache,
+    ollama,
   ];
   return {
     node: process.version,

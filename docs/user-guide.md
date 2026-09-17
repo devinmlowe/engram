@@ -275,7 +275,8 @@ Engram is configured through environment variables. All settings have sensible d
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ANTHROPIC_API_KEY` | (none) | Required for Claude API extraction |
-| `ENGRAM_LOCAL_MODEL` | (none) | Local MLX model path (optional Ollama alternative) |
+| `ENGRAM_LOCAL_MODEL` | `qwen2.5:7b` | Ollama model used by the local tier (must be pulled on `OLLAMA_HOST`) |
+| `ENGRAM_LOCAL_MODEL_FALLBACKS` | (none) | Comma-separated Ollama models tried in order when `ENGRAM_LOCAL_MODEL` is not pulled |
 
 ---
 

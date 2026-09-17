@@ -119,6 +119,7 @@ ensure_env_file() {
             env_line ANTHROPIC_API_KEY "Anthropic provider (final tier of the LLM cascade)"
             env_line OPENROUTER_API_KEY "OpenRouter provider (middle tier)"
             env_line ENGRAM_LOCAL_MODEL "Ollama model name (default qwen2.5:7b)"
+            env_line ENGRAM_LOCAL_MODEL_FALLBACKS "Comma-separated Ollama models tried when ENGRAM_LOCAL_MODEL is not pulled"
             echo "# Any other ENGRAM_* setting from the README Configuration table works here too, e.g.:"
             echo "#ENGRAM_DATA_DIR="
         } > "$ENV_FILE"

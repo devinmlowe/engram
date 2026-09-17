@@ -804,3 +804,89 @@ describe("cascade diagnostics", () => {
     expect(result.provider).toBe("anthropic");
   });
 });
+
+// ─── Ollama model fallbacks (#16) ────────────────────────────────
+
+describe("Ollama model fallbacks", () => {
+  const schema = { properties: { facts: { type: "array" } }, required: ["facts"] };
+  const savedEnv: Record<string, string | undefined> = {};
+
+  beforeEach(() => {
+    for (const key of ["OPENROUTER_API_KEY", "ANTHROPIC_API_KEY"]) {
+      savedEnv[key] = process.env[key];
+      delete process.env[key];
+    }
+  });
+
+  afterEach(() => {
+    for (const [key, value] of Object.entries(savedEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+
+  /** Ollama up with llama3.1:8b only; records the /api/generate bodies. */
+  function mockOllamaWithLlama(): Array<Record<string, unknown>> {
+    const bodies: Array<Record<string, unknown>> = [];
+    mockFetch(async (url: string, init?: RequestInit) => {
+      if (url.includes("/api/tags")) {
+        return new Response(
+          JSON.stringify({ models: [{ name: "llama3.1:8b" }, { name: "nomic-embed-text:latest" }] }),
+          { status: 200 },
+        );
+      }
+      if (url.includes("/api/generate")) {
+        bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        return new Response(JSON.stringify({ response: JSON.stringify({ facts: [] }) }), { status: 200 });
+      }
+      return new Response("Not Found", { status: 404 });
+    });
+    return bodies;
+  }
+
+  it("uses the first pulled fallback when the configured model is missing", async () => {
+    const bodies = mockOllamaWithLlama();
+    const config = makeConfig({
+      ollamaModel: "qwen2.5:7b",
+      ollamaModelFallbacks: ["qwen3:8b", "llama3.1:8b"],
+    });
+
+    const result = await generateStructured("System", "User", schema, config);
+
+    expect(result.provider).toBe("ollama");
+    expect(result.model).toBe("llama3.1:8b");
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0].model).toBe("llama3.1:8b");
+  });
+
+  it("generate() also resolves the fallback model", async () => {
+    const bodies = mockOllamaWithLlama();
+    const config = makeConfig({ ollamaModel: "qwen2.5:7b", ollamaModelFallbacks: ["llama3.1:8b"] });
+
+    const result = await generate("System", "User", config);
+
+    expect(result.provider).toBe("ollama");
+    expect(bodies[0].model).toBe("llama3.1:8b");
+  });
+
+  it("isOllamaAvailable is true when only a fallback is pulled", async () => {
+    mockOllamaWithLlama();
+    expect(await isOllamaAvailable(makeConfig({ ollamaModel: "qwen2.5:7b" }))).toBe(false);
+    expect(await isOllamaAvailable(makeConfig({ ollamaModel: "qwen2.5:7b", ollamaModelFallbacks: ["llama3.1:8b"] }))).toBe(true);
+  });
+
+  it("with no fallback, warns 'model not found; available: […]' exactly once per process across two calls", async () => {
+    mockOllamaWithLlama();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const config = makeConfig({ ollamaModel: "qwen2.5:7b" });
+
+    for (let i = 0; i < 2; i++) {
+      await generateStructured("System", "User", schema, config).catch(() => {});
+    }
+
+    const notFound = warn.mock.calls
+      .map((c) => String(c[0]))
+      .filter((l) => /Ollama reachable but model qwen2\.5:7b not found; available: \[llama3\.1:8b, nomic-embed-text:latest\]/.test(l));
+    expect(notFound).toHaveLength(1);
+  });
+});

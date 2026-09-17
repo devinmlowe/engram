@@ -29,7 +29,7 @@ cd engram
 npm install          # prints a platform preflight verdict, then builds via the "prepare" script
 npm link             # puts `engram` on your PATH (or run `node dist/interfaces/cli/index.js` directly)
 
-engram doctor        # node version, platform/arch, native modules, model cache — all [ok]?
+engram doctor        # node version, platform/arch, native modules, model cache, ollama tier — all [ok]?
 engram init          # creates engram.db in the data dir (default ~/.local/share/engram; see Configuration) and downloads the embedding model
 engram sync          # index conversations from ~/.claude/projects (optional)
 engram search "what did I decide about caching"
@@ -362,7 +362,7 @@ Verify after restarting:
 
 ```bash
 engram health      # database, embedding model, MCP entry point
-engram doctor      # node version, platform/arch, native modules, model cache
+engram doctor      # node version, platform/arch, native modules, model cache, ollama tier
 engram search "smoke test"   # end-to-end recall through the new build
 ```
 
@@ -385,7 +385,7 @@ engram entities        # List/search entities
 engram relationships   # Show relationships for an entity
 engram stats           # Database statistics
 engram health          # System health check (database, model, Ollama, MCP entry point)
-engram doctor          # Runtime diagnostics: node, platform/arch, better-sqlite3, sqlite-vec, model cache (--json)
+engram doctor          # Runtime diagnostics: node, platform/arch, better-sqlite3, sqlite-vec, model cache, ollama tier (--json)
 engram migrate --source <db>   # Import a legacy conversation-index SQLite DB (--source is required; no default path)
 engram validate --source <db>  # Validate migration integrity against that source DB
 engram backfill-event-ts  # Backfill event-time timestamps (temporal recall)
@@ -543,7 +543,8 @@ The one exception is the launchd dream daemon, whose launcher (`scripts/run-drea
 | `ANTHROPIC_API_KEY` | — | Enables the Anthropic provider (final tier of the LLM cascade) |
 | `OPENROUTER_API_KEY` | — | Enables the OpenRouter provider (middle tier) |
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama endpoint; used first if reachable |
-| `ENGRAM_LOCAL_MODEL` | `qwen2.5:7b` | Ollama model name |
+| `ENGRAM_LOCAL_MODEL` | `qwen2.5:7b` | Ollama model name (must be pulled on the Ollama host) |
+| `ENGRAM_LOCAL_MODEL_FALLBACKS` | — | Comma-separated Ollama models tried in order when `ENGRAM_LOCAL_MODEL` is not pulled (e.g. `llama3.1:8b,qwen3:8b`) |
 | `ENGRAM_OPENROUTER_MODEL` | `google/gemini-2.5-flash-lite` | OpenRouter model name |
 | `ENGRAM_DATA_DIR` | platform default (see below) | Root for database, archive, and logs |
 | `ENGRAM_DB_PATH` | `$ENGRAM_DATA_DIR/engram.db` | SQLite database location |
@@ -564,8 +565,11 @@ falls back to `~/.local/share/engram` on every platform, so existing installs ne
 where `XDG_DATA_HOME` is normally unset, the default stays `~/.local/share/engram`). Every component
 (CLI, MCP server, dream daemon, web visualizer) resolves paths through this one rule.
 
-**LLM providers.** Extraction and the dream pipeline try Ollama first (if `OLLAMA_HOST` answers),
+**LLM providers.** Extraction and the dream pipeline try Ollama first (if `OLLAMA_HOST` answers
+and `ENGRAM_LOCAL_MODEL` — or one of `ENGRAM_LOCAL_MODEL_FALLBACKS` — is pulled there; otherwise the
+local tier is skipped with a one-time warning listing the models the host does have),
 then OpenRouter (if `OPENROUTER_API_KEY` is set), then Anthropic (if `ANTHROPIC_API_KEY` is set).
+`engram doctor` shows which local model, if any, the Ollama tier resolved to.
 At least one must be configured for `engram extract` and `engram dream`; search, `remember`,
 `remember_batch`, and the web visualizer do not need an LLM.
 

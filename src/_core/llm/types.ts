@@ -5,6 +5,8 @@
 export interface IntelligenceConfig {
   ollamaUrl: string;
   ollamaModel: string;
+  /** Tried in order when `ollamaModel` is not pulled on the Ollama host. */
+  ollamaModelFallbacks?: string[];
   openrouterModel?: string;
   apiModel: string;
   apiFallbackModel: string;

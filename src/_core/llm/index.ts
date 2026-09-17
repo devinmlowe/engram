@@ -17,7 +17,7 @@ import type {
   TierOutcome,
 } from "./types.js";
 import { CascadeError, tierErrorMessage } from "./types.js";
-import { isOllamaAvailable, ollamaGenerateStructured, ollamaGenerate } from "./providers/ollama.js";
+import { resolveOllamaModel, ollamaGenerateStructured, ollamaGenerate } from "./providers/ollama.js";
 import { openrouterGenerateStructured, openrouterGenerate, classifyHttpStatus } from "./providers/openrouter.js";
 import {
   apiGenerateStructured,
@@ -40,7 +40,7 @@ export { CascadeError } from "./types.js";
 
 // ─── Re-export provider functions for external use ───────────────
 
-export { isOllamaAvailable } from "./providers/ollama.js";
+export { isOllamaAvailable, resolveOllamaModel, type OllamaProbe } from "./providers/ollama.js";
 export { setClient, isAnthropicAvailable } from "./providers/anthropic.js";
 
 /** Reset module state (for testing): injected client and once-per-process warnings. */
@@ -77,6 +77,7 @@ export function buildIntelligenceConfig(
       process.env.OLLAMA_HOST ?? DEFAULT_OLLAMA_URL,
     ollamaModel:
       config.dream.localModel ?? DEFAULT_OLLAMA_MODEL,
+    ollamaModelFallbacks: config.dream.localModelFallbacks ?? [],
     openrouterModel:
       config.dream.openrouterModel ??
       (process.env.OPENROUTER_API_KEY ? DEFAULT_OPENROUTER_MODEL : undefined),
@@ -105,25 +106,33 @@ function noteTierFailure(tierErrors: TierError[], failure: TierError): void {
   console.warn(line);
 }
 
-/** Ollama's tier-1 outcome, or the config reason it was not tried. */
+/**
+ * Ollama's tier-1 outcome, or the config reason it was not tried. `run`
+ * receives the resolved model: the configured one, or the first pulled entry
+ * of `ollamaModelFallbacks` when the configured one is not on the host.
+ */
 async function ollamaTier<T>(
   config: IntelligenceConfig,
   skipLocal: boolean,
-  run: () => Promise<TierOutcome<T>>,
+  run: (model: string) => Promise<TierOutcome<T>>,
 ): Promise<TierOutcome<T>> {
   if (skipLocal) {
     return { failure: { tier: "ollama", errorClass: "config", message: "skipped: caller pinned a cloud tier (skipLocal)" } };
   }
-  if (!(await isOllamaAvailable(config))) {
+  const probe = await resolveOllamaModel(config);
+  if (!probe.reachable) {
+    return { failure: { tier: "ollama", errorClass: "config", message: `skipped: Ollama not reachable at ${config.ollamaUrl}` } };
+  }
+  if (!probe.model) {
     return {
       failure: {
         tier: "ollama",
         errorClass: "config",
-        message: `skipped: Ollama unavailable at ${config.ollamaUrl} or model ${config.ollamaModel} not pulled`,
+        message: `Ollama reachable but model ${config.ollamaModel} not found; available: [${probe.available.join(", ")}]`,
       },
     };
   }
-  return run();
+  return run(probe.model);
 }
 
 /**
@@ -181,8 +190,8 @@ export async function generateStructured<T>(
   options: GenerationOptions = {},
 ): Promise<GenerationResult<T>> {
   return runCascade<T>([
-    () => ollamaTier<T>(config, options.skipLocal ?? false, () =>
-      ollamaGenerateStructured<T>(systemPrompt, userPrompt, schema, config, options)),
+    () => ollamaTier<T>(config, options.skipLocal ?? false, (model) =>
+      ollamaGenerateStructured<T>(systemPrompt, userPrompt, schema, { ...config, ollamaModel: model }, options)),
     () => openrouterGenerateStructured<T>(systemPrompt, userPrompt, schema, config, options),
     () => anthropicTier<T>(() => apiGenerateStructured<T>(systemPrompt, userPrompt, schema, config, options)),
   ]);
@@ -201,7 +210,8 @@ export async function generate(
   config: IntelligenceConfig,
 ): Promise<GenerationResult<string>> {
   return runCascade<string>([
-    () => ollamaTier<string>(config, false, () => ollamaGenerate(systemPrompt, userPrompt, config)),
+    () => ollamaTier<string>(config, false, (model) =>
+      ollamaGenerate(systemPrompt, userPrompt, { ...config, ollamaModel: model })),
     () => openrouterGenerate(systemPrompt, userPrompt, config),
     () => anthropicTier<string>(() => apiGenerate(systemPrompt, userPrompt, config)),
   ]);

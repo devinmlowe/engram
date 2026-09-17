@@ -157,7 +157,15 @@ describe("Config Defaults Contract", () => {
     expect(c.dream.concurrency).toBe(1);
     expect(c.dream.scheduleHour).toBe(2);
     expect(c.dream.localModel).toBeUndefined();
+    expect(c.dream.localModelFallbacks).toEqual([]);
     expect(c.dream.openrouterModel).toBeUndefined();
+  });
+
+  it("parses ENGRAM_LOCAL_MODEL_FALLBACKS as a trimmed, comma-separated list (#16)", () => {
+    process.env.ENGRAM_LOCAL_MODEL_FALLBACKS = " llama3.1:8b, qwen3:8b ,,";
+    expect(loadConfig().dream.localModelFallbacks).toEqual(["llama3.1:8b", "qwen3:8b"]);
+    process.env.ENGRAM_LOCAL_MODEL_FALLBACKS = "";
+    expect(loadConfig().dream.localModelFallbacks).toEqual([]);
   });
 
   // ── Decay Defaults ─────────────────────────────────────────────

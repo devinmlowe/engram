@@ -14,16 +14,39 @@ const AVAILABILITY_TIMEOUT_MS = 5_000;
 
 // ─── Ollama Availability ─────────────────────────────────────────
 
+/** Result of probing the Ollama host for a usable model. */
+export interface OllamaProbe {
+  /** False when /api/tags could not be fetched (server down, timeout, non-2xx). */
+  reachable: boolean;
+  /** Model tags the host reports (empty when unreachable). */
+  available: string[];
+  /**
+   * The model the Ollama tier will use: `ollamaModel` when pulled, else the
+   * first pulled entry of `ollamaModelFallbacks`; undefined when none is.
+   */
+  model?: string;
+}
+
+/** Ollama model names may carry a `:latest` suffix — match with or without it. */
+function findPulled(target: string, available: string[]): string | undefined {
+  const t = target.toLowerCase();
+  return available.find((name) => {
+    const n = name.toLowerCase();
+    return n === t || n === `${t}:latest`;
+  });
+}
+
 /**
- * Check whether Ollama is running and has the configured model available.
+ * Probe the Ollama host and resolve which model (configured or fallback)
+ * the local tier can use.
  *
- * GETs /api/tags with a 5-second timeout, then checks whether the
- * target model appears in the response's model list.
- * Returns false on any error (connection refused, timeout, model missing).
+ * GETs /api/tags with a 5-second timeout. Never throws: any error (connection
+ * refused, timeout, non-2xx, malformed body) reports `reachable: false`.
  */
-export async function isOllamaAvailable(
+export async function resolveOllamaModel(
   config: IntelligenceConfig,
-): Promise<boolean> {
+): Promise<OllamaProbe> {
+  let available: string[];
   try {
     const controller = new AbortController();
     const timeout = setTimeout(
@@ -37,7 +60,7 @@ export async function isOllamaAvailable(
     clearTimeout(timeout);
 
     if (!response.ok) {
-      return false;
+      return { reachable: false, available: [] };
     }
 
     const data = (await response.json()) as {
@@ -45,19 +68,29 @@ export async function isOllamaAvailable(
     };
 
     if (!Array.isArray(data.models)) {
-      return false;
+      return { reachable: false, available: [] };
     }
-
-    // Ollama model names may include `:latest` suffix — match with
-    // or without the tag.
-    const target = config.ollamaModel.toLowerCase();
-    return data.models.some((m) => {
-      const name = (m.name ?? "").toLowerCase();
-      return name === target || name === `${target}:latest`;
-    });
+    available = data.models.map((m) => m.name ?? "").filter(Boolean);
   } catch {
-    return false;
+    return { reachable: false, available: [] };
   }
+
+  for (const candidate of [config.ollamaModel, ...(config.ollamaModelFallbacks ?? [])]) {
+    if (findPulled(candidate, available)) {
+      return { reachable: true, available, model: candidate };
+    }
+  }
+  return { reachable: true, available };
+}
+
+/**
+ * Check whether Ollama is running and has the configured model — or one of
+ * its configured fallbacks — available.
+ */
+export async function isOllamaAvailable(
+  config: IntelligenceConfig,
+): Promise<boolean> {
+  return (await resolveOllamaModel(config)).model !== undefined;
 }
 
 // ─── Failure Reporting ───────────────────────────────────────────
