@@ -103,6 +103,7 @@ optional.
 | `sync_turns` | http | `true` | enqueue every primary-context turn to `ingest_turn` |
 | `mirror_memory_writes` | http | `true` | mirror built-in MEMORY.md / USER.md adds and replaces to `remember` |
 | `prefetch_contexts` | http | `["primary"]` | agent contexts that get automatic recall; a JSON list or comma-separated string of `primary`, `subagent`, `cron`, `flush` (unknown names dropped; empty → default) |
+| `token` | http | `""` | bearer token sent as `Authorization: Bearer …` on `/mcp` when the daemon runs with `ENGRAM_MCP_TOKEN` (never on `/health`, never logged). The one secret in the file; `engram.json` is written mode 0600 |
 | `repo_path` | stdio | this checkout | engram checkout containing `dist/` |
 | `node_path` | stdio | PATH lookup | node >= 22 binary |
 | `db_path` | stdio | engram default | override the SQLite DB |

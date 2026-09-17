@@ -90,7 +90,10 @@ multi-second recall never blocks `/health`, the handshake, or other clients.
 Each worker owns its own better-sqlite3 connection (WAL + `busy_timeout`) and
 embedding model. Recall sessions are pinned to the worker that created them.
 Stdio mode never spawns workers. Startup logs
-`Engram MCP HTTP server listening on http://127.0.0.1:9907/mcp (workers: N, ...)`.
+`Engram MCP HTTP server listening on http://127.0.0.1:9907/mcp (workers: N, ..., auth: ...)`.
+`ENGRAM_MCP_TOKEN` makes `/mcp` require `Authorization: Bearer <token>` (`/health` stays open)
+and is mandatory before `ENGRAM_MCP_HOST` may be anything but loopback; the visualizer uses
+`ENGRAM_WEB_TOKEN` the same way (`src/interfaces/mcp/auth.ts`, `src/interfaces/web/auth-gate.ts`).
 
 - `ENGRAM_HTTP_WORKERS` — worker count in HTTP mode (default 2; `0` = inline on the main thread)
 - `ENGRAM_WORKER_TIMEOUT_MS` — per-call timeout (default 8000). `remember`,

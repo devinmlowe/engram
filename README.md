@@ -352,6 +352,17 @@ never spawns workers.
 |----------|---------|---------|
 | `ENGRAM_HTTP_WORKERS` | `2` | Worker count in HTTP mode (`0` = run tool calls inline on the main thread) |
 | `ENGRAM_WORKER_TIMEOUT_MS` | `8000` | Per-call timeout; `remember`, `remember_batch`, `index_file_structure` and `reflect --refresh` use higher floors. A worker still silent at 2x the timeout is killed and respawned |
+| `ENGRAM_MCP_TOKEN` | — | When set, `/mcp` requires `Authorization: Bearer <token>` (401 otherwise); `/health` stays open for supervisors. Required before the daemon will bind anything but loopback |
+| `ENGRAM_MCP_HOST` | `127.0.0.1` | Bind address. Anything but loopback is refused unless `ENGRAM_MCP_TOKEN` is set |
+
+**Authentication.** Both HTTP servers rely on the loopback bind for access control by default:
+anyone who can reach `127.0.0.1` (other local users, a reverse proxy) has full read/write access
+to the memory store. Set `ENGRAM_MCP_TOKEN` (in `~/.config/engram/env` for the supervised daemon)
+to require a bearer token; Streamable-HTTP clients send it as a header, e.g.
+`{ "type": "http", "url": "http://127.0.0.1:9907/mcp", "headers": { "Authorization": "Bearer <token>" } }`,
+and the Hermes plugin reads it from `token` in `engram.json`. The token is compared in constant
+time and never logged. The visualizer uses `ENGRAM_WEB_TOKEN` (falling back to `ENGRAM_MCP_TOKEN`);
+see [Web Visualization](#web-visualization).
 
 See the "MCP Server Transports" section of [CLAUDE.md](CLAUDE.md) for the
 worker-pool internals (`worker-pool.ts`, `dispatch.ts`, `worker.ts`).
@@ -579,6 +590,12 @@ Interactive knowledge graph visualization at `localhost:3001`:
 
 Start: `npx tsx src/interfaces/web/server.ts`
 
+**Authentication.** Loopback-only by default and unauthenticated. Set `ENGRAM_WEB_TOKEN`
+(or `ENGRAM_MCP_TOKEN`) and every route except `/api/health` requires it: as
+`Authorization: Bearer <token>` for API clients, or open any page once with `?token=<token>`
+and the server sets an HttpOnly cookie for that page's API calls and SSE stream. Binding a
+non-loopback `ENGRAM_BIND` without a token is refused at startup.
+
 For a persistent Windows installation, use [`scripts/install-visualizer.ps1`](scripts/install-visualizer.ps1). The macOS launchd path remains [`scripts/install-visualizer.sh`](scripts/install-visualizer.sh).
 
 ## Search
@@ -720,7 +737,10 @@ The one exception is the launchd dream daemon, whose launcher (`scripts/run-drea
 | `ENGRAM_MODEL_CACHE_DIR` | `node_modules/@xenova/transformers/.cache/` | Where model weights are downloaded/cached (see [Model cache](#model-cache)) |
 | `ENGRAM_SKIP_PREFLIGHT` | — | Set to `1` to silence the `npm install` platform preflight |
 | `ENGRAM_CHUNKING_STRATEGY` | `fixed` | `fixed` or `adaptive` (content-aware boundaries) |
-| `ENGRAM_BIND` | `127.0.0.1` | Web visualizer bind address (`0.0.0.0` to expose on the network) |
+| `ENGRAM_BIND` | `127.0.0.1` | Web visualizer bind address (`0.0.0.0` to expose on the network; requires `ENGRAM_WEB_TOKEN`) |
+| `ENGRAM_WEB_TOKEN` | `ENGRAM_MCP_TOKEN` | Bearer token / `?token=` required by the visualizer (all routes but `/api/health`) |
+| `ENGRAM_MCP_TOKEN` | — | Bearer token required on the MCP daemon's `/mcp`; see [MCP Server](#transports-stdio-default-and-http) |
+| `ENGRAM_MCP_HOST` | `127.0.0.1` | MCP daemon bind address (non-loopback requires `ENGRAM_MCP_TOKEN`) |
 | `PORT` | `3001` | Web visualizer port |
 
 **Data directory.** When `ENGRAM_DATA_DIR` is unset the default is `$XDG_DATA_HOME/engram` on

@@ -21,6 +21,7 @@ import {
 } from "./dispatch.js";
 import { createEngramHttpServer } from "./http.js";
 import { DEFAULT_MCP_PORT, parseMcpPort } from "./port.js";
+import { resolveMcpToken } from "./auth.js";
 import { ENGRAM_VERSION } from "../../_core/version/index.js";
 import { loadConfig } from "../../_core/config/index.js";
 import { escapeXml } from "../../_core/search/index.js";
@@ -1892,8 +1893,14 @@ async function main() {
         .catch((e) => console.error("Worker pool readiness failed:", e));
     }
 
+    // ENGRAM_MCP_HOST widens the bind address; anything but loopback needs
+    // ENGRAM_MCP_TOKEN, which `/mcp` then requires as a bearer token (#27).
+    const host = process.env.ENGRAM_MCP_HOST?.trim() || "127.0.0.1";
+    const token = resolveMcpToken(process.env);
     const http = createEngramHttpServer({
       port,
+      host,
+      token,
       registerHandlers: (srv) => registerToolHandlers(srv, dispatcher.call),
       health: () => {
         const stats = dispatcher.stats();
@@ -1911,7 +1918,7 @@ async function main() {
 
     const address = await http.listen();
     console.error(
-      `Engram MCP HTTP server listening on http://127.0.0.1:${address.port}/mcp (workers: ${workerCount}, timeout: ${timeoutMs}ms)`,
+      `Engram MCP HTTP server listening on http://${host}:${address.port}/mcp (workers: ${workerCount}, timeout: ${timeoutMs}ms, auth: ${token ? "bearer token" : "none, loopback only"})`,
     );
   } else {
     console.error("Engram MCP server running via stdio");

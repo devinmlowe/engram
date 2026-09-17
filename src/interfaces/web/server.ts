@@ -13,6 +13,8 @@
  */
 
 import Database from "better-sqlite3";
+import { assertBindAllowed, resolveWebToken, WEB_TOKEN_ENV, WWW_AUTHENTICATE } from "../mcp/auth.js";
+import { gateWebRequest } from "./auth-gate.js";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { watch, type FSWatcher } from "node:fs";
 
@@ -58,6 +60,9 @@ const DB_PATH = resolveWebDbPath();
 const PORT = parseInt(process.env.PORT ?? "3001", 10);
 // Bind to loopback by default; set ENGRAM_BIND=0.0.0.0 (or HOST) to expose on the network.
 const BIND_HOST = getBindHost(process.env);
+// ENGRAM_WEB_TOKEN (or ENGRAM_MCP_TOKEN) gates every route except /api/health;
+// required when BIND_HOST is not loopback (#27).
+const WEB_TOKEN = resolveWebToken(process.env);
 
 // ─── Pre-render pages ───────────────────────────────────────────
 
@@ -114,6 +119,14 @@ function serve() {
     // Fixed base: the Host header is client-controlled and may not parse
     const url = new URL(req.url ?? "/", "http://localhost");
     const pathname = url.pathname;
+
+    const gate = gateWebRequest(req, url, WEB_TOKEN);
+    if (!gate.ok) {
+      res.writeHead(401, { "Content-Type": "text/plain", "WWW-Authenticate": WWW_AUTHENTICATE });
+      res.end(gate.reason ?? "unauthorized");
+      return;
+    }
+    if (gate.setCookie) res.setHeader("Set-Cookie", gate.setCookie);
 
     // ─── Health route ───────────────────────────────────
     if (pathname === "/api/health" || pathname === "/graph/api/health") {
@@ -255,6 +268,12 @@ function serve() {
     res.end("Not found");
   }
 
+  try {
+    assertBindAllowed(BIND_HOST, WEB_TOKEN, WEB_TOKEN_ENV);
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
   server.listen(PORT, BIND_HOST, () => {
     const stats = getStats(db);
     const threshold = computeOptimalThreshold(db);
@@ -267,6 +286,7 @@ function serve() {
     console.log(`  Terminal: ${base}/terminal/graph`);
     console.log(`  ${stats.nodes} nodes, ${stats.edges} edges, ${stats.communities} communities`);
     console.log(`  Auto-threshold: ${threshold.value} (${threshold.nodes} nodes, ${threshold.edges} edges, ${threshold.edgePct}% edge retention)`);
+    console.log(`  Auth: ${WEB_TOKEN ? "bearer token / ?token= required (except /api/health)" : "none (loopback only)"}`);
     console.log(`  Watching for real-time updates...`);
   });
 
