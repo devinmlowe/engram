@@ -41,6 +41,20 @@ text; engram's ``remember`` dedups/merges against existing memories, so the
 old wording is superseded there rather than deleted here. ``remove`` is a
 no-op. Writes ride the same bounded queue/drain thread as turns.
 
+Agent-context gating: Hermes passes ``agent_context`` (primary | subagent |
+cron | flush) to ``initialize``. Like the stdio transport, WRITES
+(``sync_turn``, ``on_memory_write``) run only for ``primary``; ``prefetch``
+runs for the contexts in ``prefetch_contexts`` (default ``["primary"]``, so
+a user can opt cron in). An absent/empty context counts as primary. The
+explicit ``engram_memory_save`` tool keeps working in every context: a cron
+job deciding to store a fact is a deliberate, cheap, one-off write, unlike
+per-turn ingestion, and refusing it would silently lose the fact.
+
+Availability: ``is_available`` is config-only per the MemoryProvider
+contract (engram.json parses, ``base_url`` is an http(s) URL) — never the
+network. The ``GET /health`` probe runs once in ``initialize`` and only
+feeds ``unavailable_reason()``; a later successful call clears it.
+
 The MCP server may ALSO be wired as ``mcp_servers.engram`` in config.yaml.
 That path is untouched by this plugin; the tool name here is chosen so it
 cannot collide with the ``engram``-prefixed MCP tools.
@@ -54,6 +68,7 @@ Configuration (non-secret, lives in ``$HERMES_HOME/engram.json``, written by
   prefetch_token_budget  — recall token budget per turn (default 300)
   sync_turns             — post each turn to ingest_turn (default true)
   mirror_memory_writes   — mirror MEMORY.md/USER.md adds+replaces to remember (default true)
+  prefetch_contexts      — agent contexts that get per-turn recall (default ["primary"])
 
 The stdio transport reads its own keys from the same file (``repo_path``,
 ``node_path``, ``db_path``, ``budget``, ``read_scopes``, ``idle_kill_s``);
@@ -99,6 +114,9 @@ DEFAULT_TIMEOUT_SECS = 2.0
 DEFAULT_PREFETCH_TOKEN_BUDGET = 300
 DEFAULT_SYNC_TURNS = True
 DEFAULT_MIRROR_MEMORY_WRITES = True
+PRIMARY_CONTEXT = "primary"
+AGENT_CONTEXTS = ("primary", "subagent", "cron", "flush")
+DEFAULT_PREFETCH_CONTEXTS = [PRIMARY_CONTEXT]
 
 # sync_turn: bounded in-memory queue (drop-oldest) drained by one thread.
 _SYNC_QUEUE_MAX = 16
@@ -228,6 +246,34 @@ def _coerce_bool(value: Any, default: bool) -> bool:
     return default
 
 
+def _coerce_contexts(value: Any, default: List[str]) -> List[str]:
+    """Accept a JSON list or a comma-separated string of agent contexts; junk -> default."""
+    if isinstance(value, str):
+        value = value.split(",")
+    if not isinstance(value, (list, tuple)):
+        return list(default)
+    out: List[str] = []
+    for item in value:
+        name = str(item or "").strip().lower()
+        if name in AGENT_CONTEXTS and name not in out:
+            out.append(name)
+    return out or list(default)
+
+
+def _read_config_file(hermes_home: Optional[str] = None):
+    """-> (dict | None, error). ``None`` dict with "" error means no file."""
+    try:
+        path = _config_path(hermes_home)
+        if not path.exists():
+            return None, ""
+        file_cfg = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return None, f"{CONFIG_FILENAME} could not be read: {exc}"
+    if not isinstance(file_cfg, dict):
+        return None, f"{CONFIG_FILENAME} must contain a JSON object"
+    return file_cfg, ""
+
+
 def _load_config(hermes_home: Optional[str] = None) -> Dict[str, Any]:
     """Documented defaults, overridden by non-empty keys in engram.json."""
     config: Dict[str, Any] = {
@@ -236,16 +282,13 @@ def _load_config(hermes_home: Optional[str] = None) -> Dict[str, Any]:
         "prefetch_token_budget": DEFAULT_PREFETCH_TOKEN_BUDGET,
         "sync_turns": DEFAULT_SYNC_TURNS,
         "mirror_memory_writes": DEFAULT_MIRROR_MEMORY_WRITES,
+        "prefetch_contexts": list(DEFAULT_PREFETCH_CONTEXTS),
     }
-    try:
-        path = _config_path(hermes_home)
-        if path.exists():
-            file_cfg = json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(file_cfg, dict):
-                config.update({k: v for k, v in file_cfg.items()
-                               if v is not None and v != ""})
-    except Exception as exc:
-        logger.debug("engram: could not read %s: %s", CONFIG_FILENAME, exc)
+    file_cfg, err = _read_config_file(hermes_home)
+    if err:
+        logger.debug("engram: %s", err)
+    if file_cfg:
+        config.update({k: v for k, v in file_cfg.items() if v is not None and v != ""})
 
     config["base_url"] = str(config.get("base_url") or DEFAULT_BASE_URL).rstrip("/")
     config["timeout_secs"] = _coerce_float(config.get("timeout_secs"), DEFAULT_TIMEOUT_SECS, 0.1)
@@ -256,6 +299,8 @@ def _load_config(hermes_home: Optional[str] = None) -> Dict[str, Any]:
     config["sync_turns"] = _coerce_bool(config.get("sync_turns"), DEFAULT_SYNC_TURNS)
     config["mirror_memory_writes"] = _coerce_bool(
         config.get("mirror_memory_writes"), DEFAULT_MIRROR_MEMORY_WRITES)
+    config["prefetch_contexts"] = _coerce_contexts(
+        config.get("prefetch_contexts"), DEFAULT_PREFETCH_CONTEXTS)
     return config
 
 
@@ -561,6 +606,9 @@ class EngramMemoryProvider(MemoryProvider):
         # counters, bounded queue and the single drain thread.
         self._profile = "default"
         self._session_id = ""
+        self._agent_context = PRIMARY_CONTEXT
+        self._writes_enabled = True
+        self._prefetch_enabled = True
         self._turn_counters: Dict[str, int] = {}
         self._sync_queue: "queue.Queue[Dict[str, Any]]" = queue.Queue(maxsize=_SYNC_QUEUE_MAX)
         self._sync_lock = threading.Lock()
@@ -602,6 +650,7 @@ class EngramMemoryProvider(MemoryProvider):
     def _record_success(self) -> None:
         with self._breaker_lock:
             self._consecutive_failures = 0
+        self._unavailable_reason = ""
 
     def _record_failure(self) -> None:
         with self._breaker_lock:
@@ -620,7 +669,25 @@ class EngramMemoryProvider(MemoryProvider):
     # -- availability ---------------------------------------------------
 
     def is_available(self) -> bool:
-        """True iff GET {base_url}/health answers 200 with status == "ok"."""
+        """Config/deps only, no network (MemoryProvider contract): engram.json
+        parses (or is absent) and ``base_url`` is an http(s) URL. Whether the
+        daemon is actually up is probed in ``initialize`` -> ``unavailable_reason``."""
+        file_cfg, err = _read_config_file(self._hermes_home)
+        if err:
+            self._unavailable_reason = err
+            return False
+        base_url = (file_cfg or {}).get("base_url", DEFAULT_BASE_URL)
+        if not isinstance(base_url, str) or not base_url.strip().lower().startswith(("http://", "https://")):
+            self._unavailable_reason = (
+                f"base_url in {CONFIG_FILENAME} must be an http(s) URL (got {base_url!r}); "
+                "run `hermes memory setup engram`"
+            )
+            return False
+        self._unavailable_reason = ""
+        return True
+
+    def _probe_health(self) -> None:
+        """One GET /health at startup; only informs ``unavailable_reason()``."""
         cfg = self._cfg()
         try:
             ok = self._get_client().health(cfg["timeout_secs"])
@@ -629,12 +696,8 @@ class EngramMemoryProvider(MemoryProvider):
                 f"engram MCP server unreachable at {cfg['base_url']}/health ({exc}). "
                 "Check the ai.hermes.engram-mcp LaunchAgent."
             )
-            return False
-        if not ok:
-            self._unavailable_reason = f"{cfg['base_url']}/health did not report status ok"
-            return False
-        self._unavailable_reason = ""
-        return True
+            return
+        self._unavailable_reason = "" if ok else f"{cfg['base_url']}/health did not report status ok"
 
     def unavailable_reason(self) -> str:
         return self._unavailable_reason
@@ -649,6 +712,11 @@ class EngramMemoryProvider(MemoryProvider):
         self._client = EngramMcpClient(self._config["base_url"])
         self._session_id = str(session_id or "")
         self._profile = _profile_name(self._hermes_home, kwargs.get("agent_identity"))
+        context = str(kwargs.get("agent_context") or PRIMARY_CONTEXT).strip().lower() or PRIMARY_CONTEXT
+        self._agent_context = context
+        self._writes_enabled = context == PRIMARY_CONTEXT          # stdio transport's rule
+        self._prefetch_enabled = context in self._config["prefetch_contexts"]
+        self._probe_health()
 
     def shutdown(self) -> None:
         """Drain queued turns (bounded by ``_SHUTDOWN_DRAIN_SECS``), stop the
@@ -672,7 +740,7 @@ class EngramMemoryProvider(MemoryProvider):
         """Recall context for this turn. Any failure returns "" — memory must
         never break a conversation turn."""
         self._last_recall_count = None
-        if not query or not query.strip() or self._is_breaker_open():
+        if not self._prefetch_enabled or not query or not query.strip() or self._is_breaker_open():
             return ""
         cfg = self._cfg()
         try:
@@ -757,8 +825,9 @@ class EngramMemoryProvider(MemoryProvider):
         bounded (``_SYNC_QUEUE_MAX``); on overflow the OLDEST queued turn is
         dropped (its turn_index leaves a gap, which the server tolerates).
         ``turn_author`` is accepted so Hermes passes it; it is not persisted.
+        Non-primary agent contexts (subagent/cron/flush) enqueue nothing.
         """
-        if not self._cfg()["sync_turns"]:
+        if not self._writes_enabled or not self._cfg()["sync_turns"]:
             return
         user_text = (user_content or "").strip()
         assistant_text = (assistant_content or "").strip()
@@ -864,7 +933,7 @@ class EngramMemoryProvider(MemoryProvider):
         if action not in _MIRRORED_ACTIONS:
             logger.debug("engram on_memory_write: %s/%s not mirrored", action, target)
             return
-        if not self._cfg()["mirror_memory_writes"]:
+        if not self._writes_enabled or not self._cfg()["mirror_memory_writes"]:
             return
         text = (content or "").strip()
         if not text:
@@ -922,6 +991,12 @@ class EngramMemoryProvider(MemoryProvider):
                 "description": "Mirror built-in MEMORY.md/USER.md adds and replaces into engram (background, profile-scoped)",
                 "default": DEFAULT_MIRROR_MEMORY_WRITES,
                 "type": "boolean",
+            },
+            {
+                "key": "prefetch_contexts",
+                "description": "Comma-separated agent contexts that get automatic recall (primary, subagent, cron, flush)",
+                "default": ",".join(DEFAULT_PREFETCH_CONTEXTS),
+                "type": "text",
             },
         ]
 

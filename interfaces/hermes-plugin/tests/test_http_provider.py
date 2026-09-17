@@ -161,7 +161,7 @@ def server(monkeypatch):
 
 
 @pytest.fixture
-def provider(plugin, tmp_path, monkeypatch):
+def provider(plugin, tmp_path, monkeypatch, server):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     p = plugin.EngramMemoryProvider()
     p.initialize("sess-1", hermes_home=str(tmp_path), platform="cli")
@@ -173,27 +173,55 @@ def provider(plugin, tmp_path, monkeypatch):
 # Availability
 # ---------------------------------------------------------------------------
 
-def test_available_when_health_ok(provider, server):
-    assert provider.is_available() is True
+def test_is_available_checks_config_only_no_network(plugin, server, tmp_path):
+    fresh = plugin.EngramMemoryProvider()
+    assert fresh.is_available() is True
+    assert fresh.unavailable_reason() == ""
+    assert server.calls == []
+
+    (tmp_path / "engram.json").write_text(json.dumps({"base_url": ""}))
+    p = plugin.EngramMemoryProvider()
+    p._hermes_home = str(tmp_path)
+    assert p.is_available() is False
+    assert "base_url" in p.unavailable_reason()
+
+    (tmp_path / "engram.json").write_text("{not json")
+    q = plugin.EngramMemoryProvider()
+    q._hermes_home = str(tmp_path)
+    assert q.is_available() is False
+    assert "engram.json" in q.unavailable_reason()
+    assert server.calls == []
+
+
+def test_initialize_probes_health_once(provider, server):
+    assert [c[:2] for c in server.calls] == [("GET", "/health")]
     assert provider.unavailable_reason() == ""
-    assert server.calls[0][:2] == ("GET", "/health")
 
 
-def test_unavailable_when_server_down(provider, server):
+def test_initialize_with_unreachable_server_records_reason_and_prefetch_stays_safe(plugin, server, tmp_path):
     server.fail["health"] = urllib.error.URLError("connection refused")
-    assert provider.is_available() is False
-    assert "unreachable" in provider.unavailable_reason()
+    p = plugin.EngramMemoryProvider()
+    p.initialize("s", hermes_home=str(tmp_path))
+    assert "unreachable" in p.unavailable_reason()
+    assert p.is_available() is True                     # config is fine; the daemon is what is down
+    server.fail["recall"] = urllib.error.URLError("connection refused")
+    assert p.prefetch("q") == "" and p.recall_status() is None
+    del server.fail["recall"]
+    assert "port 9907" in p.prefetch("engram HTTP MCP server")
+    assert p.unavailable_reason() == ""                 # a later success clears the startup hint
+    p.shutdown()
 
 
-def test_unavailable_when_status_not_ok(provider, server):
+def test_initialize_records_degraded_and_non_200_health(plugin, server, tmp_path):
     server.health = {"status": "degraded"}
-    assert provider.is_available() is False
-    assert "status ok" in provider.unavailable_reason()
-
-
-def test_unavailable_on_non_200(provider, server):
+    p = plugin.EngramMemoryProvider()
+    p.initialize("s", hermes_home=str(tmp_path))
+    assert "status ok" in p.unavailable_reason()
+    server.health = {"status": "ok"}
     server.fail["health"] = 503
-    assert provider.is_available() is False
+    q = plugin.EngramMemoryProvider()
+    q.initialize("s", hermes_home=str(tmp_path))
+    assert "HTTP 503" in q.unavailable_reason()
 
 
 # ---------------------------------------------------------------------------
@@ -203,9 +231,10 @@ def test_unavailable_on_non_200(provider, server):
 def test_prefetch_success_returns_recalled_text(provider, server):
     out = provider.prefetch("engram HTTP MCP server")
     assert "port 9907" in out
-    # initialize handshake, then tools/call recall with the default budget
+    # health probe at initialize, then the MCP handshake, then tools/call recall
+    assert server.calls[0][:2] == ("GET", "/health")
     methods = [c[2] for c in server.calls]
-    assert methods[:2] == ["initialize", "notifications/initialized"]
+    assert methods[1:3] == ["initialize", "notifications/initialized"]
     _, _, rpc, session, args = server.calls[-1]
     assert rpc == "tools/call" and session == SESSION
     assert args == {"query": "engram HTTP MCP server", "budget": 300}
@@ -242,8 +271,9 @@ def test_prefetch_empty_when_no_results(provider, server):
 
 
 def test_prefetch_blank_query_makes_no_request(provider, server):
+    n = len(server.calls)
     assert provider.prefetch("   ") == ""
-    assert server.calls == []
+    assert len(server.calls) == n
 
 
 def test_prefetch_uses_configured_budget(plugin, server, tmp_path):
@@ -280,9 +310,10 @@ def test_tool_call_happy_path(provider, server):
 
 
 def test_tool_call_missing_content(provider, server):
+    n = len(server.calls)
     res = json.loads(provider.handle_tool_call("engram_memory_save", {}))
     assert "content" in res["error"]
-    assert server.calls == []
+    assert len(server.calls) == n
 
 
 def test_tool_call_rejects_bad_type_and_importance(provider, server):
@@ -290,7 +321,7 @@ def test_tool_call_rejects_bad_type_and_importance(provider, server):
         provider.handle_tool_call("engram_memory_save", {"content": "x", "type": "rumor"}))["error"]
     assert "importance" in json.loads(
         provider.handle_tool_call("engram_memory_save", {"content": "x", "importance": 7}))["error"]
-    assert server.calls == []
+    assert [c[1] for c in server.calls] == ["/health"]
 
 
 def test_tool_call_backend_error(provider, server):
@@ -345,9 +376,11 @@ def test_system_prompt_block_is_byte_stable(provider, server):
 def test_config_defaults_and_schema(plugin, provider):
     cfg = plugin._load_config()
     assert cfg == {"base_url": "http://127.0.0.1:9907", "timeout_secs": 2.0,
-                   "prefetch_token_budget": 300, "sync_turns": True, "mirror_memory_writes": True}
+                   "prefetch_token_budget": 300, "sync_turns": True, "mirror_memory_writes": True,
+                   "prefetch_contexts": ["primary"]}
     keys = [f["key"] for f in provider.get_config_schema()]
-    assert keys == ["base_url", "timeout_secs", "prefetch_token_budget", "sync_turns", "mirror_memory_writes"]
+    assert keys == ["base_url", "timeout_secs", "prefetch_token_budget", "sync_turns",
+                    "mirror_memory_writes", "prefetch_contexts"]
     assert not any(f.get("secret") for f in provider.get_config_schema())
 
 
@@ -375,7 +408,7 @@ def test_noop_hooks(provider, server):
     assert provider.on_session_end([]) is None
     assert provider.on_memory_write("remove", "memory", "x") is None
     assert provider.on_pre_compress([]) == ""
-    assert server.calls == []
+    assert [c[1] for c in server.calls] == ["/health"]
 
 
 # ---------------------------------------------------------------------------
@@ -413,8 +446,10 @@ def test_sync_turn_enqueues_fast_without_network_on_caller_thread(provider, serv
     provider.shutdown()
     assert len(server.ingest_calls()) == 5
     # Every request before shutdown's session DELETE came from the drain thread, never the caller.
+    # Only initialize's one-off /health probe and shutdown's session DELETE run on the caller thread.
     assert all(name.startswith("engram-sync")
-               for name, call in zip(server.threads, server.calls) if call[0] != "DELETE")
+               for name, call in zip(server.threads, server.calls)
+               if call[0] != "DELETE" and call[1] != "/health")
 
 
 def test_drain_posts_ingest_turn_with_scope_session_and_text(plugin, server, tmp_path):
@@ -506,7 +541,7 @@ def test_sync_turns_disabled_is_noop(plugin, server, tmp_path):
     p.sync_turn("u", "a", session_id="s")
     assert p._sync_thread is None
     p.shutdown()
-    assert server.calls == []
+    assert server.ingest_calls() == [] and [c[1] for c in server.calls] == ["/health"]
 
 
 def test_shutdown_drains_pending_within_deadline(provider, server):
@@ -564,7 +599,7 @@ def test_memory_write_remove_posts_nothing(provider, server):
     provider.on_memory_write("add", "memory", "   ")        # blank content: ignored
     assert provider._sync_thread is None
     provider.shutdown()
-    assert server.calls == []
+    assert [c[1] for c in server.calls] == ["/health"]           # startup probe only; no MCP session opened
 
 
 def test_memory_write_user_target_is_preference(provider, server):
@@ -583,8 +618,10 @@ def test_memory_write_returns_fast_without_network_on_caller_thread(provider, se
     server.gate.set()
     provider.shutdown()
     assert len(server.remember_calls()) == 5
+    # Only initialize's one-off /health probe and shutdown's session DELETE run on the caller thread.
     assert all(name.startswith("engram-sync")
-               for name, call in zip(server.threads, server.calls) if call[0] != "DELETE")
+               for name, call in zip(server.threads, server.calls)
+               if call[0] != "DELETE" and call[1] != "/health")
 
 
 def test_memory_write_shares_queue_with_turns_in_order(provider, server):
@@ -615,6 +652,64 @@ def test_memory_write_breaker_open_skips_post(provider, server, plugin):
     provider.on_memory_write("add", "memory", "x")
     provider.shutdown()
     assert len(server.calls) == n and server.remember_calls() == []
+
+
+# ---------------------------------------------------------------------------
+# agent_context gating (W5)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("context", ["cron", "subagent", "flush"])
+def test_non_primary_context_enqueues_nothing(plugin, server, tmp_path, context):
+    p = plugin.EngramMemoryProvider()
+    p.initialize("s", hermes_home=str(tmp_path), agent_context=context)
+    p.sync_turn("u", "a", session_id="s")
+    p.on_memory_write("add", "memory", "x")
+    assert p._sync_thread is None and p._sync_queue.empty()
+    p.shutdown()
+    assert [c[1] for c in server.calls] == ["/health"]
+
+
+def test_cron_context_prefetch_is_skipped_without_network(plugin, server, tmp_path):
+    p = plugin.EngramMemoryProvider()
+    p.initialize("s", hermes_home=str(tmp_path), agent_context="cron")
+    n = len(server.calls)
+    assert p.prefetch("engram HTTP MCP server") == ""
+    assert p.recall_status() is None
+    assert len(server.calls) == n
+    # explicit saves from a cron job are still honoured (documented choice)
+    res = json.loads(p.handle_tool_call("engram_memory_save", {"content": "x"}))
+    assert "result" in res
+    p.shutdown()
+
+
+@pytest.mark.parametrize("kwargs", [{}, {"agent_context": "primary"}, {"agent_context": ""}])
+def test_primary_or_absent_context_is_unchanged(plugin, server, tmp_path, kwargs):
+    p = plugin.EngramMemoryProvider()
+    p.initialize("s", hermes_home=str(tmp_path), **kwargs)
+    assert "port 9907" in p.prefetch("engram HTTP MCP server")
+    p.sync_turn("u", "a", session_id="s")
+    p.on_memory_write("add", "memory", "x")
+    p.shutdown()
+    assert len(server.ingest_calls()) == 1 and len(server.remember_calls()) == 1
+
+
+def test_prefetch_contexts_opts_cron_into_recall_but_not_writes(plugin, server, tmp_path):
+    (tmp_path / "engram.json").write_text(json.dumps({"prefetch_contexts": ["primary", "cron"]}))
+    p = plugin.EngramMemoryProvider()
+    p.initialize("s", hermes_home=str(tmp_path), agent_context="cron")
+    assert "port 9907" in p.prefetch("engram HTTP MCP server")
+    p.sync_turn("u", "a", session_id="s")
+    p.on_memory_write("add", "memory", "x")
+    assert p._sync_thread is None
+    p.shutdown()
+    assert server.ingest_calls() == [] and server.remember_calls() == []
+
+
+def test_prefetch_contexts_accepts_comma_string_and_rejects_junk(plugin, tmp_path):
+    (tmp_path / "engram.json").write_text(json.dumps({"prefetch_contexts": " cron, primary "}))
+    assert plugin._load_config(str(tmp_path))["prefetch_contexts"] == ["cron", "primary"]
+    (tmp_path / "engram.json").write_text(json.dumps({"prefetch_contexts": 7}))
+    assert plugin._load_config(str(tmp_path))["prefetch_contexts"] == ["primary"]
 
 
 def test_register_collects_provider(plugin):
