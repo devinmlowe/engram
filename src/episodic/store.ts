@@ -30,8 +30,8 @@ export function insertExchange(
       INSERT OR REPLACE INTO exchanges
         (id, conversation_id, project, timestamp, user_message, assistant_message,
          session_id, cwd, git_branch, model_version, exchange_index, token_estimate,
-         created_at, last_accessed)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         created_at, last_accessed, author_json)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       exchange.id,
       exchange.conversationId,
@@ -47,6 +47,7 @@ export function insertExchange(
       exchange.tokenEstimate,
       exchange.createdAt,
       exchange.lastAccessed ?? null,
+      exchange.authorJson ?? null,
     );
 
     // 3. Get rowid and insert new FTS entry
@@ -169,6 +170,7 @@ export function getExchange(
     tokenEstimate: row.token_estimate as number,
     createdAt: row.created_at as number,
     lastAccessed: row.last_accessed as number | undefined,
+    authorJson: (row.author_json as string | null) ?? undefined,
   };
 }
 

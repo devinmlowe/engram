@@ -23,12 +23,24 @@ Designed as an MCP server for Claude Code and other LLM agents, with CLI and web
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) if you want `engram sync` to ingest your conversation history from `~/.claude/projects`
 - At least one LLM provider for extraction and dream consolidation (see [Configuration](#configuration)). Search, `remember`, and the web visualizer work without one.
 
+**From npm**
+
+```bash
+npm install -g @devinmlowe/engram   # puts `engram` on your PATH; prints a platform preflight verdict
+```
+
+**From source**
+
 ```bash
 git clone https://github.com/devinmlowe/engram.git
 cd engram
 npm install          # prints a platform preflight verdict, then builds via the "prepare" script
 npm link             # puts `engram` on your PATH (or run `node dist/interfaces/cli/index.js` directly)
+```
 
+Either way, continue with:
+
+```bash
 engram doctor        # node version, platform/arch, native modules, model cache, ollama tier — all [ok]?
 engram init          # creates engram.db in the data dir (default ~/.local/share/engram; see Configuration) and downloads the embedding model
 engram sync          # index conversations from ~/.claude/projects (optional)
@@ -38,8 +50,9 @@ engram search "what did I decide about caching"
 > **Heads up: first run downloads models.** `engram init`, the first search, and the test
 > suite pull `nomic-ai/nomic-embed-text-v1.5` (embeddings) and `Xenova/bge-reranker-base`
 > (reranker) from Hugging Face — several hundred MB in total — into the model cache. By default
-> that cache is `node_modules/@xenova/transformers/.cache/`, which every `npm install` / `npm ci`
-> wipes; set `ENGRAM_MODEL_CACHE_DIR` to keep the models somewhere durable (see
+> that cache is `node_modules/@xenova/transformers/.cache/` (inside the global package directory for
+> an `npm install -g`), which every `npm install` / `npm ci` / global upgrade wipes; set
+> `ENGRAM_MODEL_CACHE_DIR` to keep the models somewhere durable (see
 > [Model cache](#model-cache)). Downloads happen once; later runs are offline.
 > Set `ENGRAM_RERANK_ENABLED=false` to skip the reranker model.
 
@@ -347,6 +360,8 @@ npm ci                    # exact dependencies from package-lock.json; rebuilds 
                           # the "prepare" hook and runs the install preflight
 npm run build             # only needed if you skipped npm ci
 ```
+
+For an npm install: `npm install -g @devinmlowe/engram@latest`, then restart the services.
 
 Schema migrations are additive and checkpointed; they run on the next database
 open (any `engram` command), so there is no separate migration step. Read

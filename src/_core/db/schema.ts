@@ -65,7 +65,8 @@ function createSchema(db: Database.Database, config: EngramConfig): void {
       exchange_index INTEGER,
       token_estimate INTEGER,
       created_at INTEGER DEFAULT (unixepoch()),
-      last_accessed INTEGER
+      last_accessed INTEGER,
+      author_json TEXT
     );
 
     CREATE INDEX IF NOT EXISTS idx_exchanges_timestamp ON exchanges(timestamp DESC);
@@ -383,6 +384,11 @@ function createSchema(db: Database.Database, config: EngramConfig): void {
   // extracted from a conversation with this scope (ADR-010 inheritance).
   migrateConversationScope(db);
 
+  // #18: exchanges.author_json — who authored the user side of a turn pushed
+  // via ingest_turn ({id, name, is_bot} as JSON). NULL for Claude Code
+  // transcripts and for turns sent without an author.
+  migrateExchangeAuthor(db);
+
   // FTS5 virtual tables (created separately — can't use IF NOT EXISTS)
   createFtsIfNeeded(db, "exchanges_fts", `
     CREATE VIRTUAL TABLE exchanges_fts USING fts5(
@@ -605,6 +611,26 @@ export function migrateConversationScope(db: Database.Database): boolean {
   );
   db.exec("CREATE INDEX IF NOT EXISTS idx_conversations_scope ON conversations(scope)");
   db.prepare("INSERT OR IGNORE INTO schema_migrations (name) VALUES (?)").run(CONVERSATIONS_SCOPE_MIGRATION);
+  return added;
+}
+
+/** Checkpoint name recorded in schema_migrations when exchanges.author_json is added. */
+export const EXCHANGES_AUTHOR_MIGRATION = "exchanges_author_v1";
+
+/**
+ * Add the nullable `exchanges.author_json` column and record the checkpoint.
+ * Same shape as migrateConversationScope; existing rows stay NULL. Returns
+ * `true` only on the open that introduced the column.
+ */
+export function migrateExchangeAuthor(db: Database.Database): boolean {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      name TEXT PRIMARY KEY,
+      applied_at INTEGER DEFAULT (unixepoch())
+    )
+  `);
+  const added = idempotentAlter(db, "exchanges", "author_json", "ALTER TABLE exchanges ADD COLUMN author_json TEXT");
+  db.prepare("INSERT OR IGNORE INTO schema_migrations (name) VALUES (?)").run(EXCHANGES_AUTHOR_MIGRATION);
   return added;
 }
 

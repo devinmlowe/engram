@@ -68,6 +68,8 @@ export interface RememberParams {
   type: MemoryType;
   importance: number;
   source?: MemorySource;
+  /** Provenance note stored in `memories.context` (e.g. what produced this write). */
+  context?: string;
   /** Tenant scope: 'global' (default) or 'hermes:<profile>' (ADR-010). */
   scope?: string;
 }
@@ -161,6 +163,7 @@ export async function rememberFact(
       id: newId,
       type: params.type,
       content: params.content,
+      context: params.context,
       confidence: DEFAULT_CONFIDENCE,
       importance: params.importance,
       accessCount: 0,
@@ -187,6 +190,8 @@ export interface BatchMemoryInput {
   type: MemoryType;
   importance?: number;
   source?: MemorySource;
+  /** Provenance note stored in `memories.context`. */
+  context?: string;
   relates_to_entities?: string[];  // max 10 entity names to link
   /** Tenant scope override for this memory (ADR-010). */
   scope?: string;
@@ -294,6 +299,7 @@ export async function storeMemoryBatch(
               id: newId,
               type: input.type,
               content: input.content,
+              context: input.context,
               confidence: DEFAULT_CONFIDENCE,
               importance: input.importance ?? DEFAULT_IMPORTANCE,
               accessCount: 0,

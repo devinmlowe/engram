@@ -5,7 +5,24 @@ All notable changes to engram are documented here. The format follows
 [Semantic Versioning](https://semver.org/) while the project is pre-1.0
 (minor bumps may change behaviour, as noted below).
 
-## [Unreleased]
+## [0.3.0] - 2026-09-17
+
+### Added
+
+- MCP `ingest_turn` accepts an optional `author {id, name, is_bot}` object, stored as JSON in the new nullable `exchanges.author_json` column; the Hermes plugin forwards `turn_author` and parks queued turns while its circuit breaker is open instead of dropping them (#18).
+- MCP `remember` / `remember_batch` accept `source: "hermes-mirror"` and an optional `context` provenance note (stored in `memories.context`); the Hermes plugin's built-in memory mirror tags its writes with both instead of `source: "import"`. Older servers reject `hermes-mirror`, so deploy the server before the plugin (#19).
+
+### Changed
+
+- Package renamed to `@devinmlowe/engram` (scoped, public) — the first npm release; install with `npm install -g @devinmlowe/engram`. The CLI binary is still `engram` (#39).
+
+### Fixed
+
+- Hermes plugin expands a literal `~` in `HERMES_HOME` / `HERMES_AGENT_DIR` instead of resolving it against the cwd, which created a stray `<repo>/~/.hermes` home under fish (#33).
+- Dream checkpoint errors are classified from `CascadeError` tier errors; the message regex is only a fallback (#34).
+- A success checkpoint supersedes the same item's error row in the same dream run (#35).
+- `consolidateFacts` continues past a failing fact and reports the failures; the batch checkpoint records the partial failure (#36).
+- The CLI reports uncaught command errors as one line with exit 1 instead of a stack trace (#37).
 
 ### Security
 
@@ -64,3 +81,6 @@ All notable changes to engram are documented here. The format follows
 ## [0.1.0]
 
 - Initial release: phases 1–7 — episodic archive and search, semantic extraction and consolidation, knowledge graph and reflection, dream-state pipeline, RLM recall sessions, file-analysis tools, commitments ledger, MCP stdio/HTTP server, CLI and web visualizer.
+
+[0.3.0]: https://github.com/devinmlowe/engram/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/devinmlowe/engram/releases/tag/v0.2.0

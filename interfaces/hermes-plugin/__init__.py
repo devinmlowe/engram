@@ -31,12 +31,17 @@ memories inherit the profile scope. The caller thread never touches the
 network. ``turn_index`` is a per-session in-memory counter seeded at 0 on
 process start; the server upserts on (session_id, turn_index), so a restart
 re-ingesting index 0.. of a resumed session updates rows in place rather
-than duplicating them. ``on_session_end`` remains a no-op.
+than duplicating them. ``turn_author`` rides along as ``author``. While the
+circuit breaker is open the drain thread parks (queued items stay put and
+post once the cooldown lapses) rather than dropping them; only overflow of
+the bounded queue loses turns, and that count is reported by
+``unavailable_reason()``. ``on_session_end`` remains a no-op.
 
 Built-in memory mirror (``on_memory_write``): ``add``/``replace`` of the
 Hermes MEMORY.md / USER.md memory tool are mirrored as ``remember`` under
 the same profile scope (``memory`` -> fact, ``user`` -> preference,
-``source = "import"``, modest importance). ``replace`` sends only the NEW
+``source = "hermes-mirror"``, ``context`` naming the action, modest
+importance). ``replace`` sends only the NEW
 text; engram's ``remember`` dedups/merges against existing memories, so the
 old wording is superseded there rather than deleted here. ``remove`` is a
 no-op. Writes ride the same bounded queue/drain thread as turns.
@@ -139,7 +144,7 @@ _TOOL_IO_MAX_CHARS = 1000
 TURN_SOURCE = "hermes"
 
 # on_memory_write mirror: engram ``remember`` source label + importance.
-_MIRROR_SOURCE = "import"
+_MIRROR_SOURCE = "hermes-mirror"
 _MIRROR_IMPORTANCE = 0.6
 _MIRROR_TYPE_BY_TARGET = {"memory": "fact", "user": "preference"}
 _MIRRORED_ACTIONS = ("add", "replace")
@@ -374,6 +379,22 @@ def _clip_io(value: Any) -> Any:
     except (TypeError, ValueError):
         return _clip_io(str(value))
     return value if len(encoded) <= _TOOL_IO_MAX_CHARS else _clip_io(encoded)
+
+
+def _turn_author_payload(turn_author: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Map Hermes' ``turn_author`` ``{id, name, is_bot}`` onto ingest_turn's
+    ``author`` object. Keys absent or None are omitted; the server schema is
+    closed, so nothing else is forwarded. ``{}`` when there is nothing to send."""
+    if not isinstance(turn_author, dict):
+        return {}
+    author: Dict[str, Any] = {}
+    for key in ("id", "name"):
+        value = turn_author.get(key)
+        if value is not None and str(value) != "":
+            author[key] = str(value)
+    if turn_author.get("is_bot") is not None:
+        author["is_bot"] = bool(turn_author["is_bot"])
+    return author
 
 
 def _extract_tool_calls(messages: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
@@ -646,6 +667,7 @@ class EngramMemoryProvider(MemoryProvider):
         self._sync_stop = threading.Event()
         self._sync_cv = threading.Condition()
         self._sync_pending = 0          # enqueued but not yet posted/skipped
+        self._breaker_dropped = 0       # queue overflow drops while the breaker was open
 
     # -- identity -------------------------------------------------------
 
@@ -730,7 +752,11 @@ class EngramMemoryProvider(MemoryProvider):
         self._unavailable_reason = "" if ok else f"{cfg['base_url']}/health did not report status ok"
 
     def unavailable_reason(self) -> str:
-        return self._unavailable_reason
+        reason = self._unavailable_reason
+        if self._breaker_dropped:
+            note = f"{self._breaker_dropped} queued turn(s) dropped while the circuit breaker was open"
+            reason = f"{reason}; {note}" if reason else note
+        return reason
 
     # -- lifecycle ------------------------------------------------------
 
@@ -771,7 +797,9 @@ class EngramMemoryProvider(MemoryProvider):
         thread = self._sync_thread
         if thread is not None and thread.is_alive():
             with self._sync_cv:
-                self._sync_cv.wait_for(lambda: self._sync_pending == 0, timeout=_SHUTDOWN_DRAIN_SECS)
+                # Parked items cannot post while the breaker is open; don't wait on them.
+                self._sync_cv.wait_for(lambda: self._sync_pending == 0 or self._is_breaker_open(),
+                                       timeout=_SHUTDOWN_DRAIN_SECS)
         self._sync_stop.set()
         if thread is not None and thread.is_alive():
             thread.join(timeout=0.5)
@@ -896,7 +924,7 @@ class EngramMemoryProvider(MemoryProvider):
         Never blocks and never does network on the caller thread. The queue is
         bounded (``_SYNC_QUEUE_MAX``); on overflow the OLDEST queued turn is
         dropped (its turn_index leaves a gap, which the server tolerates).
-        ``turn_author`` is accepted so Hermes passes it; it is not persisted.
+        ``turn_author`` (``{id, name, is_bot}``) is sent as ``author``.
         Non-primary agent contexts (subagent/cron/flush) enqueue nothing.
         """
         if not self._writes_enabled or not self._cfg()["sync_turns"]:
@@ -924,6 +952,9 @@ class EngramMemoryProvider(MemoryProvider):
         tool_calls = _extract_tool_calls(messages)
         if tool_calls:
             item["tool_calls"] = tool_calls
+        author = _turn_author_payload(turn_author)
+        if author:
+            item["author"] = author
         self._enqueue(_KIND_TURN, item)
 
     def _enqueue(self, kind: str, args: Dict[str, Any]) -> None:
@@ -944,6 +975,8 @@ class EngramMemoryProvider(MemoryProvider):
             with self._sync_cv:
                 self._sync_pending += 1 - dropped
             if dropped:
+                if self._is_breaker_open():
+                    self._breaker_dropped += dropped
                 logger.debug("engram sync queue full; dropped %d oldest item(s)", dropped)
             self._ensure_drain_thread()
 
@@ -961,6 +994,11 @@ class EngramMemoryProvider(MemoryProvider):
 
     def _drain_loop(self) -> None:
         while not self._sync_stop.is_set():
+            if self._is_breaker_open():
+                # Park: leave queued items in place and re-check after the poll
+                # interval; the breaker's cooldown decides when posting resumes.
+                self._sync_stop.wait(_SYNC_DRAIN_POLL_SECS)
+                continue
             try:
                 item = self._sync_queue.get(timeout=_SYNC_DRAIN_POLL_SECS)
             except queue.Empty:
@@ -975,14 +1013,11 @@ class EngramMemoryProvider(MemoryProvider):
                     self._sync_cv.notify_all()
 
     def _post_item(self, item: Dict[str, Any]) -> None:
-        """Post one queued item (turn -> ingest_turn, write -> remember). Skipped
-        (dropped) while the breaker is open; failures count toward the breaker
-        exactly like recall and the save tool."""
+        """Post one queued item (turn -> ingest_turn, write -> remember).
+        ``_drain_loop`` never dequeues while the breaker is open; failures
+        count toward the breaker exactly like recall and the save tool."""
         tool = _TOOL_BY_KIND.get(item.get("kind"), "ingest_turn")
         args = item["args"]
-        if self._is_breaker_open():
-            logger.debug("engram sync drain: breaker open; %s skipped", tool)
-            return
         try:
             self._get_client().call_tool(tool, args, _TOOL_CALL_TIMEOUT_SECS)
             self._record_success()
@@ -997,7 +1032,8 @@ class EngramMemoryProvider(MemoryProvider):
         """Mirror a committed MEMORY.md / USER.md write into engram (non-blocking).
 
         ``add``/``replace`` enqueue a ``remember`` under the profile scope with
-        the NEW text (``replace`` old text arrives only in ``metadata["old_text"]``
+        the NEW text, ``source: "hermes-mirror"`` and a ``context`` note naming
+        the action (``replace`` old text arrives only in ``metadata["old_text"]``
         and is not sent; engram's remember dedup supersedes it). ``remove`` and
         unknown actions are no-ops. Nothing runs on the caller thread but the
         enqueue.
@@ -1015,6 +1051,7 @@ class EngramMemoryProvider(MemoryProvider):
             "type": _MIRROR_TYPE_BY_TARGET.get(str(target), "fact"),
             "importance": _MIRROR_IMPORTANCE,
             "source": _MIRROR_SOURCE,
+            "context": f"mirrored from built-in memory: {action}",
             "scope": self._write_scope(),
         })
 

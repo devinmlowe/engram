@@ -59,13 +59,13 @@ the daemon's `ENGRAM_READ_SCOPES` (the plugin sends no `read_scopes`).
 
 Each completed turn becomes one `ingest_turn` call with `session_id`,
 `turn_index`, `scope`, `user_text`, `assistant_text`, `timestamp`,
-`source: "hermes"` and, when the assistant used tools, a compact
+`source: "hermes"`, Hermes' `turn_author` as `author` (`{id, name, is_bot}`) and, when the assistant used tools, a compact
 `tool_calls` list. `turn_index` is a per-session, in-process counter starting
 at 0; the server upserts on `(session_id, turn_index)`, so a restarted gateway
 re-ingesting a resumed session updates rows in place instead of duplicating
 them. Turns ride a bounded in-memory queue (16 items, drop-oldest — a dropped
 turn leaves a `turn_index` gap the server tolerates) drained by one background
-thread; items reaching the drain while the breaker is open are skipped (dropped), and `shutdown()` flushes what it can for up to 2 s.
+thread; while the breaker is open the drain thread parks (queued items stay put and post once the cooldown lapses — only queue overflow drops them, and `unavailable_reason()` reports how many), and `shutdown()` flushes what it can for up to 2 s.
 Ingested turns are what the nightly dream pipeline extracts memories from,
 inheriting the profile scope.
 
@@ -73,7 +73,7 @@ inheriting the profile scope.
 
 `add` / `replace` of the Hermes MEMORY.md (`memory` → type `fact`) and USER.md
 (`user` → type `preference`) memory tool are mirrored as `remember` under the
-profile scope with `source: "import"` and importance 0.6. `replace` sends only
+profile scope with `source: "hermes-mirror"`, `context: "mirrored from built-in memory: <add|replace>"` and importance 0.6 (servers older than #19 reject `hermes-mirror`; deploy the server first). `replace` sends only
 the new text: engram's `remember` dedup merges/supersedes the old wording
 there. Writes share the turn queue and drain thread.
 
@@ -170,9 +170,9 @@ Rollback: `hermes memory off` (or delete the plugin directory).
 
 | Symptom | Cause / what to check |
 |---------|-----------------------|
-| `hermes memory status` shows engram installed but `unavailable_reason()` says "unreachable at …/health" | The daemon is down. The plugin still activates (`is_available()` is config-only) and degrades: recall returns nothing, writes queue and drop. Check the `ai.hermes.engram-mcp` LaunchAgent / `curl {base_url}/health`. A later successful call clears the reason. |
+| `hermes memory status` shows engram installed but `unavailable_reason()` says "unreachable at …/health" | The daemon is down. The plugin still activates (`is_available()` is config-only) and degrades: recall returns nothing, writes queue (and drop on overflow). Check the `ai.hermes.engram-mcp` LaunchAgent / `curl {base_url}/health`. A later successful call clears the reason. |
 | Recall indicator shows ⚠️ `Engram (recall timed out after 4s; no memory this turn)` and the log has `engram recall timed out after 4.0s` | The first recall of a session is cold, or the daemon is loaded. The warm-up on `initialize()` normally hides the cold start; if misses persist, raise `timeout_secs` (≤ 8) or check the daemon's load. The warning repeats at most every 10 minutes; the indicator shows every miss. |
-| Log: `engram circuit breaker tripped after 5 consecutive failures; pausing calls for 120s` | Five failed calls in a row (any tool). Recall returns nothing and queued turns/writes reaching the drain thread are skipped (dropped) until the cooldown ends; nothing is replayed. |
+| Log: `engram circuit breaker tripped after 5 consecutive failures; pausing calls for 120s` | Five failed calls in a row (any tool). Recall returns nothing and queued turns/writes wait in the bounded queue until the cooldown ends, then post; only queue overflow (16 items) drops them, counted in `unavailable_reason()`. |
 | Memories land under `hermes:default` instead of the profile | The gateway did not pass `agent_identity` and `hermes_home` was not `<root>/profiles/<name>`. Run the profile's own gateway (its `HERMES_HOME`) or check the `agent_identity` it reports. |
 | Turns are not ingested | Non-primary context (`subagent`/`cron`/`flush` never ingest), `sync_turns: false`, an empty session id, or the breaker is open. Debug-level log lines say which. |
 | Two engram tool sets appear to the model | The MCP server is also wired as `mcp_servers.engram`. That is fine: this plugin's only tool is `engram_memory_save`, chosen not to collide. |

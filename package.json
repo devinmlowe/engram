@@ -1,6 +1,6 @@
 {
-  "name": "engram",
-  "version": "0.2.0",
+  "name": "@devinmlowe/engram",
+  "version": "0.3.0",
   "description": "Cognitive memory system for Claude Code — episodic storage, semantic extraction, knowledge graph, and dream-state consolidation",
   "type": "module",
   "main": "dist/interfaces/cli/index.js",
@@ -40,6 +40,17 @@
   ],
   "author": "Devin Lowe",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/devinmlowe/engram.git"
+  },
+  "homepage": "https://github.com/devinmlowe/engram#readme",
+  "bugs": {
+    "url": "https://github.com/devinmlowe/engram/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=22.0.0"
   },

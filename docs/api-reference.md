@@ -73,6 +73,8 @@ Store a fact, preference, decision, or other knowledge as a semantic memory. Aut
 | `content` | string | yes | — | The knowledge to remember |
 | `type` | string | no | `"fact"` | One of: `"preference"`, `"decision"`, `"pattern"`, `"fact"`, `"solution"`, `"convention"` |
 | `importance` | number | no | `0.7` | Importance score (0-1) |
+| `source` | string | no | `"user"` | Provenance: `"user"`, `"dream"`, `"rlm"`, `"import"`, `"hermes-mirror"` (the Hermes plugin's built-in memory mirror). `remember_batch` accepts the same per-memory `source` |
+| `context` | string | no | — | Provenance note (≤ 500 chars, trimmed) stored in `memories.context` and FTS-indexed; `remember_batch` accepts it per memory |
 | `scope` | string | no | `ENGRAM_SCOPE` | Tenant scope stamped on the memory; overrides the server's `ENGRAM_SCOPE` for this call only. `remember_batch` accepts the same `scope` |
 
 **Output:** Confirmation text.
@@ -212,6 +214,7 @@ Record one user/assistant turn of an external agent conversation (e.g. a Hermes 
 | `tool_calls` | object[] | no | — | `{name, input?, output?}` per tool invoked during the turn (input/output truncated to 1000 chars) |
 | `timestamp` | string | no | now | ISO-8601 time of the turn |
 | `source` | string | no | `"hermes"` | Platform label; part of the conversation key |
+| `author` | object | no | — | `{id?, name?, is_bot?}` — who authored the user side of the turn; stored verbatim as JSON on the exchange (`exchanges.author_json`), absent → NULL |
 
 **Idempotency:** the conversation id is `<source>:<session_id>` and the exchange id `<source>:<session_id>:<turn_index>`; re-sending the same key updates the turn in place, so a restarted client re-sending indexes 0… of a resumed session never duplicates rows. Gaps in `turn_index` are tolerated.
 
@@ -484,6 +487,8 @@ engram import engram.jsonl [options]
 |------|-------------|
 | `-s, --scope <scope>` | Override the scope on every imported memory |
 | `-n, --dry-run` | Validate and report what would change without writing |
+
+**Source values:** a memory record's `source` is one of `user`, `dream`, `rlm`, `import`, `hermes-mirror` and is preserved as exported; a record without one is imported as `import`.
 
 **Idempotency:** records are matched by `id`. An existing row is updated in place only when the incoming record is newer — `updated_at` for memories and relationships, `last_seen` for entities, `resolved_at` for commitments (each falling back to `created_at`) — otherwise it is skipped, so re-importing the same file is a no-op. The whole file is parsed and validated before the first write; a malformed line aborts with nothing changed.
 

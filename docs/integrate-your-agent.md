@@ -166,7 +166,8 @@ total_results="N">` element. When `total_results="0"`, inject nothing.
 | `content` | string, required | The fact, verbatim. One fact per call. |
 | `type` | enum | `preference`, `decision`, `pattern`, `fact`, `solution`, `convention`. Default `fact`. |
 | `importance` | number 0 to 1 | Optional. |
-| `source` | enum | `user`, `dream`, `rlm`, `import`. Use `"source": "user"` for anything captured from a conversation. |
+| `source` | enum | `user`, `dream`, `rlm`, `import`, `hermes-mirror`. Use `"source": "user"` for anything captured from a conversation. |
+| `context` | string | Optional provenance note (≤ 500 chars) stored with the memory. |
 
 `remember` deduplicates against near-identical existing memories, so
 re-storing the same fact is safe.

@@ -238,6 +238,58 @@ describe("ingest_turn MCP tool", () => {
     expect(new Set(exchangesFor("sess-alpha").map((e) => e.conversation_id)).size).toBe(1);
   });
 
+  it("persists author as JSON on the exchange row; absent author stays NULL (#18)", async () => {
+    const withAuthor = await handleToolCall("ingest_turn", {
+      session_id: "sess-author",
+      turn_index: 0,
+      scope: "hermes:career",
+      user_text: "who am I?",
+      assistant_text: "Devin.",
+      author: { id: "u-1", name: "devin", is_bot: false },
+    });
+    expect(withAuthor.isError, withAuthor.content[0].text as string).toBeFalsy();
+    const without = await handleToolCall("ingest_turn", {
+      session_id: "sess-author",
+      turn_index: 1,
+      scope: "hermes:career",
+      user_text: "and now?",
+      assistant_text: "Still Devin.",
+    });
+    expect(without.isError, without.content[0].text as string).toBeFalsy();
+
+    const db = openRo();
+    try {
+      const rows = db
+        .prepare("SELECT exchange_index, author_json FROM exchanges WHERE session_id = ? ORDER BY exchange_index")
+        .all("sess-author") as Array<{ exchange_index: number; author_json: string | null }>;
+      expect(rows).toHaveLength(2);
+      expect(JSON.parse(rows[0].author_json!)).toEqual({ id: "u-1", name: "devin", is_bot: false });
+      expect(rows[1].author_json).toBeNull();
+    } finally {
+      db.close();
+    }
+
+    // getExchange exposes it; an unknown author key is rejected by the schema
+    const { getExchange } = await import("../../../src/episodic/store.js");
+    const ro = openRo();
+    try {
+      expect(getExchange(ro, "hermes:sess-author:0")?.authorJson).toBe(JSON.stringify({ id: "u-1", name: "devin", is_bot: false }));
+      expect(getExchange(ro, "hermes:sess-author:1")?.authorJson).toBeUndefined();
+    } finally {
+      ro.close();
+    }
+    const badAuthor = await handleToolCall("ingest_turn", {
+      session_id: "sess-author",
+      turn_index: 2,
+      scope: "hermes:career",
+      user_text: "x",
+      assistant_text: "y",
+      author: { id: "u-1", handle: "nope" },
+    });
+    expect(badAuthor.isError).toBe(true);
+    expect(exchangesFor("sess-author")).toHaveLength(2);
+  });
+
   it("rejects an invalid scope and missing required fields", async () => {
     const base = {
       session_id: "sess-bad",
