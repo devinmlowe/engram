@@ -29,6 +29,15 @@ Installation, maintenance, and operational scripts. Bash remains the macOS/Linux
 - [commitments-surface.sh](./commitments-surface.sh) — Heartbeat digest of the commitments ledger via the HTTP MCP `commitments` tool (count, overdue, due within 7 days; prints nothing when empty). Self-contained node program inside a bash wrapper (no python3). Deployed copy: `~/.hermes/scripts/fleet/commitments-surface.sh`
 - [check-deps.sh](./check-deps.sh) — Verify system dependencies are available
 
+## Data directory
+
+Every installer and runner resolves the data directory the way the CLI does: `ENGRAM_DATA_DIR`
+if set, else `%LOCALAPPDATA%\engram` on Windows / `$XDG_DATA_HOME/engram` elsewhere, falling
+back to the pre-0.2.0 `~/.local/share/engram`. The Windows installers accept `-DataDir` /
+`-DbPath` explicitly, and `install-mcp-daemon.ps1 status` reports `dataDir`, `dbPath` and a
+`legacyDbPath` when a populated pre-0.2.0 database would be ignored. `engram update --plan`
+shows the same picture across platforms.
+
 ## Tool prerequisites
 
 Every script checks the external tools it needs up front with `command -v` and exits with a

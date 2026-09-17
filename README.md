@@ -367,35 +367,72 @@ Agent provider in `interfaces/hermes-plugin/` is the reference implementation.
 
 ## Updating an existing installation
 
-Schema migrations run automatically on every database open (checkpointed in
-`schema_migrations`, provably no-op on re-run), and your data lives outside
-the repo (`~/.local/share/engram/engram.db`) — updating is a pull + rebuild +
-service restart, never a re-install:
+Your data lives outside the repo (`engram doctor` prints the effective data
+dir and database), schema migrations are additive and run on every database
+open, and `engram update` does the rest — one command per platform:
 
 ```bash
-git fetch origin
-git status --short        # resolve any local changes first
-git pull origin main
-npm ci                    # exact dependencies from package-lock.json; rebuilds via
-                          # the "prepare" hook and runs the install preflight
-npm run build             # only needed if you skipped npm ci
+engram update --check   # current vs available (git tag or npm dist-tag), nothing else
+engram update --plan    # read-only: install kind, every dir holding an engram.db, model cache,
+                        # every service and how it will be restarted, plugin deploy targets
+engram update           # the controlled upgrade (asks once; --yes for scripts, --no-backup to skip the backup)
 ```
 
-For an npm install: `npm install -g @devinmlowe/engram@latest`, then restart the services.
+```powershell
+engram update --plan    # identical on Windows (Task Scheduler tasks under \Engram\)
+engram update --yes
+```
 
-Schema migrations are additive and checkpointed; they run on the next database
-open (any `engram` command), so there is no separate migration step. Read
-[CHANGELOG.md](./CHANGELOG.md) for the release's upgrade notes — 0.2.0, for
+What a run does, in order (the `--plan` output is this list with your machine's
+paths filled in):
+
+1. **Backup** the data dir (`engram.db` + `-wal`/`-shm` + `archive/`) to a
+   sibling `<data dir>.backup-<timestamp>` after checkpointing the WAL.
+2. **Stop** every running engram service through its supervisor: dream, then
+   the MCP HTTP daemon, then the visualizer (launchd / systemd user units /
+   Task Scheduler). A daemon that answers on its port with no supervisor is a
+   blocker: stop it by hand or install the supervisor first.
+3. **Snapshot** the row counts (`engram stats --json`).
+4. **Model cache**: if `ENGRAM_MODEL_CACHE_DIR` is unset, copy the downloaded
+   embedding model to `<data dir>/models` *before* npm touches `node_modules`,
+   and tell you the env var to set so it never happens again.
+5. **Code**: `git pull --ff-only` + `npm ci` for a checkout (a dirty tree is a
+   blocker), or `npm install -g @devinmlowe/engram@<version>` for an npm install.
+6. **Migrate**: move a pre-0.2.0 data dir into the resolved one if that is where
+   the only database lives (refusing when two dirs both hold one), then open
+   the database once with the *new* build so schema migrations run.
+7. **Restart** the MCP daemon, then the visualizer, waiting for `/health` on
+   each; re-enable the dream schedule; redeploy the Hermes plugin
+   (`interfaces/hermes-plugin/deploy.sh`) to every profile that has it — you
+   restart the gateways.
+8. **Verify**: `engram doctor`, `/health`, and `engram stats` counts that must
+   not have dropped. Any failure prints the rollback steps (stop services,
+   restore the backup, check out the previous sha or reinstall the previous
+   npm version, start services).
+
+`engram migrate [data-dir|model-cache|schema] [--dry-run]` runs step 4 and 6
+on their own, idempotently, for installs you update by hand. (The legacy
+conversation-index importer that used to be `engram migrate --source` is now
+`engram import-legacy --source <path>`; the old spelling still forwards with a
+deprecation notice for one release.)
+
+Read [CHANGELOG.md](./CHANGELOG.md) for the release's notes — 0.2.0, for
 example, re-extracts every conversation once on the first dream run (bound it
-with `ENGRAM_DREAM_MAX_CONVERSATIONS`) and needs the Hermes plugin redeployed:
+with `ENGRAM_DREAM_MAX_CONVERSATIONS`).
+
+**Updating by hand.** The same steps, if you prefer to run them yourself:
 
 ```bash
-interfaces/hermes-plugin/deploy.sh                       # default profile
-ENGRAM_PLUGIN_PROFILES="a b" interfaces/hermes-plugin/deploy.sh   # + named profiles
+git fetch origin && git status --short   # resolve any local changes first
+git pull origin main
+npm ci                                   # exact dependencies; rebuilds via "prepare", runs the install preflight
+engram migrate                           # data dir + model cache + schema (see --dry-run first)
 ```
+
+For an npm install: `npm install -g @devinmlowe/engram@latest`, then `engram migrate`.
 
 Then restart whatever supervises the running processes so they load the new
-`dist/` output (and restart Hermes gateways so they load the redeployed plugin):
+`dist/` output (and redeploy the plugin + restart Hermes gateways):
 
 | Platform | MCP HTTP daemon | Dream daemon | Visualizer |
 |---|---|---|---|
@@ -410,14 +447,90 @@ stopped and started by hand, or replaced with `install-mcp-daemon.sh install`.
 Verify after restarting:
 
 ```bash
+engram doctor      # node, native modules, model cache, ollama tier, effective data dir, mcp daemon /health
 engram health      # database, embedding model, MCP entry point
-engram doctor      # node version, platform/arch, native modules, model cache, ollama tier, effective data dir (warns about a legacy split), mcp daemon /health
+engram stats       # counts must match the pre-update numbers
 engram search "smoke test"   # end-to-end recall through the new build
 ```
 
-`engram doctor` is the first stop if anything looks wrong after an update —
-it reports node version, platform/arch, better-sqlite3 and sqlite-vec native
-module state, and the local model cache.
+### Windows: safe update and data-directory migration
+
+0.2.0 changed the default data directory on Windows from
+`%USERPROFILE%\.local\share\engram` to `%LOCALAPPDATA%\engram`. An install made
+before that keeps its database at the old path, and after an upgrade every
+`engram` command *and the MCP daemon* would open a **new, empty** database at
+the new path unless the data is moved or `ENGRAM_DATA_DIR` is set. `engram
+update` handles this (step 6); if you update by hand, preflight first:
+
+```powershell
+engram doctor --json          # "data dir" check: which engram.db this process uses, and a warning
+                              # if a populated legacy database exists that it would ignore
+Test-Path "$env:USERPROFILE\.local\share\engram\engram.db"   # legacy location
+Test-Path "$env:LOCALAPPDATA\engram\engram.db"               # 0.2.0+ default
+engram stats                  # write these counts down; they must match after the update
+```
+
+- **Never run `engram init` during an upgrade** — it creates a fresh database
+  at the effective path. Only run it for a genuinely new installation.
+- Either move the data (`engram migrate data-dir`, or by hand: `engram.db`,
+  `engram.db-wal`, `engram.db-shm`, `archive\`, `logs\`) into
+  `%LOCALAPPDATA%\engram`, **or** keep it where it is with a *user-scope*
+  environment variable: `setx ENGRAM_DATA_DIR "$env:USERPROFILE\.local\share\engram"`
+  (`ENGRAM_DB_PATH` for just the database file). User scope matters: the
+  Task Scheduler tasks inherit it, not the shell you install from.
+- Back up the active data directory before anything else
+  (`Copy-Item -Recurse $dataDir "$dataDir.backup-$(Get-Date -Format yyyyMMdd-HHmm)"`).
+- Set `setx ENGRAM_MODEL_CACHE_DIR "$env:LOCALAPPDATA\engram\models"` once, or
+  every `npm ci` deletes the downloaded embedding model.
+
+**Install vs restart.** `restart` on each installer assumes its task exists;
+an older install may have a visualizer task but no MCP task, or still run a
+manually started MCP process. Check first and pick the verb:
+
+```powershell
+.\scripts\install-mcp-daemon.ps1 status    # installed / taskState / healthy / dataDir / dbPath / legacyDbPath
+.\scripts\install-mcp-daemon.ps1 install   # no task yet (re-runnable; re-registers with the current paths)
+.\scripts\install-mcp-daemon.ps1 restart   # task exists
+Get-ScheduledTask -TaskPath '\Engram\'     # which of MCP, Dream, Visualizer are actually installed
+```
+
+Only restart what is installed. The installers default to the same data dir
+the CLI resolves (`%LOCALAPPDATA%\engram`, or `ENGRAM_DATA_DIR`), and accept
+`-DataDir` / `-DbPath` explicitly — pass the same directory the CLI and hooks
+use, and `status` shows what the task was registered with.
+
+**Stale process on the port.** If `status` shows the task restarting or
+`healthy False` while something answers on 9907, a process the supervisor does
+not own holds the port:
+
+```powershell
+Get-NetTCPConnection -LocalPort 9907 -State Listen | Select-Object OwningProcess
+Get-Process -Id <pid> | Select-Object Id, ProcessName, Path, CommandLine
+Stop-Process -Id <pid>                                # only if it is an engram node.exe you started by hand
+.\scripts\install-mcp-daemon.ps1 restart              # the task's own runner now binds the port
+```
+
+`uninstall` and `stop` also sweep leftover `node.exe` / `run-mcp-daemon.ps1`
+processes by command line, so a stale pid file never leaves an orphan behind.
+
+**Post-update verification** (proves both data preservation and availability):
+
+```powershell
+engram doctor                 # every check [ok]; "data dir" names the populated database
+engram health
+engram stats                  # counts equal the pre-update numbers
+engram search "smoke test"
+.\scripts\install-mcp-daemon.ps1 status    # taskState Running, healthy True
+Invoke-RestMethod http://127.0.0.1:9907/health
+# MCP handshake + tool listing through the daemon:
+$init = @{ jsonrpc='2.0'; id=1; method='initialize'; params=@{ protocolVersion='2025-03-26'; capabilities=@{}; clientInfo=@{ name='check'; version='0' } } } | ConvertTo-Json -Depth 5
+$r = Invoke-WebRequest http://127.0.0.1:9907/mcp -Method Post -ContentType 'application/json' -Headers @{ Accept='application/json, text/event-stream' } -Body $init
+$sid = $r.Headers['Mcp-Session-Id']
+Invoke-WebRequest http://127.0.0.1:9907/mcp -Method Post -ContentType 'application/json' -Headers @{ Accept='application/json, text/event-stream'; 'Mcp-Session-Id'="$sid" } -Body '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | Select-Object -ExpandProperty Content
+```
+
+The visualizer, if installed: `.\scripts\install-visualizer.ps1 status` and
+`Invoke-RestMethod http://127.0.0.1:3001/api/health`.
 
 ## CLI
 
@@ -432,11 +545,13 @@ engram reflect         # Show emergent graph patterns
 engram explore <name>  # Explore entity connections
 engram entities        # List/search entities
 engram relationships   # Show relationships for an entity
-engram stats           # Database statistics
+engram stats           # Database statistics (--json: the row counts `engram update` compares before/after)
 engram health          # System health check (database, model, Ollama, MCP entry point)
 engram doctor          # Runtime diagnostics: node, platform/arch, better-sqlite3, sqlite-vec, model cache, ollama tier, data dir, mcp daemon (--json)
-engram migrate --source <db>   # Import a legacy conversation-index SQLite DB (--source is required; no default path)
-engram validate --source <db>  # Validate migration integrity against that source DB
+engram update          # Controlled self-update: backup, stop services, pull/npm install, migrate, restart, verify (--check, --plan, --yes, --no-backup)
+engram migrate [topic] # Install/data migration: data-dir | model-cache | schema | all; idempotent, --dry-run lists every action
+engram import-legacy --source <db>   # Import a legacy conversation-index SQLite DB (was `engram migrate --source`; the old spelling still forwards)
+engram validate --source <db>  # Validate legacy-import integrity against that source DB
 engram backfill-event-ts  # Backfill event-time timestamps (temporal recall)
 engram commitments [status]        # List tracked commitments (same XML as the MCP tool)
 engram commitment-done <id>        # Mark a commitment done (--status dropped|superseded)

@@ -21,6 +21,7 @@ import {
 } from "./dispatch.js";
 import { createEngramHttpServer } from "./http.js";
 import { DEFAULT_MCP_PORT, parseMcpPort } from "./port.js";
+import { ENGRAM_VERSION } from "../../_core/version/index.js";
 import { loadConfig } from "../../_core/config/index.js";
 import { escapeXml } from "../../_core/search/index.js";
 import { initEmbeddings } from "../../_core/embeddings/index.js";
@@ -326,7 +327,7 @@ const IndexFileStructureInputSchema = z.object({
 // ─── Server Setup ──────────────────────────────────────────────
 
 const server = new Server(
-  { name: "engram", version: "0.3.0" },
+  { name: "engram", version: ENGRAM_VERSION },
   { capabilities: { tools: {} } },
 );
 

@@ -12,6 +12,7 @@
  */
 
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
+import { ENGRAM_VERSION } from "../../_core/version/index.js";
 import type { AddressInfo } from "node:net";
 import { randomUUID } from "node:crypto";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -42,7 +43,7 @@ export interface EngramHttpServer {
 export function createEngramHttpServer(options: EngramHttpOptions): EngramHttpServer {
   const host = options.host ?? "127.0.0.1";
   const log = options.log ?? ((m) => console.error(m));
-  const serverInfo = options.serverInfo ?? { name: "engram", version: "0.3.0" };
+  const serverInfo = options.serverInfo ?? { name: "engram", version: ENGRAM_VERSION };
   const sessions = new Map<string, StreamableHTTPServerTransport>();
 
   const sendJson = (res: ServerResponse, status: number, body: unknown) => {

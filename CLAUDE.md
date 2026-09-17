@@ -55,9 +55,11 @@ For large file analysis, combine tools in this order:
 3. `scan_file` → exhaustive regex search for enumeration tasks (breadth)
 4. `fetch_snippets` → read specific line ranges for detail extraction (depth)
 
-## CLI Commands (22)
+## CLI Commands (24)
 
-`init`, `sync`, `search`, `remember`, `extract`, `dream`, `reflect`, `explore`, `entities`, `relationships`, `stats`, `health`, `migrate`, `validate`, `backfill-event-ts`, `mcp`, `commitments`, `commitment-done`, `commitments-extract`, `doctor`, `export`, `import`
+`init`, `sync`, `search`, `remember`, `extract`, `dream`, `reflect`, `explore`, `entities`, `relationships`, `stats`, `health`, `migrate`, `import-legacy`, `validate`, `backfill-event-ts`, `mcp`, `commitments`, `commitment-done`, `commitments-extract`, `doctor`, `update`, `export`, `import`
+
+`engram update` (`--check` / `--plan` / run) is the controlled self-update: backup, stop services via the per-platform supervisor adapter (`src/interfaces/cli/services.ts`), pull or `npm install -g`, `engram migrate`, restart (MCP before the plugin redeploy), verify doctor + `/health` + `stats --json` counts. `engram migrate [data-dir|model-cache|schema]` is the idempotent install/data migration (`src/interfaces/cli/data-migration.ts`); the legacy conversation-index importer is `engram import-legacy`. Post-swap steps run the *new* build in a child process. The version string comes from `package.json` via `src/_core/version/index.ts`.
 
 ## Web Visualization
 

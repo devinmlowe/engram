@@ -8,7 +8,16 @@ All notable changes to engram are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- `engram update`: controlled self-update modelled on `hermes update` — `--check` (current vs available for git checkouts and npm installs), `--plan`/`--dry-run` (read-only: install kind, every directory holding an `engram.db`, model cache, every service with its supervisor and restart command, Hermes plugin deploy targets, backup path, blockers), and the run: backup `engram.db` + WAL + `archive/` → stop services through their supervisor (launchd / systemd user units / Task Scheduler, `src/interfaces/cli/services.ts`) → snapshot counts → durable model cache → `git pull --ff-only` + `npm ci` or `npm install -g` → data-dir move + schema migrations with the new build → restart MCP then visualizer, redeploy the Hermes plugin → verify doctor, `/health`, and that no count dropped, printing rollback steps otherwise (#44).
+- `engram migrate` now means install/data migration: `data-dir` (detects a pre-0.2.0 `~/.local/share/engram` next to an empty new default and moves the data; refuses when two dirs both hold a database), `model-cache` (durable `ENGRAM_MODEL_CACHE_DIR`, copies downloaded models out of `node_modules`), `schema` (opens the db once and lists `schema_migrations`); every topic supports `--dry-run`. The legacy conversation-index importer is `engram import-legacy --source <path>`; `engram migrate --source` forwards with a deprecation notice for one release (#44).
+- `engram stats --json` prints the row counts `engram update` compares before/after.
+- README: one-command update per platform, and a Windows "safe update and data-directory migration" section (preflight, install vs restart, stale process on the port, verification incl. the MCP handshake). `install-mcp-daemon.ps1 status` reports `dataDir`, `dbPath`, `legacyDbPath` (#13).
 - macOS/Linux supervision for the MCP HTTP daemon: `scripts/install-mcp-daemon.sh` (`install|uninstall|start|stop|restart|status`, every verb waits on `/health`) renders `launchd/com.engram.mcp.plist` or `systemd/engram-mcp.service`, both running the new `scripts/run-mcp-daemon.sh` launcher, which sources `~/.config/engram/env`. The resolved data directory is rendered into the service so daemon and CLI share one database; `status` warns about a second legacy database. `install` retires a hand-written `ai.hermes.engram-mcp` agent on the same port. The server honours `ENGRAM_MCP_PORT` when `--port` is absent, and `engram doctor` gains an `mcp daemon` check that probes `/health` (#28).
+
+### Changed
+- The CLI `--version`, MCP `serverInfo` and `engram update` all read the version from `package.json` (`src/_core/version/index.ts`) instead of three hardcoded literals.
+- The Windows installers/runners and the bash installers default the data directory the way the CLI does (`%LOCALAPPDATA%\engram` / `$XDG_DATA_HOME/engram`, legacy `~/.local/share/engram` fallback) instead of always the legacy path (#13, #44).
+- Hermes plugin log messages point at `scripts/install-mcp-daemon.sh status` instead of the hand-written `ai.hermes.engram-mcp` LaunchAgent.
 
 ### Fixed
 - `scripts/install-daemon.sh` no longer requires `launchctl` on Linux, so its systemd branch is reachable (#28).

@@ -23,7 +23,7 @@ if [ -z "$NODE_BIN" ]; then
 fi
 
 # Same defaults as the CLI: ENGRAM_DATA_DIR -> ~/.local/share/engram, ENGRAM_LOGS_DIR -> $ENGRAM_DATA_DIR/logs
-DATA_DIR="${ENGRAM_DATA_DIR:-$HOME/.local/share/engram}"
+DATA_DIR="${ENGRAM_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/engram}"
 LOG_DIR="${ENGRAM_LOGS_DIR:-$DATA_DIR/logs}"
 LOCK_FILE="$DATA_DIR/tmp/compact-dream.lock"
 LOG_FILE="$LOG_DIR/dream-compact-$(date +%Y%m%d-%H%M%S).log"

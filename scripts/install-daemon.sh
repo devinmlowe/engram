@@ -26,7 +26,7 @@ set -euo pipefail
 LABEL="com.engram.dreamstate"
 PLIST_SRC="$(cd "$(dirname "$0")/../launchd" && pwd)/${LABEL}.plist"
 PLIST_DST="${HOME}/Library/LaunchAgents/${LABEL}.plist"
-DATA_DIR="${ENGRAM_DATA_DIR:-$HOME/.local/share/engram}"
+DATA_DIR="${ENGRAM_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/engram}"
 LOG_DIR="${ENGRAM_LOGS_DIR:-$DATA_DIR/logs}"
 ENGRAM_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 ENV_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/engram"

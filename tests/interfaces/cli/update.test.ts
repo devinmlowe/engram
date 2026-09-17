@@ -1,0 +1,590 @@
+/**
+ * Issue #44: `engram update` / `engram migrate` / `engram import-legacy`.
+ * Every supervisor and shell call is a fake; the data dir and database are
+ * real files in a temp dir so the move/backup/snapshot logic is exercised.
+ */
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, readdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import Database from "better-sqlite3";
+import { loadConfig } from "../../../src/_core/config/index.js";
+import { initDatabase } from "../../../src/_core/db/index.js";
+import { ENGRAM_VERSION, PACKAGE_NAME, PACKAGE_ROOT } from "../../../src/_core/version/index.js";
+import { snapshotCounts, snapshotRegressions, SNAPSHOT_KEYS } from "../../../src/interfaces/cli/snapshot.js";
+import { compareSemver, detectInstall, latestAvailable, formatCheck } from "../../../src/interfaces/cli/install-kind.js";
+import {
+  listServices, stopService, startService, portFor, LEGACY_MCP_LABEL,
+  type ServiceDeps, type ExecResult,
+} from "../../../src/interfaces/cli/services.js";
+import {
+  planDataDir, applyDataDirPlan, planModelCache, applyModelCachePlan, reportSchema, isSqliteFile, DATA_DIR_ITEMS,
+} from "../../../src/interfaces/cli/data-migration.js";
+import { buildUpdatePlan, formatPlan, runUpdate, backupDirFor, pluginDeployTargets, type UpdateDeps } from "../../../src/interfaces/cli/update.js";
+
+const ENV_KEYS = ["ENGRAM_DATA_DIR", "ENGRAM_DB_PATH", "ENGRAM_MODEL_CACHE_DIR", "ENGRAM_MCP_PORT", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "LOCALAPPDATA", "ENGRAM_ENV_FILE", "PORT"];
+let saved: Record<string, string | undefined>;
+let root: string;
+
+beforeEach(() => {
+  saved = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
+  for (const k of ENV_KEYS) delete process.env[k];
+  root = mkdtempSync(join(tmpdir(), "engram-update-"));
+});
+afterEach(() => {
+  for (const k of ENV_KEYS) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
+  rmSync(root, { recursive: true, force: true });
+});
+
+/** A real engram database with a few rows, closed again. */
+function seedDb(dataDir: string): void {
+  mkdirSync(dataDir, { recursive: true });
+  const cfg = loadConfig({ dataDir, dbPath: join(dataDir, "engram.db") });
+  const db = initDatabase(cfg);
+  db.prepare("INSERT INTO conversations (id, project, started_at, last_indexed) VALUES ('c1', 'p', 1, 1)").run();
+  db.prepare("INSERT INTO entities (id, name, type, first_seen, last_seen) VALUES ('e1', 'engram', 'project', 1, 1)").run();
+  db.close();
+}
+
+type Call = { cmd: string; args: string[] };
+function fakeExec(handlers: Array<[RegExp, (args: string[]) => Partial<ExecResult> | void]>, calls: Call[] = []) {
+  const exec = async (cmd: string, args: string[]): Promise<ExecResult> => {
+    calls.push({ cmd, args });
+    const line = `${cmd} ${args.join(" ")}`;
+    for (const [re, h] of handlers) {
+      if (re.test(line)) return { status: 0, stdout: "", stderr: "", ...(h(args) ?? {}) };
+    }
+    return { status: 1, stdout: "", stderr: `no fake for: ${line}` };
+  };
+  return { exec, calls };
+}
+
+function deps(platform: ServiceDeps["platform"], exec: ServiceDeps["exec"], probe: ServiceDeps["probe"], home: string): ServiceDeps {
+  return { platform, exec, probe, home, engramDir: root, env: process.env, uid: 501 };
+}
+
+// ─── snapshot ────────────────────────────────────────────────────────
+
+describe("stats snapshot", () => {
+  it("counts every table and flags only drops as regressions", () => {
+    const dir = join(root, "data");
+    seedDb(dir);
+    const db = new Database(join(dir, "engram.db"), { readonly: true });
+    const s = snapshotCounts(db);
+    db.close();
+    expect(s.conversations).toBe(1);
+    expect(s.entities).toBe(1);
+    expect(Object.keys(s).sort()).toEqual([...SNAPSHOT_KEYS].sort());
+    expect(snapshotRegressions(s, { ...s, entities: 5 })).toEqual([]);
+    expect(snapshotRegressions(s, { ...s, entities: 0, conversations: 0 })).toEqual(["conversations: 1 -> 0", "entities: 1 -> 0"]);
+  });
+});
+
+// ─── install kind / --check ──────────────────────────────────────────
+
+describe("install kind and --check", () => {
+  it("compareSemver orders numerically with pre-releases below", () => {
+    expect(compareSemver("0.10.0", "0.9.9")).toBe(1);
+    expect(compareSemver("v1.0.0", "1.0.0")).toBe(0);
+    expect(compareSemver("1.0.0-rc.1", "1.0.0")).toBe(-1);
+  });
+
+  it("a checkout with .git is a git install; tags on origin give the available version", async () => {
+    mkdirSync(join(root, ".git"));
+    const { exec } = fakeExec([
+      [/rev-parse --abbrev-ref/, () => ({ stdout: "main\n" })],
+      [/remote get-url/, () => ({ stdout: "git@github.com:devinmlowe/engram.git\n" })],
+      [/status --porcelain/, () => ({ stdout: " M README.md\n" })],
+      [/rev-parse --short/, () => ({ stdout: "abc1234\n" })],
+      [/ls-remote --tags/, () => ({ stdout: "aaa\trefs/tags/v0.2.0\nbbb\trefs/tags/v0.10.0\nccc\trefs/tags/v0.3.0\n" })],
+    ]);
+    const info = await detectInstall({ exec, packageRoot: root, version: "0.3.0" });
+    expect(info).toMatchObject({ kind: "git", root, version: "0.3.0", branch: "main", dirty: true, headSha: "abc1234" });
+    const avail = await latestAvailable(info, exec);
+    expect(avail.version).toBe("0.10.0");
+    const lines = formatCheck(info, avail);
+    expect(lines[0]).toContain("uncommitted changes");
+    expect(lines.at(-1)).toContain("update available: 0.3.0 -> 0.10.0");
+  });
+
+  it("without .git it is an npm install; the registry dist-tag gives the available version", async () => {
+    const { exec, calls } = fakeExec([[/npm view/, () => ({ stdout: "0.3.0\n" })]]);
+    const info = await detectInstall({ exec, packageRoot: root, version: "0.3.0" });
+    expect(info.kind).toBe("npm");
+    expect(info.packageName).toBe(PACKAGE_NAME);
+    const avail = await latestAvailable(info, exec);
+    expect(avail.version).toBe("0.3.0");
+    expect(calls[0].args).toEqual(["view", PACKAGE_NAME, "dist-tags.latest"]);
+    expect(formatCheck(info, avail).at(-1)).toBe("up to date");
+    const down = await latestAvailable(info, async () => ({ status: 1, stdout: "", stderr: "ENOTFOUND" }));
+    expect(down.version).toBeNull();
+    expect(formatCheck(info, down)[1]).toContain("ENOTFOUND");
+  });
+
+  it("the running version comes from package.json, not a literal", () => {
+    const pkg = JSON.parse(readFileSync(join(PACKAGE_ROOT, "package.json"), "utf-8"));
+    expect(ENGRAM_VERSION).toBe(pkg.version);
+    for (const f of ["src/interfaces/cli/index.ts", "src/interfaces/mcp/server.ts", "src/interfaces/mcp/http.ts"]) {
+      expect(readFileSync(join(PACKAGE_ROOT, f), "utf-8"), `${f} uses ENGRAM_VERSION`).toContain("ENGRAM_VERSION");
+      expect(readFileSync(join(PACKAGE_ROOT, f), "utf-8")).not.toMatch(/version: "\d+\.\d+\.\d+"|\.version\("\d/);
+    }
+  });
+});
+
+// ─── supervisor adapters ─────────────────────────────────────────────
+
+describe("supervisor adapters", () => {
+  it("launchd: reads plists under ~/Library/LaunchAgents, PID from launchctl list, falls back to the legacy mcp label", async () => {
+    const home = join(root, "home");
+    mkdirSync(join(home, "Library", "LaunchAgents"), { recursive: true });
+    writeFileSync(join(home, "Library", "LaunchAgents", `${LEGACY_MCP_LABEL}.plist`), "<plist/>");
+    writeFileSync(join(home, "Library", "LaunchAgents", "com.engram.dreamstate.plist"), "<plist/>");
+    const { exec, calls } = fakeExec([
+      [/launchctl list com\.engram\.mcp$/, () => ({ status: 113 })],
+      [/launchctl list ai\.hermes\.engram-mcp$/, () => ({ stdout: '{\n\t"PID" = 4242;\n\t"Label" = "ai.hermes.engram-mcp";\n};' })],
+      [/launchctl list com\.engram\.dreamstate$/, () => ({ stdout: '{\n\t"LastExitStatus" = 0;\n};' })],
+      [/launchctl list com\.engram\.visualizer$/, () => ({ status: 113 })],
+      [/launchctl (unload|load)/, () => ({})],
+    ]);
+    const d = deps("darwin", exec, async (port) => port === 9907 || port === 3001, home);
+    const list = await listServices(d);
+    const mcp = list.find((s) => s.id === "mcp")!;
+    expect(mcp).toMatchObject({ supervisor: "launchd", unit: LEGACY_MCP_LABEL, installed: true, running: true, listening: true, unsupervised: false });
+    expect(mcp.restartCommand).toBe(`launchctl kickstart -k gui/501/${LEGACY_MCP_LABEL}`);
+    const dream = list.find((s) => s.id === "dream")!;
+    expect(dream).toMatchObject({ installed: true, running: true, listening: null });
+    const vis = list.find((s) => s.id === "visualizer")!;
+    expect(vis).toMatchObject({ installed: false, running: false, listening: true, unsupervised: true });
+    expect(vis.installHint).toContain("install-visualizer.sh install");
+    await stopService(mcp, d);
+    expect(calls.at(-1)!.args).toEqual(["unload", join(home, "Library", "LaunchAgents", `${LEGACY_MCP_LABEL}.plist`)]);
+    await startService(mcp, d);
+    expect(calls.at(-1)!.args[0]).toBe("load");
+  });
+
+  it("systemd: unit files under $XDG_CONFIG_HOME/systemd/user and is-active decide installed/running", async () => {
+    const xdg = join(root, "xdg");
+    process.env.XDG_CONFIG_HOME = xdg;
+    mkdirSync(join(xdg, "systemd", "user"), { recursive: true });
+    writeFileSync(join(xdg, "systemd", "user", "engram-mcp.service"), "[Unit]");
+    const { exec, calls } = fakeExec([
+      [/is-active engram-mcp\.service/, () => ({ stdout: "active\n" })],
+      [/is-active/, () => ({ status: 3, stdout: "inactive\n" })],
+      [/systemctl --user (stop|start|restart)/, () => ({})],
+    ]);
+    const d = deps("linux", exec, async () => false, join(root, "home"));
+    const list = await listServices(d);
+    const mcp = list.find((s) => s.id === "mcp")!;
+    expect(mcp).toMatchObject({ supervisor: "systemd", unit: "engram-mcp.service", installed: true, running: true, listening: false });
+    expect(mcp.restartCommand).toBe("systemctl --user restart engram-mcp.service");
+    expect(list.find((s) => s.id === "dream")).toMatchObject({ unit: "engram-dream.timer", installed: false, running: false });
+    await stopService(mcp, d);
+    expect(calls.at(-1)!.args).toEqual(["--user", "stop", "engram-mcp.service"]);
+  });
+
+  it("windows: schtasks CSV status, ps1 installers drive stop/start, dream is ended not stopped", async () => {
+    const { exec, calls } = fakeExec([
+      [/schtasks\.exe \/Query \/TN \\Engram\\MCP/, () => ({ stdout: '"\\Engram\\MCP","N/A","Running"\r\n' })],
+      [/schtasks\.exe \/Query \/TN \\Engram\\Dream/, () => ({ stdout: '"\\Engram\\Dream","9/18/2026 2:00:00 AM","Ready"\r\n' })],
+      [/schtasks\.exe \/Query/, () => ({ status: 1, stderr: "ERROR: The system cannot find the file specified." })],
+      [/powershell\.exe/, () => ({})],
+      [/schtasks\.exe \/End/, () => ({})],
+    ]);
+    const d = deps("win32", exec, async () => true, "C:\\Users\\x");
+    const list = await listServices(d);
+    const mcp = list.find((s) => s.id === "mcp")!;
+    expect(mcp).toMatchObject({ supervisor: "task-scheduler", unit: "\\Engram\\MCP", installed: true, running: true, unsupervised: false });
+    expect(mcp.stopCommand).toContain("install-mcp-daemon.ps1 stop");
+    expect(list.find((s) => s.id === "dream")).toMatchObject({ installed: true, running: false });
+    expect(list.find((s) => s.id === "visualizer")).toMatchObject({ installed: false, unsupervised: true });
+    await stopService(mcp, d);
+    expect(calls.at(-1)!.cmd).toBe("powershell.exe");
+    expect(calls.at(-1)!.args.at(-1)).toBe("stop");
+    const dream = { ...list.find((s) => s.id === "dream")!, running: true };
+    await stopService(dream, d);
+    expect(calls.at(-1)!.args).toEqual(["/End", "/TN", "\\Engram\\Dream"]);
+  });
+
+  it("ports follow ENGRAM_MCP_PORT / PORT", () => {
+    process.env.ENGRAM_MCP_PORT = "9910";
+    process.env.PORT = "4001";
+    expect(portFor("mcp", process.env)).toEqual({ port: 9910, path: "/health" });
+    expect(portFor("visualizer", process.env)).toEqual({ port: 4001, path: "/api/health" });
+    expect(portFor("dream", process.env)).toBeNull();
+  });
+});
+
+// ─── engram migrate ──────────────────────────────────────────────────
+
+describe("migrate data-dir", () => {
+  it("a fresh install has nothing to do", () => {
+    const home = join(root, "home");
+    const cfg = loadConfig({ dataDir: join(root, "data") });
+    const plan = planDataDir({ config: cfg, env: {}, platform: "darwin", home });
+    expect(plan.action).toMatchObject({ kind: "none" });
+    expect(plan.candidates.map((c) => c.reasons)).toContainEqual(["effective"]);
+  });
+
+  it("legacy populated + effective empty => move every item (dry-run changes nothing, run moves and leaves a note)", () => {
+    const home = join(root, "home");
+    const legacy = join(home, ".local", "share", "engram");
+    seedDb(legacy);
+    mkdirSync(join(legacy, "archive", "proj"), { recursive: true });
+    writeFileSync(join(legacy, "archive", "proj", "c.jsonl"), "{}\n");
+    mkdirSync(join(legacy, "logs"), { recursive: true });
+    const xdg = join(root, "xdg");
+    const env = { XDG_DATA_HOME: xdg };
+    const cfg = loadConfig({ dataDir: join(xdg, "engram") });
+    const plan = planDataDir({ config: cfg, env, platform: "linux", home });
+    expect(plan.action).toMatchObject({ kind: "move", from: legacy, to: join(xdg, "engram") });
+    expect((plan.action as { items: string[] }).items).toEqual(["engram.db", "archive", "logs"]);
+    const dry = applyDataDirPlan(plan, { dryRun: true });
+    expect(dry.every((l) => l.startsWith("would "))).toBe(true);
+    expect(existsSync(join(legacy, "engram.db"))).toBe(true);
+    expect(existsSync(join(xdg, "engram", "engram.db"))).toBe(false);
+    const done = applyDataDirPlan(plan, { dryRun: false });
+    expect(done.some((l) => l.startsWith("moved "))).toBe(true);
+    expect(isSqliteFile(join(xdg, "engram", "engram.db"))).toBe(true);
+    expect(existsSync(join(xdg, "engram", "archive", "proj", "c.jsonl"))).toBe(true);
+    expect(existsSync(join(legacy, "engram.db"))).toBe(false);
+    expect(readFileSync(join(legacy, "MOVED-TO.txt"), "utf-8")).toContain(join(xdg, "engram"));
+    // idempotent: a second plan finds the data where it belongs
+    expect(planDataDir({ config: cfg, env, platform: "linux", home }).action.kind).toBe("none");
+  });
+
+  it("two populated directories => refuse; ENGRAM_DB_PATH => leave alone", () => {
+    const home = join(root, "home");
+    const legacy = join(home, ".local", "share", "engram");
+    seedDb(legacy);
+    const local = join(root, "LocalAppData");
+    seedDb(join(local, "engram"));
+    const env = { LOCALAPPDATA: local };
+    const both = planDataDir({ config: loadConfig({ dataDir: join(local, "engram") }), env, platform: "win32", home });
+    expect(both.action.kind).toBe("refuse");
+    expect((both.action as { populated: string[] }).populated).toHaveLength(2);
+    expect(applyDataDirPlan(both, { dryRun: false })[0]).toContain("nothing to do");
+    const explicit = planDataDir({
+      config: loadConfig({ dataDir: join(root, "elsewhere"), dbPath: join(root, "elsewhere", "engram.db") }),
+      env: { ENGRAM_DB_PATH: join(root, "elsewhere", "engram.db") }, platform: "darwin", home,
+    });
+    expect(explicit.source).toBe("ENGRAM_DB_PATH");
+    expect(explicit.action).toMatchObject({ kind: "none" });
+    expect((explicit.action as { reason: string }).reason).toContain("ignored on purpose");
+  });
+
+  it("DATA_DIR_ITEMS covers the database, its WAL, archive, logs and tmp", () => {
+    expect([...DATA_DIR_ITEMS]).toEqual(["engram.db", "engram.db-wal", "engram.db-shm", "archive", "logs", "tmp"]);
+  });
+});
+
+describe("migrate model-cache and schema", () => {
+  it("proposes <dataDir>/models, copies downloaded models, appends the env line to an existing env file", () => {
+    const pkg = join(root, "pkg");
+    const lib = join(pkg, "node_modules", "@xenova", "transformers", ".cache", "Xenova", "m");
+    mkdirSync(lib, { recursive: true });
+    writeFileSync(join(lib, "model.onnx"), "weights");
+    const home = join(root, "home");
+    const envFile = join(home, ".config", "engram", "env");
+    mkdirSync(join(home, ".config", "engram"), { recursive: true });
+    writeFileSync(envFile, "#ANTHROPIC_API_KEY=\n");
+    const cfg = loadConfig({ dataDir: join(root, "data") });
+    const plan = planModelCache({ config: cfg, env: {}, platform: "linux", home }, pkg);
+    expect(plan).toMatchObject({ durable: false, proposed: join(root, "data", "models"), hasModels: true, envFile });
+    const dry = applyModelCachePlan(plan, { dryRun: true });
+    expect(dry.join("\n")).toContain("would create");
+    expect(existsSync(plan.proposed)).toBe(false);
+    applyModelCachePlan(plan, { dryRun: false });
+    expect(existsSync(join(plan.proposed, "Xenova", "m", "model.onnx"))).toBe(true);
+    expect(readFileSync(envFile, "utf-8")).toContain(`ENGRAM_MODEL_CACHE_DIR='${plan.proposed}'`);
+    // second run: env line not duplicated, cache already copied
+    applyModelCachePlan(plan, { dryRun: false });
+    expect(readFileSync(envFile, "utf-8").match(/ENGRAM_MODEL_CACHE_DIR=/g)).toHaveLength(1);
+    const durable = planModelCache({ config: loadConfig({ dataDir: join(root, "data"), modelCacheDir: join(root, "m") }), env: {}, platform: "win32", home }, pkg);
+    expect(durable.durable).toBe(true);
+    expect(applyModelCachePlan(durable, { dryRun: false })[0]).toContain("already durable");
+    const win = planModelCache({ config: cfg, env: {}, platform: "win32", home }, pkg);
+    expect(win.envLine).toMatch(/^setx ENGRAM_MODEL_CACHE_DIR/);
+    expect(win.envFile).toBeNull();
+  });
+
+  it("schema: opening once runs the migrations and lists the checkpoints", async () => {
+    const dir = join(root, "data");
+    const cfg = loadConfig({ dataDir: dir, dbPath: join(dir, "engram.db") });
+    mkdirSync(dir, { recursive: true });
+    const report = await reportSchema(cfg);
+    expect(report.dbPath).toBe(join(dir, "engram.db"));
+    expect(report.applied.map((m) => m.name)).toEqual(expect.arrayContaining(["commitments_v1"]));
+  });
+});
+
+// ─── engram update ───────────────────────────────────────────────────
+
+function updateDeps(platform: ServiceDeps["platform"], home: string, cfg: ReturnType<typeof loadConfig>, exec: ServiceDeps["exec"], probe: ServiceDeps["probe"], log: string[]): UpdateDeps {
+  return {
+    config: cfg,
+    services: deps(platform, exec, probe, home),
+    packageRoot: root,
+    hermesHome: join(home, ".hermes"),
+    now: () => new Date("2026-09-17T12:34:56Z"),
+    log: (l) => log.push(l),
+    node: process.execPath,
+    cliScript: () => "cli.js",
+  };
+}
+
+describe("update --plan", () => {
+  it("reports the legacy split, model cache, services, plugin targets and blockers, touching nothing", async () => {
+    const home = join(root, "home");
+    const legacy = join(home, ".local", "share", "engram");
+    seedDb(legacy);
+    mkdirSync(join(home, ".hermes", "plugins", "engram"), { recursive: true });
+    mkdirSync(join(home, ".hermes", "profiles", "work", "plugins", "engram"), { recursive: true });
+    mkdirSync(join(root, ".git"));
+    const xdg = join(root, "xdg");
+    process.env.XDG_DATA_HOME = xdg;
+    const cfg = loadConfig({ dataDir: join(xdg, "engram") });
+    const { exec } = fakeExec([
+      [/rev-parse --abbrev-ref/, () => ({ stdout: "main\n" })],
+      [/remote get-url/, () => ({ stdout: "origin\n" })],
+      [/status --porcelain/, () => ({ stdout: "" })],
+      [/rev-parse --short/, () => ({ stdout: "abc1234\n" })],
+      [/ls-remote --tags/, () => ({ stdout: "x\trefs/tags/v0.4.0\n" })],
+      [/launchctl list/, () => ({ status: 113 })],
+    ]);
+    // nothing supervised, but something answers on 9907 => unsupervised blocker
+    const d = updateDeps("darwin", home, cfg, exec, async (port) => port === 9907, []);
+    const plan = await buildUpdatePlan(d);
+    expect(plan.install.kind).toBe("git");
+    expect(plan.target).toBe("0.4.0");
+    expect(plan.dataDir.action).toMatchObject({ kind: "move", from: legacy });
+    expect(plan.modelCache.durable).toBe(false);
+    expect(plan.pluginTargets).toHaveLength(2);
+    expect(plan.pluginProfiles).toEqual(["work"]);
+    expect(plan.backupDir).toBe(backupDirFor(legacy, d.now()));
+    expect(plan.blockers).toHaveLength(1);
+    expect(plan.blockers[0]).toContain("mcp answers on its port but no supervisor owns it");
+    const text = formatPlan(plan).join("\n");
+    expect(text).toContain("[db]  " + legacy);
+    expect(text).toContain("will move engram.db");
+    expect(text).toContain("0.3.0 -> 0.4.0");
+    expect(text).toContain("UNSUPERVISED");
+    expect(text).toContain("BLOCKED");
+    expect(text).toContain("Hermes plugin: 2 deploy target(s) (profiles: work)");
+    expect(existsSync(join(legacy, "engram.db"))).toBe(true); // untouched
+    expect(existsSync(plan.backupDir!)).toBe(false);
+    // dry run prints the plan and does nothing either
+    const res = await runUpdate({ ...plan, blockers: [] }, d, { dryRun: true });
+    expect(res.ok).toBe(true);
+    expect(existsSync(join(legacy, "engram.db"))).toBe(true);
+    const noBackup = await buildUpdatePlan(d, { noBackup: true });
+    expect(noBackup.backupDir).toBeNull();
+    expect(noBackup.steps[0]).toContain("skip the backup");
+  });
+
+  it("a dirty checkout and two populated data dirs are blockers", async () => {
+    const home = join(root, "home");
+    seedDb(join(home, ".local", "share", "engram"));
+    const xdg = join(root, "xdg");
+    process.env.XDG_DATA_HOME = xdg;
+    seedDb(join(xdg, "engram"));
+    mkdirSync(join(root, ".git"));
+    const { exec } = fakeExec([
+      [/status --porcelain/, () => ({ stdout: " M x\n" })],
+      [/git/, () => ({ stdout: "" })],
+      [/launchctl list/, () => ({ status: 113 })],
+    ]);
+    const plan = await buildUpdatePlan(updateDeps("darwin", home, loadConfig({ dataDir: join(xdg, "engram") }), exec, async () => false, []));
+    expect(plan.blockers.some((b) => b.includes("uncommitted changes"))).toBe(true);
+    expect(plan.blockers.some((b) => b.includes("two directories both hold a database"))).toBe(true);
+    const res = await runUpdate(plan, updateDeps("darwin", home, plan.dataDir as never, exec, async () => false, []) as never);
+    expect(res.ok).toBe(false);
+    expect(res.lines[0]).toBe("Refusing to update:");
+  });
+
+  it("pluginDeployTargets ignores a missing hermes home", () => {
+    expect(pluginDeployTargets(join(root, "nope"))).toEqual({ targets: [], profiles: [] });
+  });
+});
+
+describe("update run (git install, macOS, legacy data dir)", () => {
+  function setup() {
+    const home = join(root, "home");
+    const legacy = join(home, ".local", "share", "engram");
+    seedDb(legacy);
+    mkdirSync(join(home, "Library", "LaunchAgents"), { recursive: true });
+    writeFileSync(join(home, "Library", "LaunchAgents", "com.engram.mcp.plist"), "<plist/>");
+    mkdirSync(join(root, ".git"));
+    const xdg = join(root, "xdg");
+    process.env.XDG_DATA_HOME = xdg;
+    const cfg = loadConfig({ dataDir: join(xdg, "engram") });
+    let mcpUp = true;
+    const probe = async (port: number) => port === 9907 && mcpUp;
+    return { home, legacy, xdg, cfg, probe, setMcp: (v: boolean) => { mcpUp = v; } };
+  }
+
+  it("stops services, backs up, moves the data, pulls, builds, migrates, restarts, verifies", async () => {
+    const { home, legacy, xdg, cfg, probe, setMcp } = setup();
+    const newDb = join(xdg, "engram", "engram.db");
+    const log: string[] = [];
+    const { exec, calls } = fakeExec([
+      [/rev-parse --abbrev-ref/, () => ({ stdout: "main\n" })],
+      [/remote get-url/, () => ({ stdout: "origin\n" })],
+      [/status --porcelain/, () => ({ stdout: "" })],
+      [/rev-parse --short/, () => ({ stdout: "abc1234\n" })],
+      [/ls-remote --tags/, () => ({ stdout: "x\trefs/tags/v0.4.0\n" })],
+      [/launchctl list com\.engram\.mcp$/, () => ({ stdout: '"PID" = 7;' })],
+      [/launchctl list/, () => ({ status: 113 })],
+      [/launchctl unload/, () => { setMcp(false); }],
+      [/launchctl load/, () => { setMcp(true); }],
+      [/git -C .* pull --ff-only/, () => ({ stdout: "Already up to date.\n" })],
+      [/^npm ci$/, () => ({})],
+      [/cli\.js migrate schema/, () => ({ stdout: "schema: ok\n  commitments_v1\n" })],
+      [/cli\.js doctor --json/, () => ({ stdout: JSON.stringify({ ok: true, checks: [] }) })],
+      [/cli\.js stats --json/, () => {
+        const db = new Database(newDb, { readonly: true });
+        try { return { stdout: JSON.stringify({ counts: snapshotCounts(db) }) }; } finally { db.close(); }
+      }],
+    ]);
+    const d = updateDeps("darwin", home, cfg, exec, probe, log);
+    const plan = await buildUpdatePlan(d);
+    expect(plan.blockers).toEqual([]);
+    const res = await runUpdate(plan, d);
+    expect(res.ok, res.lines.join("\n")).toBe(true);
+    // order: unload before backup before pull before npm ci before migrate before load before verify
+    const seq = calls.map((c) => `${c.cmd} ${c.args.join(" ")}`);
+    const idx = (re: RegExp) => seq.findIndex((s) => re.test(s));
+    expect(idx(/launchctl unload/)).toBeLessThan(idx(/pull --ff-only/));
+    expect(idx(/pull --ff-only/)).toBeLessThan(idx(/npm ci/));
+    expect(idx(/npm ci/)).toBeLessThan(idx(/migrate schema/));
+    expect(idx(/migrate schema/)).toBeLessThan(idx(/launchctl load/));
+    expect(idx(/launchctl load/)).toBeLessThan(idx(/doctor --json/));
+    // backup holds the db; data moved; model cache made durable before npm ci ran
+    expect(isSqliteFile(join(plan.backupDir!, "engram.db"))).toBe(true);
+    expect(isSqliteFile(newDb)).toBe(true);
+    expect(existsSync(join(legacy, "engram.db"))).toBe(false);
+    expect(existsSync(plan.modelCache.proposed)).toBe(true);
+    const text = res.lines.join("\n");
+    expect(text).toContain("snapshot: exchanges=0 conversations=1");
+    expect(text).toContain("counts:   exchanges=0 conversations=1");
+    expect(text).toContain("verification passed");
+    expect(text).toContain(plan.backupDir!);
+  });
+
+  it("a count drop after the update fails loudly and prints rollback steps", async () => {
+    const { home, cfg, probe, setMcp } = setup();
+    const log: string[] = [];
+    const { exec } = fakeExec([
+      [/status --porcelain/, () => ({ stdout: "" })],
+      [/rev-parse --short/, () => ({ stdout: "abc1234\n" })],
+      [/ls-remote --tags/, () => ({ stdout: "x\trefs/tags/v0.4.0\n" })],
+      [/git/, () => ({ stdout: "" })],
+      [/launchctl list com\.engram\.mcp$/, () => ({ stdout: '"PID" = 7;' })],
+      [/launchctl list/, () => ({ status: 113 })],
+      [/launchctl unload/, () => { setMcp(false); }],
+      [/launchctl load/, () => { setMcp(true); }],
+      [/npm ci/, () => ({})],
+      [/migrate schema/, () => ({ stdout: "ok\n" })],
+      [/doctor --json/, () => ({ stdout: JSON.stringify({ ok: true }) })],
+      [/stats --json/, () => ({ stdout: JSON.stringify({ counts: { exchanges: 0, conversations: 0, tool_calls: 0, memories_active: 0, memories_inactive: 0, entities: 0, relationships: 0, topic_clusters: 0, commitments: 0 } }) })],
+    ]);
+    const d = updateDeps("darwin", home, cfg, exec, probe, log);
+    const plan = await buildUpdatePlan(d, { noBackup: true });
+    const res = await runUpdate(plan, d);
+    expect(res.ok).toBe(false);
+    const text = res.lines.join("\n");
+    expect(text).toContain("counts DROPPED after the update: conversations: 1 -> 0; entities: 1 -> 0");
+    expect(text).toContain("UPDATE FAILED. Rollback steps, in order:");
+    expect(text).toContain("stop mcp: launchctl unload");
+    expect(text).toContain("git -C " + root + " checkout abc1234 && npm ci");
+    expect(text).toContain("move the items back");
+  });
+
+  it("a failed git pull aborts before the data dir moves", async () => {
+    const { home, legacy, cfg, probe, setMcp } = setup();
+    const { exec } = fakeExec([
+      [/status --porcelain/, () => ({ stdout: "" })],
+      [/ls-remote --tags/, () => ({ stdout: "" })],
+      [/pull --ff-only/, () => ({ status: 1, stderr: "fatal: Not possible to fast-forward" })],
+      [/git/, () => ({ stdout: "" })],
+      [/launchctl list com\.engram\.mcp$/, () => ({ stdout: '"PID" = 7;' })],
+      [/launchctl list/, () => ({ status: 113 })],
+      [/launchctl unload/, () => { setMcp(false); }],
+    ]);
+    const d = updateDeps("darwin", home, cfg, exec, probe, []);
+    const plan = await buildUpdatePlan(d, { noBackup: true });
+    const res = await runUpdate(plan, d);
+    expect(res.ok).toBe(false);
+    expect(res.lines.join("\n")).toContain("git pull failed: fatal: Not possible to fast-forward");
+    expect(existsSync(join(legacy, "engram.db"))).toBe(true);
+  });
+
+  it("npm installs use npm install -g <package>@<target>", async () => {
+    const home = join(root, "home");
+    const data = join(root, "data");
+    seedDb(data);
+    const { exec, calls } = fakeExec([
+      [/npm view/, () => ({ stdout: "0.5.0\n" })],
+      [/npm install -g/, () => ({})],
+      [/launchctl list/, () => ({ status: 113 })],
+      [/migrate schema/, () => ({ stdout: "ok\n" })],
+      [/doctor --json/, () => ({ stdout: JSON.stringify({ ok: true }) })],
+      [/stats --json/, () => {
+        const db = new Database(join(data, "engram.db"), { readonly: true });
+        try { return { stdout: JSON.stringify({ counts: snapshotCounts(db) }) }; } finally { db.close(); }
+      }],
+    ]);
+    const d = updateDeps("darwin", home, loadConfig({ dataDir: data, modelCacheDir: join(root, "models") }), exec, async () => false, []);
+    const plan = await buildUpdatePlan(d, { noBackup: true });
+    expect(plan.install.kind).toBe("npm");
+    const res = await runUpdate(plan, d);
+    expect(res.ok, res.lines.join("\n")).toBe(true);
+    expect(calls.some((c) => c.cmd === "npm" && c.args.join(" ") === `install -g ${PACKAGE_NAME}@0.5.0`)).toBe(true);
+  });
+});
+
+// ─── CLI surface ─────────────────────────────────────────────────────
+
+describe("engram migrate / import-legacy / update CLI", () => {
+  const cli = fileURLToPath(new URL("../../../dist/interfaces/cli/index.js", import.meta.url));
+  const built = existsSync(cli);
+  function run(args: string[], env: NodeJS.ProcessEnv = {}) {
+    return spawnSync(process.execPath, [cli, ...args], {
+      encoding: "utf8",
+      env: { ...process.env, ENGRAM_DATA_DIR: join(root, "cli-data"), ENGRAM_MODEL_CACHE_DIR: join(root, "cli-models"), ENGRAM_MCP_PORT: "1", ...env },
+    });
+  }
+
+  it.skipIf(!built)("migrate --dry-run lists every action and changes nothing", () => {
+    const home = join(root, "home");
+    const legacy = join(home, ".local", "share", "engram");
+    seedDb(legacy);
+    const r = run(["migrate", "--dry-run"], { HOME: home, XDG_DATA_HOME: join(root, "xdg"), ENGRAM_DATA_DIR: undefined as unknown as string });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toContain("would move");
+    expect(r.stdout).toContain("model-cache:");
+    expect(r.stdout).toContain("schema: would open");
+    expect(existsSync(join(legacy, "engram.db"))).toBe(true);
+    expect(existsSync(join(root, "xdg", "engram", "engram.db"))).toBe(false);
+  });
+
+  it.skipIf(!built)("migrate --source forwards to the legacy importer with a deprecation notice; import-legacy exists", () => {
+    const r = run(["migrate", "--source", join(root, "missing.sqlite"), "--dry-run"]);
+    expect(r.stderr).toContain("engram migrate --source is deprecated");
+    expect(r.stderr).toContain("engram import-legacy --source");
+    const h = run(["import-legacy", "--help"]);
+    expect(h.status).toBe(0);
+    expect(h.stdout).toContain("--source <path>");
+  });
+
+  it.skipIf(!built)("update --check and --plan are read-only and exit 0", () => {
+    const c = run(["update", "--check"]);
+    expect(c.status, c.stderr).toBe(0);
+    expect(c.stdout).toMatch(/^engram \d+\.\d+\.\d+ \((git checkout|npm install)/);
+    const p = run(["update", "--plan"]);
+    expect(p.status, p.stderr).toBe(0);
+    expect(p.stdout).toContain("Steps:");
+    expect(readdirSync(root).some((n) => n.includes("backup"))).toBe(false);
+  });
+});

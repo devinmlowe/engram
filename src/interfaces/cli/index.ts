@@ -3,13 +3,14 @@ import { Command } from "commander";
 import { join } from "node:path";
 import { loadConfig } from "../../_core/config/index.js";
 import { getDatabase, closeDatabase } from "../../_core/db/index.js";
+import { ENGRAM_VERSION } from "../../_core/version/index.js";
 
 const program = new Command();
 
 program
   .name("engram")
   .description("Cognitive memory system for Claude Code")
-  .version("0.3.0");
+  .version(ENGRAM_VERSION);
 
 // ─── sync ──────────────────────────────────────────────────────
 
@@ -330,12 +331,19 @@ program
 program
   .command("stats")
   .description("Show database statistics")
-  .action(async () => {
+  .option("--json", "Print the row counts as JSON (what `engram update` compares before/after)")
+  .action(async (opts) => {
     const { statSync } = await import("node:fs");
     const config = loadConfig();
     const db = getDatabase(config);
 
     try {
+      if (opts.json) {
+        const { snapshotCounts } = await import("./snapshot.js");
+        const size = statSync(config.dbPath).size;
+        console.log(JSON.stringify({ db: config.dbPath, size, counts: snapshotCounts(db) }, null, 2));
+        return;
+      }
       const exchangeCount = (
         db.prepare("SELECT COUNT(*) as count FROM exchanges").get() as {
           count: number;
@@ -515,67 +523,198 @@ program
 
 // ─── migrate ────────────────────────────────────────────────────
 
+/** The legacy conversation-index importer (was `engram migrate --source` before 0.4.0). */
+async function runLegacyImport(opts: { source: string; dryRun?: boolean; batchSize?: string; force?: boolean }): Promise<void> {
+  const { runMigration, formatProgress } = await import("../../migration/migrate.js");
+  try {
+    console.log(`Importing legacy conversation index from: ${opts.source}`);
+    const report = await runMigration({
+      sourcePath: opts.source,
+      dryRun: opts.dryRun,
+      batchSize: parseInt(opts.batchSize ?? "32", 10),
+      force: opts.force,
+      onProgress: (p) => {
+        process.stdout.write(`\r${formatProgress(p)}`);
+      },
+    });
+
+    if (!opts.dryRun) {
+      console.log("\n\nImport complete:");
+      console.log(`  Exchanges:     ${report.exchangesMigrated}`);
+      console.log(`  Tool calls:    ${report.toolCallsMigrated}`);
+      console.log(`  Conversations: ${report.conversationsCreated}`);
+      console.log(`  Embeddings:    ${report.embeddingsGenerated}`);
+
+      if (report.errors.length > 0) {
+        console.log(`  Errors:        ${report.errors.length}`);
+        for (const err of report.errors.slice(0, 10)) {
+          console.error(`    ${err}`);
+        }
+        if (report.errors.length > 10) {
+          console.error(`    ... and ${report.errors.length - 10} more`);
+        }
+      }
+
+      const durationSec = report.completedAt
+        ? Math.round((report.completedAt - report.startedAt) / 1000)
+        : 0;
+      console.log(`  Duration:      ${durationSec}s`);
+    }
+  } catch (err) {
+    console.error("Import failed:", err instanceof Error ? err.message : err);
+    process.exit(1);
+  }
+}
+
 program
-  .command("migrate")
-  .description("Migrate data from a legacy conversation-index SQLite database")
+  .command("import-legacy")
+  .description("Import a legacy conversation-index SQLite database (was `engram migrate --source` before 0.4.0)")
   .requiredOption(
     "-s, --source <path>",
     "Path to the source conversation-index SQLite database (no default)",
   )
-  .option(
-    "-n, --dry-run",
-    "Show what would be migrated without making changes",
-  )
+  .option("-n, --dry-run", "Show what would be imported without making changes")
   .option("--batch-size <n>", "Embedding batch size", "32")
-  .option("--force", "Force re-migration (ignore checkpoints)")
+  .option("--force", "Force re-import (ignore checkpoints)")
   .action(async (opts) => {
-    const { runMigration, formatProgress } = await import(
-      "../../migration/migrate.js"
-    );
+    await runLegacyImport(opts);
+  });
 
-    try {
-      console.log(`Migrating from: ${opts.source}`);
-      const report = await runMigration({
-        sourcePath: opts.source,
-        dryRun: opts.dryRun,
-        batchSize: parseInt(opts.batchSize, 10),
-        force: opts.force,
-        onProgress: (p) => {
-          process.stdout.write(`\r${formatProgress(p)}`);
-        },
-      });
+// ─── migrate (install / data migration, #44) ──────────────────────
 
-      if (!opts.dryRun) {
-        console.log("\n\nMigration complete:");
-        console.log(`  Exchanges:     ${report.exchangesMigrated}`);
-        console.log(`  Tool calls:    ${report.toolCallsMigrated}`);
-        console.log(`  Conversations: ${report.conversationsCreated}`);
-        console.log(`  Embeddings:    ${report.embeddingsGenerated}`);
+const MIGRATE_TOPICS = ["all", "data-dir", "model-cache", "schema"] as const;
 
-        if (report.errors.length > 0) {
-          console.log(`  Errors:        ${report.errors.length}`);
-          for (const err of report.errors.slice(0, 10)) {
-            console.error(`    ${err}`);
-          }
-          if (report.errors.length > 10) {
-            console.error(
-              `    ... and ${report.errors.length - 10} more`,
-            );
-          }
-        }
-
-        const durationSec = report.completedAt
-          ? Math.round((report.completedAt - report.startedAt) / 1000)
-          : 0;
-        console.log(`  Duration:      ${durationSec}s`);
-      }
-    } catch (err) {
+program
+  .command("migrate")
+  .argument("[topic]", `what to migrate: ${MIGRATE_TOPICS.join(" | ")} (default: all)`)
+  .description(
+    "Migrate this install: move a pre-0.2.0 data dir into the resolved one, give the embedding model a durable cache, run schema migrations. Idempotent; --dry-run lists every action. (The legacy conversation-index importer is now `engram import-legacy`.)",
+  )
+  .option("-n, --dry-run", "List every action without changing anything")
+  .option("-s, --source <path>", "DEPRECATED: forwards to `engram import-legacy --source`")
+  .option("--batch-size <n>", "DEPRECATED (import-legacy option)")
+  .option("--force", "DEPRECATED (import-legacy option)")
+  .action(async (topic: string | undefined, opts) => {
+    if (opts.source) {
       console.error(
-        "Migration failed:",
-        err instanceof Error ? err.message : err,
+        "engram migrate --source is deprecated and will be removed in the next release: use `engram import-legacy --source <path>`. Forwarding...",
       );
-      process.exit(1);
+      await runLegacyImport(opts);
+      return;
     }
+    const which = (topic ?? "all") as (typeof MIGRATE_TOPICS)[number];
+    if (!MIGRATE_TOPICS.includes(which)) {
+      console.error(`Unknown topic "${topic}". Expected one of: ${MIGRATE_TOPICS.join(", ")}`);
+      process.exit(2);
+    }
+    const { homedir } = await import("node:os");
+    const { planDataDir, applyDataDirPlan, planModelCache, applyModelCachePlan, reportSchema } = await import("./data-migration.js");
+    const { portFor, realProbe } = await import("./services.js");
+    const config = loadConfig();
+    const penv = { config, env: process.env, platform: process.platform, home: homedir() };
+    const dryRun = Boolean(opts.dryRun);
+    let failed = false;
+
+    if (which === "all" || which === "data-dir") {
+      const plan = planDataDir(penv);
+      console.log(`data-dir: effective ${plan.effective} (db: ${plan.effectiveDb}; from ${plan.source})`);
+      for (const c of plan.candidates) {
+        console.log(`  ${c.populated ? "[db] " : c.exists ? "[dir]" : "[--] "} ${c.dir}  (${c.reasons.join("+")}${c.populated ? `, ${(c.sizeBytes / 1024 / 1024).toFixed(1)} MB` : ""})`);
+      }
+      if (plan.action.kind === "refuse") {
+        console.error(`  !! ${plan.action.reason}: ${plan.action.populated.join(", ")}`);
+        failed = true;
+      } else if (plan.action.kind === "move" && !dryRun) {
+        const mcp = portFor("mcp", process.env)!;
+        if (await realProbe(mcp.port, mcp.path)) {
+          console.error(`  !! the MCP daemon is running on port ${mcp.port}; stop every engram service first (or run \`engram update\`, which does), then re-run`);
+          failed = true;
+        } else {
+          for (const l of applyDataDirPlan(plan, { dryRun })) console.log(`  ${l}`);
+        }
+      } else {
+        for (const l of applyDataDirPlan(plan, { dryRun })) console.log(`  ${l}`);
+      }
+    }
+    if (which === "all" || which === "model-cache") {
+      const plan = planModelCache(penv);
+      console.log(`model-cache: ${plan.current}${plan.durable ? " (durable)" : " (inside node_modules: wiped by npm ci)"}`);
+      for (const l of applyModelCachePlan(plan, { dryRun })) console.log(`  ${l}`);
+    }
+    if (which === "all" || which === "schema") {
+      if (dryRun) {
+        console.log(`schema: would open ${config.dbPath} once so pending schema migrations run`);
+      } else if (failed) {
+        console.log("schema: skipped (data-dir step failed)");
+      } else {
+        const report = await reportSchema(config);
+        console.log(`schema: ${report.dbPath}`);
+        if (report.applied.length === 0) console.log("  no checkpoints recorded (fresh database or pre-checkpoint schema)");
+        for (const m of report.applied) {
+          console.log(`  ${m.name}${m.applied_at ? `  (${new Date(m.applied_at * 1000).toISOString()})` : ""}`);
+        }
+      }
+    }
+    if (failed) process.exit(1);
+  });
+
+// ─── update (controlled self-update, #44) ─────────────────────────
+
+program
+  .command("update")
+  .description(
+    "Upgrade this install safely: backup, stop services, pull/npm install, migrate, restart services, verify. --check compares versions; --plan shows what would happen",
+  )
+  .option("--check", "Print current vs available version and exit")
+  .option("--plan", "Read-only: print the full plan (install kind, data dirs, model cache, services) and exit")
+  .option("--dry-run", "Alias for --plan")
+  .option("-y, --yes", "Do not ask for confirmation")
+  .option("--no-backup", "Skip the pre-update backup of the data dir")
+  .option("--to <version>", "Target version for npm installs (default: latest)")
+  .action(async (opts) => {
+    const { homedir } = await import("node:os");
+    const { realpathSync } = await import("node:fs");
+    const { PACKAGE_ROOT } = await import("../../_core/version/index.js");
+    const { defaultServiceDeps } = await import("./services.js");
+    const { detectInstall, latestAvailable, formatCheck } = await import("./install-kind.js");
+    const { buildUpdatePlan, formatPlan, runUpdate } = await import("./update.js");
+
+    const services = defaultServiceDeps({ engramDir: PACKAGE_ROOT, home: homedir() });
+    if (opts.check) {
+      const install = await detectInstall({ exec: services.exec, packageRoot: PACKAGE_ROOT });
+      for (const l of formatCheck(install, await latestAvailable(install, services.exec))) console.log(l);
+      return;
+    }
+    const thisScript = (() => { try { return realpathSync(process.argv[1] ?? ""); } catch { return process.argv[1] ?? ""; } })();
+    const deps = {
+      config: loadConfig(),
+      services,
+      packageRoot: PACKAGE_ROOT,
+      hermesHome: process.env.HERMES_HOME?.trim() || process.env.HERMES_ROOT?.trim() || join(homedir(), ".hermes"),
+      now: () => new Date(),
+      log: (l: string) => console.log(l),
+      node: process.execPath,
+      cliScript: (install: { kind: string; root: string }) =>
+        install.kind === "git" ? join(install.root, "dist", "interfaces", "cli", "index.js") : thisScript,
+    };
+    const plan = await buildUpdatePlan(deps, { noBackup: opts.backup === false, to: opts.to });
+    for (const l of formatPlan(plan)) console.log(l);
+    if (opts.plan || opts.dryRun) return;
+    if (plan.blockers.length) process.exit(1);
+    if (!opts.yes) {
+      if (!process.stdin.isTTY) {
+        console.error("Not a terminal: re-run with --yes to proceed without confirmation.");
+        process.exit(2);
+      }
+      const { createInterface } = await import("node:readline/promises");
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      const answer = (await rl.question("\nProceed with the update? [y/N] ")).trim().toLowerCase();
+      rl.close();
+      if (answer !== "y" && answer !== "yes") { console.log("Aborted."); return; }
+    }
+    console.log("");
+    const result = await runUpdate(plan, deps);
+    if (!result.ok) process.exit(1);
   });
 
 // ─── validate ───────────────────────────────────────────────────

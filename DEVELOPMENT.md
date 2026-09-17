@@ -54,7 +54,7 @@ node dist/interfaces/cli/index.js <command>
 npm run dev -- <command>
 ```
 
-Available CLI commands: `init`, `sync`, `search`, `remember`, `extract`, `dream`, `reflect`, `explore`, `entities`, `relationships`, `stats`, `health`, `migrate`, `validate`.
+Available CLI commands: `init`, `sync`, `search`, `remember`, `extract`, `dream`, `reflect`, `explore`, `entities`, `relationships`, `stats`, `health`, `doctor`, `update`, `migrate`, `import-legacy`, `validate`, `backfill-event-ts`, `commitments`, `commitment-done`, `commitments-extract`, `export`, `import`, `mcp` (see `src/interfaces/cli/README.md`).
 
 ## Running the MCP Server
 

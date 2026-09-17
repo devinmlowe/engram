@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # commitments-surface.sh — compact digest of engram's commitments ledger for the
 # Hermes heartbeats (12:00 / 20:00 CT). Queries the `commitments` MCP tool over
-# the local HTTP MCP endpoint (LaunchAgent ai.hermes.engram-mcp, :9907) and prints:
+# the local HTTP MCP endpoint (the supervised MCP daemon, :9907) and prints:
 #
 #   Commitments: N pending (O overdue, D due within 7 days)
 #   OVERDUE: / DUE THIS WEEK: sections (id prefix, content, due, subject)

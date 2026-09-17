@@ -27,6 +27,7 @@ Shared infrastructure modules — cross-cutting services with no domain logic. A
 - [search/](./search/) — Multi-source search orchestration, RRF fusion, sessions, file tools
 - [llm/](./llm/) — Unified LLM client factory (Ollama → OpenRouter → Anthropic cascade)
 - [cache/](./cache/) — Generic LRU cache utility
+- [version/](./version/) — `ENGRAM_VERSION` / `PACKAGE_NAME` / `PACKAGE_ROOT` read from package.json at runtime (CLI `--version`, MCP serverInfo, `engram update --check`)
 
 ## See Also
 
