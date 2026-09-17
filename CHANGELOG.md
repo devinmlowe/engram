@@ -5,6 +5,12 @@ All notable changes to engram are documented here. The format follows
 [Semantic Versioning](https://semver.org/) while the project is pre-1.0
 (minor bumps may change behaviour, as noted below).
 
+## [Unreleased]
+
+### Security
+
+- npm `overrides` pin the transitive `protobufjs` to `^7.6.3` (code-injection advisories in ≤7.6.2, reached via `@xenova/transformers` → `onnxruntime-web` → `onnx-proto`) and `sharp` to `^0.35.4` (libvips CVEs; engram never uses the image pipeline). `npm audit` reports 0 vulnerabilities; embeddings, the reranker and `engram doctor` were verified live against onnxruntime after the change (#40).
+
 ## [0.2.0] - 2026-09-17
 
 ### Upgrade notes
