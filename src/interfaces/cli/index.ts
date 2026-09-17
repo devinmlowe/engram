@@ -284,10 +284,17 @@ program
       console.log("\nConsolidating...");
       initConsolidator();
 
+      // W2: extracted facts inherit the conversation's tenant scope (ADR-010)
+      const convScope = (
+        db.prepare("SELECT scope FROM conversations WHERE id = ?").get(conversationId) as
+          | { scope: string | null }
+          | undefined
+      )?.scope ?? "global";
       const consolidationResults = await consolidateFacts(
         db,
         result.facts,
         conversationId,
+        { scope: convScope },
       );
 
       // Report

@@ -94,8 +94,8 @@ export function upsertConversation(
   db.prepare(`
     INSERT OR REPLACE INTO conversations
       (id, project, started_at, ended_at, exchange_count, summary,
-       primary_topics, archive_path, last_indexed)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       primary_topics, archive_path, last_indexed, scope)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     conversation.id,
     conversation.project,
@@ -108,6 +108,7 @@ export function upsertConversation(
       : null,
     conversation.archivePath ?? null,
     conversation.lastIndexed ?? null,
+    conversation.scope ?? "global",
   );
 }
 
@@ -136,6 +137,7 @@ export function getConversation(
       : undefined,
     archivePath: row.archive_path as string | undefined,
     lastIndexed: row.last_indexed as number | undefined,
+    scope: (row.scope as string | null) ?? "global",
   };
 }
 

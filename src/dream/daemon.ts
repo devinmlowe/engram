@@ -493,7 +493,10 @@ async function runConsolidatePhase(
     if (shuttingDown) break;
 
     try {
-      const results = await consolidateFacts(db, batch.facts, batch.conversationId);
+      // W2: facts inherit the source conversation's tenant scope (ADR-010).
+      const results = await consolidateFacts(db, batch.facts, batch.conversationId, {
+        scope: getConversationScope(db, batch.conversationId),
+      });
 
       for (const r of results) {
         if (r.action === "insert") report.newMemories++;
@@ -838,6 +841,18 @@ async function processConversation(
     relationshipsCreated,
     facts,
   };
+}
+
+/**
+ * Tenant scope recorded on a conversation ('global' when the row is missing
+ * or predates the scope column). Consumed by the consolidate phase so
+ * extracted memories land in the same scope as their source turns.
+ */
+function getConversationScope(db: Database.Database, conversationId: string): string {
+  const row = db
+    .prepare("SELECT scope FROM conversations WHERE id = ?")
+    .get(conversationId) as { scope: string | null } | undefined;
+  return row?.scope ?? "global";
 }
 
 // ─── Pending Facts Storage ───────────────────────────────────────

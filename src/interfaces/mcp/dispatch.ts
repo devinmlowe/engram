@@ -73,6 +73,7 @@ export const WORKER_TOOLS: ReadonlySet<string> = new Set([
   "index_file_structure",
   "commitments",
   "commitments_update",
+  "ingest_turn",
 ]);
 
 /** Tools whose results reference an in-memory recall session. */

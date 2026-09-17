@@ -24,6 +24,7 @@ import { escapeXml } from "../../_core/search/index.js";
 import { initEmbeddings } from "../../_core/embeddings/index.js";
 import { rememberFact, storeMemoryBatch } from "../shared/remember.js";
 import { resolveCallScoping } from "./scoping.js";
+import { ingestTurn, DEFAULT_TURN_SOURCE } from "../../episodic/ingest-turn.js";
 import { sliceShowLines, formatShowOutput } from "./show-format.js";
 import { buildIntelligenceConfig } from "../../_core/llm/index.js";
 import type { MemorySource } from "../../_core/types/index.js";
@@ -139,6 +140,28 @@ const ScopeParamSchema = z
 const ReadScopesParamSchema = z
   .array(z.string().trim().min(1, "read_scopes entries must be non-empty scope strings"))
   .min(1, "read_scopes must contain at least one scope");
+
+const IngestTurnInputSchema = z.object({
+  session_id: z.string().trim().min(1, "session_id is required"),
+  turn_index: z.number().int("turn_index must be an integer").min(0, "turn_index must be >= 0"),
+  scope: ScopeParamSchema,
+  user_text: z.string(),
+  assistant_text: z.string(),
+  tool_calls: z
+    .array(
+      z.object({
+        name: z.string().trim().min(1, "tool_calls[].name is required"),
+        input: z.unknown().optional(),
+        output: z.unknown().optional(),
+      }),
+    )
+    .optional(),
+  timestamp: z
+    .string()
+    .refine((v) => !Number.isNaN(new Date(v).getTime()), "timestamp must be an ISO-8601 date string")
+    .optional(),
+  source: z.string().trim().min(1, "source must be a non-empty label").optional(),
+});
 
 const RecallInputSchema = z.object({
   query: z.string().min(2, "Query must be at least 2 characters"),
@@ -1033,6 +1056,77 @@ function registerToolHandlers(srv: Server, callTool: ToolHandler = handleToolCal
         openWorldHint: false,
       },
     },
+    {
+      name: "ingest_turn",
+      description:
+        "Record one user/assistant turn of an external agent conversation " +
+        "(e.g. a Hermes profile) in engram's episodic layer so it becomes " +
+        "searchable and feeds the nightly dream extraction. Idempotent: " +
+        "re-sending the same session_id + turn_index updates the turn in " +
+        "place. The conversation carries the given tenant scope, and every " +
+        "memory later extracted from it inherits that scope.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          session_id: {
+            type: "string",
+            minLength: 1,
+            description: "Caller's conversation/session identifier (stable across turns)",
+          },
+          turn_index: {
+            type: "integer",
+            minimum: 0,
+            description: "0-based position of this turn within the session",
+          },
+          scope: {
+            type: "string",
+            minLength: 1,
+            description: "Tenant scope of the conversation (e.g. \"hermes:career\")",
+          },
+          user_text: {
+            type: "string",
+            description: "The user's message for this turn",
+          },
+          assistant_text: {
+            type: "string",
+            description: "The assistant's reply for this turn",
+          },
+          tool_calls: {
+            type: "array",
+            description: "Tools invoked during the turn (input/output are truncated to 1000 chars)",
+            items: {
+              type: "object",
+              properties: {
+                name: { type: "string", minLength: 1 },
+                input: { description: "Tool input (any JSON)" },
+                output: { description: "Tool output/result summary (any JSON)" },
+              },
+              required: ["name"],
+              additionalProperties: false,
+            },
+          },
+          timestamp: {
+            type: "string",
+            description: "ISO-8601 time of the turn (default: now)",
+          },
+          source: {
+            type: "string",
+            minLength: 1,
+            default: DEFAULT_TURN_SOURCE,
+            description: "Platform/source label; part of the conversation key (default \"hermes\")",
+          },
+        },
+        required: ["session_id", "turn_index", "scope", "user_text", "assistant_text"],
+        additionalProperties: false,
+      },
+      annotations: {
+        title: "Ingest Turn",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
   ],
 }));
 
@@ -1497,6 +1591,41 @@ export async function handleToolCall(name: string, args: unknown): Promise<ToolR
       return {
         content: [
           { type: "text", text: `Commitment ${updated.id} marked ${updated.status}${suffix}: ${updated.content}` },
+        ],
+      };
+    }
+
+    if (name === "ingest_turn") {
+      const params = IngestTurnInputSchema.parse(args);
+      await ensureEmbeddings();
+
+      const result = await ingestTurn(getDb(), {
+        sessionId: params.session_id,
+        turnIndex: params.turn_index,
+        scope: resolveCallScoping(process.env, { scope: params.scope }).writeScope as string,
+        userText: params.user_text,
+        assistantText: params.assistant_text,
+        toolCalls: params.tool_calls,
+        timestamp: params.timestamp,
+        source: params.source,
+      });
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              {
+                conversationId: result.conversationId,
+                exchangeId: result.exchangeId,
+                created: result.created,
+                exchangeCount: result.exchangeCount,
+                scope: result.scope,
+              },
+              null,
+              2,
+            ),
+          },
         ],
       };
     }

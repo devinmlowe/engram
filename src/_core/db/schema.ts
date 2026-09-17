@@ -371,6 +371,12 @@ function createSchema(db: Database.Database, config: EngramConfig): void {
   // schema_migrations so a re-open is a provable no-op.
   migrateCommitments(db);
 
+  // W2: conversations.scope — tenant scope of a conversation's origin
+  // ('global' for Claude Code transcripts, 'hermes:<profile>' for turns pushed
+  // via the ingest_turn tool). The dream consolidate phase stamps every memory
+  // extracted from a conversation with this scope (ADR-010 inheritance).
+  migrateConversationScope(db);
+
   // FTS5 virtual tables (created separately — can't use IF NOT EXISTS)
   createFtsIfNeeded(db, "exchanges_fts", `
     CREATE VIRTUAL TABLE exchanges_fts USING fts5(
@@ -569,6 +575,32 @@ function idempotentAlter(
 
 /** Checkpoint name recorded in schema_migrations when the commitments table is created. */
 export const COMMITMENTS_MIGRATION = "commitments_v1";
+
+/** Checkpoint name recorded in schema_migrations when conversations.scope is added. */
+export const CONVERSATIONS_SCOPE_MIGRATION = "conversations_scope_v1";
+
+/**
+ * Add `conversations.scope` (nullable, default 'global') plus its index and
+ * record the checkpoint. Mirrors the memories.scope migration but is also
+ * checkpointed in schema_migrations so a re-open is a provable no-op.
+ * Existing rows take the column default, so pre-existing Claude Code
+ * conversations keep 'global' semantics. Returns `true` only on the open
+ * that introduced the column.
+ */
+export function migrateConversationScope(db: Database.Database): boolean {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      name TEXT PRIMARY KEY,
+      applied_at INTEGER DEFAULT (unixepoch())
+    )
+  `);
+  const added = idempotentAlter(
+    db, "conversations", "scope", "ALTER TABLE conversations ADD COLUMN scope TEXT DEFAULT 'global'",
+  );
+  db.exec("CREATE INDEX IF NOT EXISTS idx_conversations_scope ON conversations(scope)");
+  db.prepare("INSERT OR IGNORE INTO schema_migrations (name) VALUES (?)").run(CONVERSATIONS_SCOPE_MIGRATION);
+  return added;
+}
 
 /**
  * Create the commitments ledger (table + (status, due_at) index) and record

@@ -128,6 +128,16 @@ function distanceToCosineSim(distance: number): number {
   return 1 - (distance * distance) / 2;
 }
 
+/** Per-conversation consolidation options. */
+export interface ConsolidateOptions {
+  /**
+   * Tenant scope inherited from the source conversation (ADR-010 / W2).
+   * Novel memories are stamped with it and dedup candidates are confined to
+   * it. Defaults to 'global' (Claude Code transcripts).
+   */
+  scope?: string;
+}
+
 /**
  * Process a batch of extracted facts through consolidation.
  * Facts are processed sequentially — order matters for within-batch dedup.
@@ -136,11 +146,12 @@ export async function consolidateFacts(
   db: Database.Database,
   facts: ExtractedFact[],
   conversationId: string,
+  options: ConsolidateOptions = {},
 ): Promise<DeduplicationResult[]> {
   const results: DeduplicationResult[] = [];
 
   for (const fact of facts) {
-    const result = await deduplicateFact(db, fact, conversationId);
+    const result = await deduplicateFact(db, fact, conversationId, options);
     results.push(result);
   }
 
@@ -162,14 +173,19 @@ export async function deduplicateFact(
   db: Database.Database,
   fact: ExtractedFact,
   conversationId: string,
+  options: ConsolidateOptions = {},
 ): Promise<DeduplicationResult> {
+  const scope = options.scope ?? "global";
+
   // 1. Embed the fact content
   const embedding = await embedDocument(fact.content);
 
-  // 2. Find nearest neighbors — within the global scope only: dream facts
-  // are written as 'global' (insertNovelMemory), and a tenant's hermes:*
-  // memory must never absorb, reinforce, or be deactivated by a global fact
-  const neighbors = findNearestMemories(db, embedding, 5, "global");
+  // 2. Find nearest neighbors — within the conversation's own scope only:
+  // a memory in one tenant scope must never absorb, reinforce, or be
+  // deactivated by a fact from another (ADR-010). Claude Code transcripts
+  // consolidate against 'global'; a hermes:<profile> conversation against
+  // that profile's memories.
+  const neighbors = findNearestMemories(db, embedding, 5, scope);
 
   // 3. Check each neighbor against thresholds
   for (const neighbor of neighbors) {
@@ -215,6 +231,7 @@ export async function deduplicateFact(
           fact,
           embedding,
           conversationId,
+          scope,
         );
       }
 
@@ -223,7 +240,7 @@ export async function deduplicateFact(
   }
 
   // 4. No match found — insert as novel memory
-  return insertNovelMemory(db, fact, embedding, conversationId);
+  return insertNovelMemory(db, fact, embedding, conversationId, scope);
 }
 
 // ─── Novel Memory Insertion ─────────────────────────────────────
@@ -236,6 +253,7 @@ function insertNovelMemory(
   fact: ExtractedFact,
   embedding: number[],
   conversationId: string,
+  scope: string,
 ): DeduplicationResult {
   const newId = crypto.randomUUID();
   const now = Math.floor(Date.now() / 1000);
@@ -252,6 +270,7 @@ function insertNovelMemory(
     sourceExchanges: fact.sourceExchangeIds,
     isActive: true,
     source: "dream",
+    scope,
     extractionBasis: fact.extractionBasis,
   };
 
@@ -277,6 +296,7 @@ async function resolveMemoryConflict(
   newFact: ExtractedFact,
   newEmbedding: number[],
   conversationId: string,
+  scope: string,
 ): Promise<DeduplicationResult> {
   const resolution = await callConflictResolution(existingMemory, newFact);
 
@@ -298,6 +318,7 @@ async function resolveMemoryConflict(
         sourceExchanges: newFact.sourceExchangeIds,
         isActive: true,
         source: "dream",
+        scope,
         extractionBasis: newFact.extractionBasis,
       };
 
@@ -337,6 +358,7 @@ async function resolveMemoryConflict(
         sourceExchanges: newFact.sourceExchangeIds,
         isActive: true,
         source: "dream",
+        scope,
         extractionBasis: newFact.extractionBasis,
       };
 
