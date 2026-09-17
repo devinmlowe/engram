@@ -1136,7 +1136,7 @@ program
 program
   .command("doctor")
   .description(
-    "Diagnose the runtime: node version, platform/arch, native modules, model cache",
+    "Diagnose the runtime: node version, platform/arch, native modules, model cache, data dir, MCP daemon",
   )
   .option("--json", "Print the report as JSON instead of text")
   .action(async (opts) => {

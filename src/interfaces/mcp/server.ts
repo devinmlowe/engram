@@ -20,6 +20,7 @@ import {
   type ToolResult,
 } from "./dispatch.js";
 import { createEngramHttpServer } from "./http.js";
+import { DEFAULT_MCP_PORT, parseMcpPort } from "./port.js";
 import { loadConfig } from "../../_core/config/index.js";
 import { escapeXml } from "../../_core/search/index.js";
 import { initEmbeddings } from "../../_core/embeddings/index.js";
@@ -1860,7 +1861,9 @@ async function main() {
   const args = process.argv.slice(2);
   const httpMode = args.includes("--http");
   const portIdx = args.indexOf("--port");
-  const port = portIdx >= 0 ? parseInt(args[portIdx + 1], 10) : 9907;
+  // --port wins; ENGRAM_MCP_PORT lets the supervisor launchers (scripts/run-mcp-daemon.sh,
+  // the service env file) pick the port without editing a rendered plist/unit (#28).
+  const port = portIdx >= 0 ? parseInt(args[portIdx + 1], 10) : parseMcpPort(process.env.ENGRAM_MCP_PORT, DEFAULT_MCP_PORT);
 
   if (httpMode) {
     console.error(`Engram MCP server running via HTTP on port ${port}`);

@@ -41,7 +41,7 @@ npm link             # puts `engram` on your PATH (or run `node dist/interfaces/
 Either way, continue with:
 
 ```bash
-engram doctor        # node version, platform/arch, native modules, model cache, ollama tier — all [ok]?
+engram doctor        # node version, platform/arch, native modules, model cache, ollama tier, data dir, mcp daemon — all [ok]?
 engram init          # creates engram.db in the data dir (default ~/.local/share/engram; see Configuration) and downloads the embedding model
 engram sync          # index conversations from ~/.claude/projects (optional)
 engram search "what did I decide about caching"
@@ -79,18 +79,38 @@ up automatically when you open the engram checkout itself in Claude Code.
 **Optional: background consolidation and visualization**
 
 ```bash
+./scripts/install-mcp-daemon.sh install  # MCP HTTP daemon on 127.0.0.1:9907 via launchd (what the Hermes plugin talks to)
 ./scripts/install-daemon.sh install      # nightly `engram dream` at 02:00 via launchd
 ./scripts/install-visualizer.sh install  # macOS launchd visualizer
 ```
 
-On Linux the same script detects `uname -s` and installs a systemd *user* timer instead
-(no root; `loginctl enable-linger $USER` if you want it to fire while logged out):
+On Linux the same scripts detect `uname -s` and install systemd *user* units instead
+(no root; `loginctl enable-linger $USER` if you want them to run while logged out):
 
 ```bash
+./scripts/install-mcp-daemon.sh install  # renders systemd/engram-mcp.service, enables it (Restart=always)
+./scripts/install-mcp-daemon.sh status   # unit state, GET /health, effective data dir, last log lines
 ./scripts/install-daemon.sh install      # renders systemd/engram-dream.{service,timer}, enables engram-dream.timer
 ./scripts/install-daemon.sh status       # systemctl --user list-timers + last log lines
 ./scripts/install-daemon.sh run-now      # systemctl --user start engram-dream.service
 ```
+
+**macOS/Linux: MCP HTTP daemon lifecycle**
+
+`scripts/install-mcp-daemon.sh` has the same six verbs as its Windows sibling
+(`install`, `uninstall`, `start`, `stop`, `restart`, `status`). It renders
+`launchd/com.engram.mcp.plist` (macOS) or `systemd/engram-mcp.service` (Linux)
+from the checkout it runs in, builds `dist/`, and waits for `GET /health` before
+reporting success. The service runs `scripts/run-mcp-daemon.sh`, which sources
+`~/.config/engram/env` (created on `install`, mode 600) so `ENGRAM_DATA_DIR`,
+`ENGRAM_MODEL_CACHE_DIR`, `ENGRAM_HTTP_WORKERS` and `ENGRAM_MCP_PORT` can change
+without re-rendering anything. The data directory the installer resolved is
+also rendered into the service, so the daemon and the CLI never open different
+databases; `status` prints it and warns when a second `engram.db` exists at the
+legacy path. `install` stops an unsupervised process holding the port and
+retires a hand-written `ai.hermes.engram-mcp` LaunchAgent from the 0.1.x docs
+(the file is renamed `*.retired-by-engram`, not deleted). `engram doctor`
+reports the same `/health` probe as its `mcp daemon` check.
 
 On Windows, use the built-in per-user Task Scheduler adapters:
 
@@ -182,7 +202,7 @@ All visualizer paths run the same compiled Node server on loopback at `http://12
 and write logs under the engram data directory; all dream paths run
 `node dist/interfaces/cli/index.js dream` and log to `<data dir>/logs/dream.log`.
 
-The installers render `launchd/*.plist` (macOS) or `systemd/engram-dream.service` (Linux)
+The installers render `launchd/*.plist` (macOS) or `systemd/engram-{mcp,dream}.service` (Linux)
 from the checkout you run them in, whatever its
 location, and use whichever `node` they find (fnm, Homebrew, nvm, or system). The dream daemon
 takes its API keys from `~/.config/engram/env` (mode 600, created by the installer with a
@@ -379,15 +399,19 @@ Then restart whatever supervises the running processes so they load the new
 
 | Platform | MCP HTTP daemon | Dream daemon | Visualizer |
 |---|---|---|---|
-| macOS (launchd) | `launchctl kickstart -k gui/$(id -u)/ai.hermes.engram-mcp` | `launchctl kickstart -k gui/$(id -u)/com.engram.dreamstate` | see scripts/install-visualizer.sh |
+| macOS (launchd) | `./scripts/install-mcp-daemon.sh restart` | `launchctl kickstart -k gui/$(id -u)/com.engram.dreamstate` | `./scripts/install-visualizer.sh restart` |
 | Windows (Task Scheduler) | `.\scripts\install-mcp-daemon.ps1 restart` | `.\scripts\install-daemon.ps1 restart` | `.\scripts\install-visualizer.ps1 restart` |
-| Linux (systemd) | `systemctl --user restart engram-mcp` | `systemctl --user restart engram-dream` | see docs |
+| Linux (systemd) | `./scripts/install-mcp-daemon.sh restart` (`systemctl --user restart engram-mcp`) | `systemctl --user restart engram-dream` | run under your own supervisor |
+
+Only restart services that are actually installed (`status` on each installer says); a
+hand-started `node dist/interfaces/mcp/server.js --http` is not supervised and must be
+stopped and started by hand, or replaced with `install-mcp-daemon.sh install`.
 
 Verify after restarting:
 
 ```bash
 engram health      # database, embedding model, MCP entry point
-engram doctor      # node version, platform/arch, native modules, model cache, ollama tier
+engram doctor      # node version, platform/arch, native modules, model cache, ollama tier, effective data dir (warns about a legacy split), mcp daemon /health
 engram search "smoke test"   # end-to-end recall through the new build
 ```
 
@@ -410,7 +434,7 @@ engram entities        # List/search entities
 engram relationships   # Show relationships for an entity
 engram stats           # Database statistics
 engram health          # System health check (database, model, Ollama, MCP entry point)
-engram doctor          # Runtime diagnostics: node, platform/arch, better-sqlite3, sqlite-vec, model cache, ollama tier (--json)
+engram doctor          # Runtime diagnostics: node, platform/arch, better-sqlite3, sqlite-vec, model cache, ollama tier, data dir, mcp daemon (--json)
 engram migrate --source <db>   # Import a legacy conversation-index SQLite DB (--source is required; no default path)
 engram validate --source <db>  # Validate migration integrity against that source DB
 engram backfill-event-ts  # Backfill event-time timestamps (temporal recall)

@@ -40,7 +40,10 @@ need() {
         exit 1
     fi
 }
-need launchctl "this installer targets macOS launchd; on Linux run 'engram dream' from cron or a systemd timer (see README)"
+# launchctl only exists on macOS; the Linux branch below uses systemctl instead.
+if [ "$(uname -s)" != "Linux" ]; then
+    need launchctl "this installer targets macOS launchd; on Linux it renders systemd user units instead (see README)"
+fi
 need npm "install Node.js 22+ (https://nodejs.org); it ships npm"
 
 # --- Linux (systemd user units) ---------------------------------------------

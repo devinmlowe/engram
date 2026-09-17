@@ -75,7 +75,10 @@ Start: `npx tsx src/interfaces/web/server.ts`
 (default port 9907) it serves Streamable HTTP at `/mcp` (one MCP session per
 client, routed by `Mcp-Session-Id`) plus a `/health` JSON endpoint, bound to
 127.0.0.1. A long-running deployment runs it this way via a launchd/systemd
-service (KeepAlive, `--http --port 9907`). On Windows, `scripts/install-mcp-daemon.ps1`
+service: `scripts/install-mcp-daemon.sh` renders `launchd/com.engram.mcp.plist`
+(macOS) or `systemd/engram-mcp.service` (Linux), both running
+`scripts/run-mcp-daemon.sh` (sources `~/.config/engram/env`, honours
+`ENGRAM_MCP_PORT`). On Windows, `scripts/install-mcp-daemon.ps1`
 registers the equivalent per-user Task Scheduler task (`\Engram\MCP`, at logon)
 whose action is `scripts/run-mcp-daemon.ps1`.
 

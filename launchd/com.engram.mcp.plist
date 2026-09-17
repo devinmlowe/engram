@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.engram.mcp</string>
+
+    <!-- The launcher sources ${XDG_CONFIG_HOME:-~/.config}/engram/env (mode 600)
+         for ENGRAM_DATA_DIR / ENGRAM_MODEL_CACHE_DIR / ENGRAM_HTTP_WORKERS /
+         ENGRAM_MCP_PORT, then execs NODE_BIN on the built MCP server in
+         Streamable-HTTP mode (127.0.0.1 only). No secrets belong in this file. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__ENGRAM_DIR__/scripts/run-mcp-daemon.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__ENGRAM_DIR__</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>NODE_ENV</key>
+        <string>production</string>
+        <key>NODE_BIN</key>
+        <string>__NODE_BIN__</string>
+        <!-- The data directory the installer was run with, so the daemon and the
+             CLI can never silently open different databases (issues #13, #44).
+             The env file above still overrides it. -->
+        <key>ENGRAM_DATA_DIR</key>
+        <string>__DATA_DIR__</string>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>__LOG_DIR__/mcp.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>__LOG_DIR__/mcp-error.log</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Persistent server: restart on any exit, including crashes. -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Recall latency is user-facing (the Hermes plugin waits up to a few
+         seconds per turn), so no Nice / Background process type here. -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>AbandonProcessGroup</key>
+    <false/>
+</dict>
+</plist>

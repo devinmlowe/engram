@@ -5,10 +5,11 @@ import { join, isAbsolute } from "node:path";
 // Repo root = cwd for vitest runs (vitest.config at root).
 const ROOT = process.cwd();
 
-const PLISTS = ["com.engram.visualizer.plist", "com.engram.dreamstate.plist"] as const;
+const PLISTS = ["com.engram.visualizer.plist", "com.engram.dreamstate.plist", "com.engram.mcp.plist"] as const;
 const INSTALLERS: Record<(typeof PLISTS)[number], string> = {
   "com.engram.visualizer.plist": "scripts/install-visualizer.sh",
   "com.engram.dreamstate.plist": "scripts/install-daemon.sh",
+  "com.engram.mcp.plist": "scripts/install-mcp-daemon.sh",
 };
 const PLACEHOLDER = /__[A-Z_]+__/g;
 
@@ -21,7 +22,8 @@ function render(xml: string): string {
   return xml
     .replaceAll("__ENGRAM_DIR__", ROOT)
     .replaceAll("__NODE_BIN__", process.execPath)
-    .replaceAll("__LOG_DIR__", join(ROOT, "tmp-logs"));
+    .replaceAll("__LOG_DIR__", join(ROOT, "tmp-logs"))
+    .replaceAll("__DATA_DIR__", join(ROOT, "tmp-data"));
 }
 
 describe("deployment path integrity (ADR-010 Phase 0)", () => {
@@ -312,5 +314,72 @@ describe("Windows MCP daemon supervision scripts (issue #12)", () => {
     const row = readme.split("\n").find((l) => l.startsWith("| MCP HTTP daemon keep-alive"));
     expect(row, "platform matrix row present").toBeTruthy();
     expect(row).toContain("install-mcp-daemon.ps1");
+  });
+});
+
+describe("MCP HTTP daemon supervision on macOS/Linux (issue #28)", () => {
+  const SERVICE = "engram-mcp.service";
+  const INSTALLER = "scripts/install-mcp-daemon.sh";
+  const LAUNCHER = "scripts/run-mcp-daemon.sh";
+  const plist = readFileSync(join(ROOT, "launchd", "com.engram.mcp.plist"), "utf-8");
+  const service = readFileSync(join(ROOT, "systemd", SERVICE), "utf-8");
+  const installer = readFileSync(join(ROOT, INSTALLER), "utf-8");
+  const launcher = readFileSync(join(ROOT, LAUNCHER), "utf-8");
+  const directive = (unit: string, key: string) => unit.match(new RegExp(`^${key}=(.*)$`, "m"))?.[1];
+
+  it("plist and unit both run the launcher, which sources the XDG env file and execs node in HTTP mode", () => {
+    expect(plistStrings(plist)).toContain("__ENGRAM_DIR__/scripts/run-mcp-daemon.sh");
+    expect(directive(service, "ExecStart")).toBe("/bin/bash __ENGRAM_DIR__/scripts/run-mcp-daemon.sh");
+    expect(launcher).toMatch(/\$\{XDG_CONFIG_HOME:-\$HOME\/\.config\}\/engram\/env/);
+    expect(launcher).toMatch(/exec "\$NODE_BIN" dist\/interfaces\/mcp\/server\.js --http --port "\$\{ENGRAM_MCP_PORT:-9907\}"/);
+    expect(existsSync(join(ROOT, "src/interfaces/mcp/server.ts"))).toBe(true);
+  });
+
+  it("both templates carry the installer's data dir so the daemon and CLI share one database (#13)", () => {
+    expect(plist).toMatch(/<key>ENGRAM_DATA_DIR<\/key>\s*<string>__DATA_DIR__<\/string>/);
+    expect(service).toMatch(/^Environment=ENGRAM_DATA_DIR=__DATA_DIR__$/m);
+    expect(directive(service, "EnvironmentFile"), "env file overrides the rendered value").toBe("-%E/engram/env");
+  });
+
+  it(`${SERVICE}: template carries no personal paths and every placeholder is substituted by the installer`, () => {
+    expect(service).not.toMatch(/\/Users\/[A-Za-z]/);
+    expect(service).not.toMatch(/\/home\/[A-Za-z]/);
+    expect(service).not.toMatch(/\/fnm\//);
+    expect(directive(service, "WorkingDirectory")).toBe("__ENGRAM_DIR__");
+    expect(directive(service, "Restart")).toBe("always");
+    expect(directive(service, "WantedBy")).toBe("default.target");
+    for (const tpl of [plist, service]) {
+      const used = new Set(tpl.match(PLACEHOLDER) ?? []);
+      expect(used.size).toBeGreaterThan(0);
+      for (const ph of used) expect(installer, `${INSTALLER} substitutes ${ph}`).toContain(`s|${ph}|`);
+      expect(render(tpl).match(PLACEHOLDER)).toBeNull();
+    }
+    expect(plist, "no API keys in the plist (#10)").not.toMatch(/API_KEY/);
+    expect(service).not.toMatch(/API_KEY=/);
+  });
+
+  it(`${INSTALLER}: six verbs mirroring the Windows installer, launchd on macOS, systemd user unit on Linux, /health contract`, () => {
+    for (const verb of ["install", "uninstall", "start", "stop", "restart", "status"]) {
+      expect(installer, `verb ${verb}`).toMatch(new RegExp(`^\\s+${verb}\\)`, "m"));
+    }
+    expect(installer).toContain('LABEL="com.engram.mcp"');
+    expect(installer).toContain('SERVICE_NAME="engram-mcp.service"');
+    expect(installer).toContain("systemctl --user enable --now");
+    expect(installer).toContain("/health");
+    expect(installer, "resolves the data dir like the CLI").toContain("${ENGRAM_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/engram}");
+    expect(installer, "retires the hand-written 0.1.x agent on the same port").toContain("ai.hermes.engram-mcp");
+    expect(installer).not.toMatch(/\/Users\/[A-Za-z]/);
+    expect(installer, "creates the env file with mode 600").toMatch(/chmod 600 "\$ENV_FILE"/);
+  });
+
+  it("install-daemon.sh only requires launchctl on macOS (its Linux branch was unreachable before)", () => {
+    const dream = readFileSync(join(ROOT, "scripts/install-daemon.sh"), "utf-8");
+    expect(dream).toMatch(/if \[ "\$\(uname -s\)" != "Linux" \]; then\s*\n\s*need launchctl/);
+  });
+
+  it("README documents the macOS/Linux MCP daemon installer", () => {
+    const readme = readFileSync(join(ROOT, "README.md"), "utf-8");
+    expect(readme).toContain("install-mcp-daemon.sh install");
+    expect(readme).toContain("install-mcp-daemon.sh restart");
   });
 });
