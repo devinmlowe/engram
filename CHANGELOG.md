@@ -5,6 +5,11 @@ All notable changes to engram are documented here. The format follows
 [Semantic Versioning](https://semver.org/) while the project is pre-1.0
 (minor bumps may change behaviour, as noted below).
 
+## [Unreleased]
+
+### Fixed
+- Hermes plugin circuit breaker is truly half-open: after the cooldown exactly one probe call is allowed, and a failing probe re-opens the breaker with the failure count intact, so parked turns are no longer posted one by one and dropped while the daemon is still down. A queued turn that fails on transport is now kept and retried; only a turn the live server rejects (`isError` / JSON-RPC error, new `EngramMcpRejected`) is dropped (#41).
+
 ## [0.3.0] - 2026-09-17
 
 ### Added
@@ -82,5 +87,6 @@ All notable changes to engram are documented here. The format follows
 
 - Initial release: phases 1–7 — episodic archive and search, semantic extraction and consolidation, knowledge graph and reflection, dream-state pipeline, RLM recall sessions, file-analysis tools, commitments ledger, MCP stdio/HTTP server, CLI and web visualizer.
 
+[Unreleased]: https://github.com/devinmlowe/engram/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/devinmlowe/engram/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/devinmlowe/engram/releases/tag/v0.2.0

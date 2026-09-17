@@ -32,8 +32,11 @@ network. ``turn_index`` is a per-session in-memory counter seeded at 0 on
 process start; the server upserts on (session_id, turn_index), so a restart
 re-ingesting index 0.. of a resumed session updates rows in place rather
 than duplicating them. ``turn_author`` rides along as ``author``. While the
-circuit breaker is open the drain thread parks (queued items stay put and
-post once the cooldown lapses) rather than dropping them; only overflow of
+circuit breaker is open the drain thread parks (queued items stay put; when
+the cooldown lapses exactly one probe call is allowed and a failed probe
+re-opens the breaker with the item still parked) rather than dropping them; a
+transport failure never drops a queued item, only a live server rejecting it
+(JSON-RPC error / ``isError``) does; only overflow of
 the bounded queue loses turns, and that count is reported by
 ``unavailable_reason()``. ``on_session_end`` remains a no-op.
 
@@ -169,6 +172,11 @@ MCP_PROTOCOL_VERSION = "2025-03-26"
 # _BREAKER_COOLDOWN_SECS so a down server doesn't add latency to every turn.
 _BREAKER_THRESHOLD = 5
 _BREAKER_COOLDOWN_SECS = 120
+# Half-open (#41): once the cooldown lapses exactly one call may probe the
+# server. A probe that never reports back (every probe site is try/except
+# wrapped, so this is belt-and-braces) counts as failed after this long so the
+# breaker cannot wedge open.
+_BREAKER_PROBE_TTL_SECS = _TOOL_CALL_TIMEOUT_SECS + 5.0
 
 MEMORY_TYPES = ("fact", "preference", "decision", "pattern", "solution", "convention")
 
@@ -446,6 +454,12 @@ class EngramMcpError(RuntimeError):
     """Raised for transport, protocol, or tool-level failures."""
 
 
+class EngramMcpRejected(EngramMcpError):
+    """The server answered and rejected the call (JSON-RPC error or an
+    ``isError`` result). The request itself is bad, so retrying it is
+    pointless; contrast a transport failure, which is worth retrying."""
+
+
 def _is_timeout(exc: BaseException) -> bool:
     """True when *exc* (or what it wraps) is a socket/urlopen timeout."""
     seen = 0
@@ -613,13 +627,13 @@ class EngramMcpClient:
         if "error" in msg:
             err = msg["error"]
             text = err.get("message", str(err)) if isinstance(err, dict) else str(err)
-            raise EngramMcpError(f"{name}: {text}")
+            raise EngramMcpRejected(f"{name}: {text}")
         result = msg.get("result") or {}
         parts = [c.get("text", "") for c in result.get("content", [])
                  if isinstance(c, dict) and c.get("type") == "text"]
         text = "\n".join(p for p in parts if p)
         if result.get("isError"):
-            raise EngramMcpError(f"{name}: {text or 'tool reported an error'}")
+            raise EngramMcpRejected(f"{name}: {text or 'tool reported an error'}")
         return text
 
     def close(self) -> None:
@@ -652,6 +666,7 @@ class EngramMemoryProvider(MemoryProvider):
         # Circuit breaker state
         self._consecutive_failures = 0
         self._breaker_open_until = 0.0
+        self._breaker_probe_until = 0.0   # > 0 while the single half-open probe is in flight
         self._breaker_lock = threading.Lock()
         # sync_turn state: profile scope, session fallback, per-session turn
         # counters, bounded queue and the single drain thread.
@@ -690,26 +705,61 @@ class EngramMemoryProvider(MemoryProvider):
 
     # -- circuit breaker ------------------------------------------------
 
+    # States: CLOSED (failures < threshold) -> OPEN (cooldown) -> HALF-OPEN
+    # (cooldown lapsed: exactly one probe call allowed) -> CLOSED on probe
+    # success / OPEN again on probe failure, without resetting the failure
+    # count (#41). Sites that are about to make a network call ask
+    # ``_breaker_permits_call``; pure status checks use ``_is_breaker_open``.
+
+    def _breaker_is_open_locked(self, now: float) -> bool:
+        if self._consecutive_failures < _BREAKER_THRESHOLD:
+            return False
+        if self._breaker_probe_until > 0.0:
+            if now < self._breaker_probe_until:
+                return True                       # probe in flight; everyone else waits
+            # The probe never reported back: treat it as failed and re-open.
+            self._breaker_probe_until = 0.0
+            self._breaker_open_until = now + _BREAKER_COOLDOWN_SECS
+            return True
+        return now < self._breaker_open_until
+
     def _is_breaker_open(self) -> bool:
+        """Status only: never grants the half-open probe."""
+        with self._breaker_lock:
+            return self._breaker_is_open_locked(time.monotonic())
+
+    def _breaker_permits_call(self) -> bool:
+        """True when the caller may make a network call now. After the cooldown
+        the first caller becomes the half-open probe and must report back via
+        ``_record_success`` / ``_record_failure``."""
+        now = time.monotonic()
         with self._breaker_lock:
             if self._consecutive_failures < _BREAKER_THRESHOLD:
+                return True
+            if self._breaker_is_open_locked(now):
                 return False
-            if time.monotonic() >= self._breaker_open_until:
-                self._consecutive_failures = 0
-                return False
+            self._breaker_probe_until = now + _BREAKER_PROBE_TTL_SECS
             return True
 
     def _record_success(self) -> None:
         with self._breaker_lock:
             self._consecutive_failures = 0
+            self._breaker_probe_until = 0.0
         self._unavailable_reason = ""
 
     def _record_failure(self) -> None:
+        reopened = tripped = False
         with self._breaker_lock:
-            self._consecutive_failures += 1
-            tripped = self._consecutive_failures >= _BREAKER_THRESHOLD
-            if tripped:
+            if self._breaker_probe_until > 0.0:
+                # Half-open probe failed: straight back to OPEN, count intact.
+                self._breaker_probe_until = 0.0
                 self._breaker_open_until = time.monotonic() + _BREAKER_COOLDOWN_SECS
+                reopened = True
+            else:
+                self._consecutive_failures += 1
+                tripped = self._consecutive_failures >= _BREAKER_THRESHOLD
+                if tripped:
+                    self._breaker_open_until = time.monotonic() + _BREAKER_COOLDOWN_SECS
         if tripped:
             logger.warning(
                 "engram circuit breaker tripped after %d consecutive failures; "
@@ -717,6 +767,9 @@ class EngramMemoryProvider(MemoryProvider):
                 "and %s/health.", _BREAKER_THRESHOLD, _BREAKER_COOLDOWN_SECS,
                 self._cfg()["base_url"],
             )
+        elif reopened:
+            logger.info("engram circuit breaker probe failed; staying open for another %ds",
+                        _BREAKER_COOLDOWN_SECS)
 
     # -- availability ---------------------------------------------------
 
@@ -817,7 +870,9 @@ class EngramMemoryProvider(MemoryProvider):
         not silent: it is logged (rate-limited) and shown by recall_status()."""
         self._last_recall_count = None
         self._last_recall_timed_out = False
-        if not self._prefetch_enabled or not query or not query.strip() or self._is_breaker_open():
+        if not self._prefetch_enabled or not query or not query.strip():
+            return ""
+        if not self._breaker_permits_call():
             return ""
         cfg = self._cfg()
         try:
@@ -898,7 +953,7 @@ class EngramMemoryProvider(MemoryProvider):
                 return tool_error("importance must be between 0 and 1")
             arguments["importance"] = importance
 
-        if self._is_breaker_open():
+        if not self._breaker_permits_call():
             return tool_error(
                 "engram temporarily unavailable (multiple consecutive failures). "
                 "Will retry automatically."
@@ -993,37 +1048,59 @@ class EngramMemoryProvider(MemoryProvider):
         self._sync_thread.start()
 
     def _drain_loop(self) -> None:
+        held: Optional[Dict[str, Any]] = None   # dequeued item whose post failed on transport
         while not self._sync_stop.is_set():
-            if self._is_breaker_open():
-                # Park: leave queued items in place and re-check after the poll
-                # interval; the breaker's cooldown decides when posting resumes.
+            if held is None:
+                if self._is_breaker_open():
+                    # Park: leave queued items in place and re-check after the poll
+                    # interval; the breaker's cooldown decides when posting resumes.
+                    self._sync_stop.wait(_SYNC_DRAIN_POLL_SECS)
+                    continue
+                try:
+                    held = self._sync_queue.get(timeout=_SYNC_DRAIN_POLL_SECS)
+                except queue.Empty:
+                    continue
+            if not self._breaker_permits_call():
+                # Open (or another thread holds the half-open probe): keep the
+                # item and try again after the poll interval (#41).
                 self._sync_stop.wait(_SYNC_DRAIN_POLL_SECS)
                 continue
+            done = True
             try:
-                item = self._sync_queue.get(timeout=_SYNC_DRAIN_POLL_SECS)
-            except queue.Empty:
-                continue
-            try:
-                self._post_item(item)
+                done = self._post_item(held)
             except Exception as exc:  # never let the worker die
                 logger.debug("engram sync drain: unexpected error: %s", exc)
-            finally:
-                with self._sync_cv:
-                    self._sync_pending -= 1
-                    self._sync_cv.notify_all()
+            if not done:
+                # Transport failure: the item is still worth posting. Retry after
+                # the poll interval; repeated failures trip the breaker and park it.
+                self._sync_stop.wait(_SYNC_DRAIN_POLL_SECS)
+                continue
+            held = None
+            with self._sync_cv:
+                self._sync_pending -= 1
+                self._sync_cv.notify_all()
 
-    def _post_item(self, item: Dict[str, Any]) -> None:
+    def _post_item(self, item: Dict[str, Any]) -> bool:
         """Post one queued item (turn -> ingest_turn, write -> remember).
-        ``_drain_loop`` never dequeues while the breaker is open; failures
-        count toward the breaker exactly like recall and the save tool."""
+        Returns True when the drain loop is done with the item: it posted, or
+        a live server rejected it (``EngramMcpRejected``; retrying cannot
+        help). Returns False on a transport failure so the caller keeps the
+        item (#41). Failures of either kind count toward the breaker exactly
+        like recall and the save tool."""
         tool = _TOOL_BY_KIND.get(item.get("kind"), "ingest_turn")
         args = item["args"]
         try:
             self._get_client().call_tool(tool, args, _TOOL_CALL_TIMEOUT_SECS)
             self._record_success()
+            return True
+        except EngramMcpRejected as exc:
+            self._record_failure()
+            logger.debug("engram %s rejected by the server; dropping the item: %s", tool, exc)
+            return True
         except Exception as exc:
             self._record_failure()
-            logger.debug("engram %s failed: %s", tool, exc)
+            logger.debug("engram %s failed (transport); keeping the item: %s", tool, exc)
+            return False
 
     # -- built-in memory mirror (on_memory_write) ---------------------------
 

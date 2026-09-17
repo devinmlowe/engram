@@ -29,7 +29,8 @@ share one config file; pick with `"transport"` in `$HERMES_HOME/engram.json`.
 | `backup_paths()` | `~/.local/share/engram/engram.db` |
 | `shutdown()` | Drains queued turns/writes for up to 2 s, stops the drain thread, closes the MCP session |
 
-A five-failure circuit breaker (120 s cooldown) mirrors the bundled mem0
+A five-failure circuit breaker (120 s cooldown, then half-open: exactly one
+probe call, which re-opens the breaker if it fails) mirrors the bundled mem0
 provider so a down server never adds latency to every turn. The tool is named
 `engram_memory_save` (not `engram_*`-prefixed like the MCP tools) so it cannot
 collide when the MCP server is also configured.
@@ -65,7 +66,7 @@ at 0; the server upserts on `(session_id, turn_index)`, so a restarted gateway
 re-ingesting a resumed session updates rows in place instead of duplicating
 them. Turns ride a bounded in-memory queue (16 items, drop-oldest — a dropped
 turn leaves a `turn_index` gap the server tolerates) drained by one background
-thread; while the breaker is open the drain thread parks (queued items stay put and post once the cooldown lapses — only queue overflow drops them, and `unavailable_reason()` reports how many), and `shutdown()` flushes what it can for up to 2 s.
+thread; a turn that fails on transport is kept and retried (the first failures retry at the poll interval, the fifth trips the breaker), while the breaker is open the drain thread parks (queued items stay put; after the cooldown one probe post is tried and a failing probe re-opens the breaker with the turn still parked — only queue overflow drops turns, and `unavailable_reason()` reports how many), and only a turn the live server rejects (`isError`) is dropped. `shutdown()` flushes what it can for up to 2 s.
 Ingested turns are what the nightly dream pipeline extracts memories from,
 inheriting the profile scope.
 
@@ -172,7 +173,7 @@ Rollback: `hermes memory off` (or delete the plugin directory).
 |---------|-----------------------|
 | `hermes memory status` shows engram installed but `unavailable_reason()` says "unreachable at …/health" | The daemon is down. The plugin still activates (`is_available()` is config-only) and degrades: recall returns nothing, writes queue (and drop on overflow). Check the `ai.hermes.engram-mcp` LaunchAgent / `curl {base_url}/health`. A later successful call clears the reason. |
 | Recall indicator shows ⚠️ `Engram (recall timed out after 4s; no memory this turn)` and the log has `engram recall timed out after 4.0s` | The first recall of a session is cold, or the daemon is loaded. The warm-up on `initialize()` normally hides the cold start; if misses persist, raise `timeout_secs` (≤ 8) or check the daemon's load. The warning repeats at most every 10 minutes; the indicator shows every miss. |
-| Log: `engram circuit breaker tripped after 5 consecutive failures; pausing calls for 120s` | Five failed calls in a row (any tool). Recall returns nothing and queued turns/writes wait in the bounded queue until the cooldown ends, then post; only queue overflow (16 items) drops them, counted in `unavailable_reason()`. |
+| Log: `engram circuit breaker tripped after 5 consecutive failures; pausing calls for 120s` | Five failed calls in a row (any tool). Recall returns nothing and queued turns/writes wait in the bounded queue until the cooldown ends; then one probe call is allowed: on success everything posts, on failure the log says `engram circuit breaker probe failed; staying open for another 120s` and the queue keeps waiting. Only queue overflow (16 items) drops them, counted in `unavailable_reason()`. |
 | Memories land under `hermes:default` instead of the profile | The gateway did not pass `agent_identity` and `hermes_home` was not `<root>/profiles/<name>`. Run the profile's own gateway (its `HERMES_HOME`) or check the `agent_identity` it reports. |
 | Turns are not ingested | Non-primary context (`subagent`/`cron`/`flush` never ingest), `sync_turns: false`, an empty session id, or the breaker is open. Debug-level log lines say which. |
 | Two engram tool sets appear to the model | The MCP server is also wired as `mcp_servers.engram`. That is fine: this plugin's only tool is `engram_memory_save`, chosen not to collide. |

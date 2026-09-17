@@ -97,7 +97,8 @@ class FakeServer:
         self.recall_text = recall_text
         self.remember_text = remember_text
         self.ingest_text = json.dumps({"conversationId": "c1", "created": True})
-        self.fail = fail or {}          # {"health"|"initialize"|"recall"|"remember"|"ingest_turn": Exception|int}
+        self.fail = fail or {}          # {"health"|"initialize"|"recall"|"remember"|"ingest_turn": Exception|int|str}
+                                        # str = the server answers with an isError result carrying that text
         self.calls = []                 # (method, path, rpc_method, session, args)
         self.threads = []               # thread name per recorded call
         self.gate = None                # threading.Event: ingest_turn blocks until set
@@ -146,6 +147,11 @@ class FakeServer:
                 self.ingest_started.set()
                 if self.gate is not None:
                     assert self.gate.wait(timeout=5), "ingest gate never released"
+            if isinstance(self.fail.get(name), str):
+                return _Resp(200, _sse({"jsonrpc": "2.0", "id": rpc["id"],
+                                        "result": {"content": [{"type": "text", "text": self.fail[name]}],
+                                                   "isError": True}}),
+                             {"content-type": "text/event-stream"})
             _maybe_fail(name)
             text = {"recall": self.recall_text, "ingest_turn": self.ingest_text}.get(name, self.remember_text)
             return _Resp(200, _sse({"jsonrpc": "2.0", "id": rpc["id"],
@@ -672,13 +678,91 @@ def test_breaker_open_overflow_drops_are_counted_in_unavailable_reason(provider,
     assert server.ingest_calls() == []
 
 
-def test_ingest_failures_count_toward_breaker(provider, server, plugin):
+def test_ingest_failures_count_toward_breaker(provider, server, plugin, monkeypatch):
+    monkeypatch.setattr(plugin, "_SYNC_DRAIN_POLL_SECS", 0.01)
     server.fail["ingest_turn"] = urllib.error.URLError("down")
-    for _ in range(plugin._BREAKER_THRESHOLD):
-        provider.sync_turn("u", "a", session_id="s")
+    for i in range(plugin._BREAKER_THRESHOLD):
+        provider.sync_turn(f"u{i}", "a", session_id="s")
     provider.shutdown()
     assert provider._is_breaker_open()
-    assert len(server.ingest_calls()) == plugin._BREAKER_THRESHOLD
+    calls = server.ingest_calls()
+    assert len(calls) == plugin._BREAKER_THRESHOLD
+    # A transport failure keeps the item: every attempt was the same head turn (#41)
+    assert {c["turn_index"] for c in calls} == {0}
+    assert provider._sync_queue.qsize() == plugin._BREAKER_THRESHOLD - 1   # the rest are parked
+    assert provider._sync_pending == plugin._BREAKER_THRESHOLD              # the head is held, not dropped
+
+
+def test_half_open_probe_failure_keeps_the_parked_turn_and_reopens(provider, server, plugin, monkeypatch):
+    """#41: after the cooldown exactly one probe posts; if the daemon is still
+    down the breaker re-opens at once with the failure count intact and the
+    parked turn is still queued. Once the daemon is back, the turn posts."""
+    monkeypatch.setattr(plugin, "_BREAKER_COOLDOWN_SECS", 0.05)
+    server.fail["recall"] = urllib.error.URLError("down")
+    for _ in range(plugin._BREAKER_THRESHOLD):
+        provider.prefetch("q")
+    assert provider._is_breaker_open()
+    monkeypatch.setattr(plugin, "_BREAKER_COOLDOWN_SECS", 60)    # the re-open must use a long cooldown
+    server.fail["ingest_turn"] = urllib.error.URLError("still down")
+    provider.sync_turn("parked", "a", session_id="s")
+    _wait_for(lambda: server.ingest_calls(), timeout=5.0)
+    time.sleep(0.6)                                                # enough for several more polls
+    assert len(server.ingest_calls()) == 1                         # exactly one probe per cooldown
+    assert provider._is_breaker_open()                             # re-opened, not half-open
+    assert provider._consecutive_failures == plugin._BREAKER_THRESHOLD   # count not reset
+    assert provider._sync_pending == 1                             # the turn is still parked
+    n = len(server.calls)
+    assert provider.prefetch("q") == "" and len(server.calls) == n  # nobody else probes while open
+    # Daemon comes back and the cooldown lapses: the parked turn posts and the breaker closes.
+    del server.fail["ingest_turn"]
+    del server.fail["recall"]
+    with provider._breaker_lock:
+        provider._breaker_open_until = 0.0
+    _wait_for(lambda: len(server.ingest_calls()) == 2, timeout=5.0)
+    _wait_for(lambda: provider._sync_pending == 0, timeout=5.0)
+    assert [c["turn_index"] for c in server.ingest_calls()] == [0, 0]
+    assert not provider._is_breaker_open() and provider._consecutive_failures == 0
+    provider.shutdown()
+    assert len(server.ingest_calls()) == 2                         # nothing posted twice after success
+
+
+def test_half_open_allows_one_probe_at_a_time(provider, server, plugin, monkeypatch):
+    server.fail["recall"] = urllib.error.URLError("down")
+    for _ in range(plugin._BREAKER_THRESHOLD):
+        provider.prefetch("q")
+    with provider._breaker_lock:
+        provider._breaker_open_until = 0.0                         # cooldown lapsed
+    assert provider._breaker_permits_call()                        # first caller is the probe
+    assert not provider._breaker_permits_call()                    # second caller waits
+    assert provider._is_breaker_open()                             # status: still open
+    provider._record_success()
+    assert provider._breaker_permits_call() and not provider._is_breaker_open()
+
+
+def test_stale_half_open_probe_counts_as_failed(provider, server, plugin, monkeypatch):
+    monkeypatch.setattr(plugin, "_BREAKER_PROBE_TTL_SECS", 0.01)
+    server.fail["recall"] = urllib.error.URLError("down")
+    for _ in range(plugin._BREAKER_THRESHOLD):
+        provider.prefetch("q")
+    with provider._breaker_lock:
+        provider._breaker_open_until = 0.0
+    assert provider._breaker_permits_call()                        # probe granted and never reported
+    time.sleep(0.02)
+    assert provider._is_breaker_open()                             # expired probe => re-opened
+    assert not provider._breaker_permits_call()
+    assert provider._breaker_open_until > time.monotonic()
+
+
+def test_rejected_item_is_dropped_and_does_not_block_the_queue(provider, server, plugin, caplog):
+    server.fail["ingest_turn"] = "turn rejected: user_text too long"
+    provider.sync_turn("bad", "a", session_id="s")
+    _wait_for(lambda: server.ingest_calls(), timeout=5.0)
+    _wait_for(lambda: provider._sync_pending == 0, timeout=5.0)
+    del server.fail["ingest_turn"]
+    provider.sync_turn("good", "a", session_id="s")
+    _wait_for(lambda: len(server.ingest_calls()) == 2, timeout=5.0)
+    assert [c["user_text"] for c in server.ingest_calls()] == ["bad", "good"]   # no retry of the bad one
+    assert provider._consecutive_failures == 0                     # the good post reset the count
 
 
 def test_sync_turns_disabled_is_noop(plugin, server, tmp_path):
