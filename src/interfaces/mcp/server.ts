@@ -182,6 +182,7 @@ const RecallInputSchema = z.object({
   sources: z
     .array(z.enum(["episodic", "semantic", "graph"]))
     .optional(),
+  reinforce: z.boolean().optional(),
 });
 
 const RememberInputSchema = z.object({
@@ -252,11 +253,13 @@ const RecallSessionInputSchema = z.object({
   sources: z
     .array(z.enum(["episodic", "semantic", "graph"]))
     .optional(),
+  reinforce: z.boolean().optional(),
 });
 
 const RecallDrillInputSchema = z.object({
   session_id: z.string().uuid("Invalid session ID"),
   result_index: z.number().int().min(0, "Result index must be >= 0"),
+  reinforce: z.boolean().optional(),
 });
 
 const ExploreSelectiveInputSchema = z.object({
@@ -405,6 +408,14 @@ function registerToolHandlers(srv: Server, callTool: ToolHandler = handleToolCal
             description:
               "Explicit scopes to read from (e.g. [\"global\", \"hermes:career\"]). " +
               "Overrides ENGRAM_READ_SCOPES for this call only.",
+          },
+          reinforce: {
+            type: "boolean",
+            default: true,
+            description:
+              "Reinforce the semantic memories this call returns (FSRS: bumps " +
+              "access_count/last_accessed and grows stability). Set false for " +
+              "read-only or diagnostic callers that must not mutate the store.",
           },
         },
         required: ["query"],
@@ -726,6 +737,14 @@ function registerToolHandlers(srv: Server, callTool: ToolHandler = handleToolCal
               "Explicit scopes to read from (e.g. [\"global\", \"hermes:career\"]). " +
               "Overrides ENGRAM_READ_SCOPES for this call only.",
           },
+          reinforce: {
+            type: "boolean",
+            default: true,
+            description:
+              "Reinforce the semantic memories this call returns (FSRS: bumps " +
+              "access_count/last_accessed and grows stability). Set false for " +
+              "read-only or diagnostic callers that must not mutate the store.",
+          },
         },
         required: ["query"],
         additionalProperties: false,
@@ -757,6 +776,14 @@ function registerToolHandlers(srv: Server, callTool: ToolHandler = handleToolCal
             type: "number",
             minimum: 0,
             description: "0-based index into session results",
+          },
+          reinforce: {
+            type: "boolean",
+            default: true,
+            description:
+              "Reinforce the semantic memories this call returns (FSRS: bumps " +
+              "access_count/last_accessed and grows stability). Set false for " +
+              "read-only or diagnostic callers that must not mutate the store.",
           },
         },
         required: ["session_id", "result_index"],
@@ -1162,6 +1189,7 @@ export async function handleToolCall(name: string, args: unknown): Promise<ToolR
         dateBasis: params.dateBasis,
         depth: params.depth ?? "shallow",
         scopes: scoping.readScopes,
+        reinforce: params.reinforce,
       }, config);
       const xml = formatRecallXml(response);
 
@@ -1343,6 +1371,7 @@ export async function handleToolCall(name: string, args: unknown): Promise<ToolR
           budget: params.budget,
           sources: params.sources as SearchSource[] | undefined,
           scopes: resolveCallScoping(process.env, params).readScopes,
+          reinforce: params.reinforce,
         },
         config,
       );
@@ -1369,6 +1398,7 @@ export async function handleToolCall(name: string, args: unknown): Promise<ToolR
         getDb(),
         params.session_id,
         params.result_index,
+        { reinforce: params.reinforce },
       );
 
       const lines: string[] = [];

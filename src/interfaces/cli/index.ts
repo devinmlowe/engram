@@ -69,6 +69,10 @@ program
   )
   .option("--budget <tokens>", "Token budget for results", "1500")
   .option("--json", "Print the raw RecallResponse as JSON (ids, metadata, dateFilter)")
+  .option(
+    "--no-reinforce",
+    "Do not reinforce returned memories (skip FSRS access_count/stability growth)",
+  )
   .action(async (query, opts) => {
     const { unifiedSearch, formatRecallXml } = await import(
       "../shared/search.js"
@@ -94,6 +98,7 @@ program
         before: opts.before,
         dateHint: opts.dateHint,
         dateBasis: opts.dateBasis as "filed" | "event",
+        reinforce: opts.reinforce !== false,
       }, config);
 
       if (opts.json) {
