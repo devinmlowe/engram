@@ -28,7 +28,10 @@ def register_cli(subparser):
 def _make_provider():
     from provider import EngramMemoryProvider
 
-    hermes_home = os.environ.get("HERMES_HOME", os.path.expanduser("~/.hermes"))
+    # expanduser on the env value too: fish does not expand `~` inside
+    # `VAR=~/...`, and a literal "~/.hermes" would otherwise resolve relative
+    # to cwd (#33).
+    hermes_home = os.path.expanduser(os.environ.get("HERMES_HOME") or "~/.hermes")
     provider = EngramMemoryProvider()
     provider.initialize(
         "cli", hermes_home=hermes_home, platform="cli",

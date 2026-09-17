@@ -114,3 +114,50 @@ def test_cli_recall_prints_results(tmp_path, capsys, monkeypatch):
     assert rc == 0
     out = capsys.readouterr().out
     assert "kubernetes" in out
+
+
+# ---------------------------------------------------------------------------
+# #33: a literal "~" in HERMES_HOME (fish does not expand `~` inside
+# `VAR=~/...`) must expand against $HOME, never resolve relative to cwd.
+# ---------------------------------------------------------------------------
+
+def _no_tilde_entry_in_cwd():
+    return not any(name.startswith("~") for name in os.listdir(os.getcwd()))
+
+
+def test_cli_expands_literal_tilde_in_hermes_home(tmp_path, monkeypatch):
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setenv("HERMES_HOME", "~/.hermes-test")
+    monkeypatch.chdir(tmp_path)
+
+    cli = load_by_path("_engram_cli_tilde", "cli.py")
+    provider = cli._make_provider()
+
+    resolved = provider._resolve_hermes_home()
+    assert resolved == str(fake_home / ".hermes-test")
+    assert os.path.isabs(resolved)
+    assert _no_tilde_entry_in_cwd()
+
+
+def test_provider_expands_literal_tilde_in_hermes_home(tmp_path, monkeypatch):
+    from provider import EngramMemoryProvider
+
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.chdir(tmp_path)
+    expected = str(fake_home / ".hermes-test")
+
+    # env fallback (no initialize)
+    monkeypatch.setenv("HERMES_HOME", "~/.hermes-test")
+    assert EngramMemoryProvider()._resolve_hermes_home() == expected
+
+    # initialize()'s hermes_home kwarg (Hermes passes through whatever it got)
+    monkeypatch.delenv("HERMES_HOME")
+    provider = EngramMemoryProvider()
+    provider.initialize("s", hermes_home="~/.hermes-test", platform="cli")
+    assert provider._resolve_hermes_home() == expected
+    assert all(os.path.isabs(p) for p in provider._config_paths())
+    assert _no_tilde_entry_in_cwd()

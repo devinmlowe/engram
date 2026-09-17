@@ -221,7 +221,7 @@ SAVE_SCHEMA: Dict[str, Any] = {
 
 def _config_path(hermes_home: Optional[str] = None) -> Path:
     if hermes_home:
-        return Path(hermes_home) / CONFIG_FILENAME
+        return Path(hermes_home).expanduser() / CONFIG_FILENAME
     from hermes_constants import get_hermes_home
     return get_hermes_home() / CONFIG_FILENAME
 

@@ -50,8 +50,10 @@ def load_hermes_memory_provider_abc() -> type:
     except ImportError:
         import importlib.util
 
-        agent_dir = os.environ.get(
-            "HERMES_AGENT_DIR", os.path.expanduser("~/.hermes/hermes-agent")
+        # expanduser on the env value too: a literal `~` (fish `VAR=~/...`)
+        # must not resolve relative to cwd (#33)
+        agent_dir = os.path.expanduser(
+            os.environ.get("HERMES_AGENT_DIR") or "~/.hermes/hermes-agent"
         )
         path = os.path.join(agent_dir, "agent", "memory_provider.py")
         spec = importlib.util.spec_from_file_location("_hermes_memory_provider", path)
@@ -207,11 +209,13 @@ class EngramMemoryProvider(MemoryProviderBase):  # type: ignore[misc,valid-type]
         ]
 
     def _resolve_hermes_home(self) -> str:
-        """initialize()'s hermes_home, else the env Hermes itself uses."""
-        return (
-            self._hermes_home
-            or os.environ.get("HERMES_HOME")
-            or os.path.expanduser("~/.hermes")
+        """initialize()'s hermes_home, else the env Hermes itself uses.
+
+        Always expanded: fish does not expand `~` inside `VAR=~/...`, and a
+        literal "~/.hermes" would otherwise resolve relative to cwd (#33).
+        """
+        return os.path.expanduser(
+            self._hermes_home or os.environ.get("HERMES_HOME") or "~/.hermes"
         )
 
     def _load_config(self) -> Dict[str, Any]:

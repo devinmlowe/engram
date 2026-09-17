@@ -109,6 +109,8 @@ npm run dream        # Run dream consolidation
 npm run lint         # Type-check without emit
 ```
 
+tmux panes on this machine run fish, which does not expand `~` inside `VAR=~/...`; commands sent to panes must use `$HOME`, never `~`, inside `VAR=…` assignments (e.g. `env HERMES_HOME=$HOME/.hermes hermes …`). See #33.
+
 ## References
 
 - `SPEC.md` — Full specification with requirements and interface contract

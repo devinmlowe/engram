@@ -39,3 +39,29 @@ def test_fallback_loader_registers_module_before_exec():
     )
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout.strip() == "MemoryProvider"
+
+
+def test_fallback_loader_expands_literal_tilde_in_hermes_agent_dir(tmp_path):
+    """#33: HERMES_AGENT_DIR="~/..." (fish does not expand `~` inside
+    `VAR=~/...`) must expand against $HOME, not resolve relative to cwd."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    (fake_home / "hermes-agent").symlink_to(HERMES_AGENT_DIR, target_is_directory=True)
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+
+    env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PYTHONHOME")}
+    env["HOME"] = str(fake_home)
+    env["HERMES_AGENT_DIR"] = "~/hermes-agent"
+    code = (
+        "import sys; sys.path.insert(0, %r); "
+        "import provider; "
+        "print(provider.MemoryProviderBase.__name__)"
+    ) % PLUGIN_DIR
+    proc = subprocess.run(
+        [sys.executable, "-c", code], env=env, cwd=str(cwd),
+        capture_output=True, text=True, timeout=60,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "MemoryProvider"
+    assert not any(name.startswith("~") for name in os.listdir(cwd))

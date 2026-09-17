@@ -145,6 +145,12 @@ Copies (not symlinks) `__init__.py`, `provider.py`, `mcp_client.py`,
 variable unset the script deploys to the default profile only and prints a
 hint. Restart the gateways afterwards so running agents pick up the new code.
 
+**fish users:** fish does not expand `~` inside `VAR=~/...`, so
+`env HERMES_HOME=~/.hermes hermes …` hands Hermes the literal string `~/.hermes`
+(which it resolves against cwd, creating a stray `./~/.hermes`). Write
+`env HERMES_HOME=$HOME/.hermes hermes …` instead. The plugin itself expands a
+literal `~` in `HERMES_HOME` / `HERMES_AGENT_DIR` defensively (#33).
+
 `cli.py` and `config_schema.py` are not copied: Hermes loads both automatically
 whenever they sit in the active provider's directory, and they describe the
 stdio transport. If you run `"transport": "stdio"`, copy them in (or symlink
