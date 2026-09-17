@@ -16,3 +16,6 @@ __pycache__/
 autoresearch/
 # research scratch containing local absolute paths
 docs/research/promptkit/
+
+# literal tilde dir created by an unexpanded HERMES_HOME (see issue)
+~/
