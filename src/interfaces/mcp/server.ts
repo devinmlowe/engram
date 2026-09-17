@@ -23,7 +23,7 @@ import { loadConfig } from "../../_core/config/index.js";
 import { escapeXml } from "../../_core/search/index.js";
 import { initEmbeddings } from "../../_core/embeddings/index.js";
 import { rememberFact, storeMemoryBatch } from "../shared/remember.js";
-import { getTenantScoping } from "./scoping.js";
+import { resolveCallScoping } from "./scoping.js";
 import { sliceShowLines, formatShowOutput } from "./show-format.js";
 import { buildIntelligenceConfig } from "../../_core/llm/index.js";
 import type { MemorySource } from "../../_core/types/index.js";
@@ -130,8 +130,20 @@ const CommitmentsUpdateInputSchema = z.object({
   superseded_by: z.string().min(6).optional(),
 });
 
+// Per-request tenant scoping (ADR-010 / W1). Same rules as the env path:
+// trimmed, non-empty. Absent → env defaults apply.
+const ScopeParamSchema = z
+  .string()
+  .trim()
+  .min(1, "scope must be a non-empty scope string (e.g. \"hermes:career\")");
+const ReadScopesParamSchema = z
+  .array(z.string().trim().min(1, "read_scopes entries must be non-empty scope strings"))
+  .min(1, "read_scopes must contain at least one scope");
+
 const RecallInputSchema = z.object({
   query: z.string().min(2, "Query must be at least 2 characters"),
+  scope: ScopeParamSchema.optional(),
+  read_scopes: ReadScopesParamSchema.optional(),
   budget: z.number().int().min(100).max(5000).optional(),
   after: z
     .string()
@@ -151,6 +163,7 @@ const RecallInputSchema = z.object({
 
 const RememberInputSchema = z.object({
   content: z.string().min(1, "Content is required"),
+  scope: ScopeParamSchema.optional(),
   type: z.enum([
     "preference",
     "decision",
@@ -178,6 +191,7 @@ const RememberBatchInputSchema = z.object({
     source: z.enum(["user", "dream", "rlm", "import"]).optional(),
     relates_to_entities: z.array(z.string()).max(10).optional(),
   })).min(1, "At least one memory is required").max(50, "Maximum batch size is 50"),
+  scope: ScopeParamSchema.optional(),
 });
 
 const ShowInputSchema = z.object({
@@ -208,6 +222,8 @@ const ExploreInputSchema = z.object({
 
 const RecallSessionInputSchema = z.object({
   query: z.string().min(2, "Query must be at least 2 characters"),
+  scope: ScopeParamSchema.optional(),
+  read_scopes: ReadScopesParamSchema.optional(),
   session_id: z.string().uuid().optional(),
   budget: z.number().int().min(100).max(10000).optional(),
   sources: z
@@ -352,6 +368,21 @@ function registerToolHandlers(srv: Server, callTool: ToolHandler = handleToolCal
             description:
               "Which memory stores to search. Defaults to episodic and semantic.",
           },
+          scope: {
+            type: "string",
+            minLength: 1,
+            description:
+              "Tenant identity for this call (e.g. \"hermes:career\"); reads " +
+              "default to global + this scope. Overrides ENGRAM_SCOPE for this call only.",
+          },
+          read_scopes: {
+            type: "array",
+            items: { type: "string", minLength: 1 },
+            minItems: 1,
+            description:
+              "Explicit scopes to read from (e.g. [\"global\", \"hermes:career\"]). " +
+              "Overrides ENGRAM_READ_SCOPES for this call only.",
+          },
         },
         required: ["query"],
         additionalProperties: false,
@@ -404,6 +435,13 @@ function registerToolHandlers(srv: Server, callTool: ToolHandler = handleToolCal
             enum: ["user", "dream", "rlm", "import"],
             default: "user",
             description: "Source of this memory (user, dream, rlm, import)",
+          },
+          scope: {
+            type: "string",
+            minLength: 1,
+            description:
+              "Tenant scope to stamp on this write (e.g. \"hermes:career\"). " +
+              "Overrides the ENGRAM_SCOPE env default for this call only.",
           },
         },
         required: ["content"],
@@ -476,6 +514,13 @@ function registerToolHandlers(srv: Server, callTool: ToolHandler = handleToolCal
             minItems: 1,
             maxItems: 50,
             description: "Array of memories to store (max 50)",
+          },
+          scope: {
+            type: "string",
+            minLength: 1,
+            description:
+              "Tenant scope to stamp on this write (e.g. \"hermes:career\"). " +
+              "Overrides the ENGRAM_SCOPE env default for this call only.",
           },
         },
         required: ["memories"],
@@ -642,6 +687,21 @@ function registerToolHandlers(srv: Server, callTool: ToolHandler = handleToolCal
             items: { type: "string", enum: ["episodic", "semantic", "graph"] },
             default: ["episodic", "semantic"],
             description: "Which memory stores to search",
+          },
+          scope: {
+            type: "string",
+            minLength: 1,
+            description:
+              "Tenant identity for this call (e.g. \"hermes:career\"); reads " +
+              "default to global + this scope. Overrides ENGRAM_SCOPE for this call only.",
+          },
+          read_scopes: {
+            type: "array",
+            items: { type: "string", minLength: 1 },
+            minItems: 1,
+            description:
+              "Explicit scopes to read from (e.g. [\"global\", \"hermes:career\"]). " +
+              "Overrides ENGRAM_READ_SCOPES for this call only.",
           },
         },
         required: ["query"],
@@ -996,7 +1056,7 @@ export async function handleToolCall(name: string, args: unknown): Promise<ToolR
       await ensureEmbeddings();
 
       if (!config) config = loadConfig();
-      const scoping = getTenantScoping(process.env);
+      const scoping = resolveCallScoping(process.env, params);
       const response = await unifiedSearch(getDb(), {
         query: params.query,
         sources: (params.sources ?? ["episodic", "semantic"]) as SearchSource[],
@@ -1028,7 +1088,7 @@ export async function handleToolCall(name: string, args: unknown): Promise<ToolR
           type: params.type as MemoryType,
           importance: params.importance,
           source: params.source as MemorySource,
-          scope: getTenantScoping(process.env).writeScope,
+          scope: resolveCallScoping(process.env, params).writeScope,
         },
         // The merge runs inside a synchronous tool call; the dream pipeline's
         // 120s generation timeout is far too long to block the agent on
@@ -1077,7 +1137,7 @@ export async function handleToolCall(name: string, args: unknown): Promise<ToolR
       }));
 
       const result = await storeMemoryBatch(getDb(), batchInput, {
-        scope: getTenantScoping(process.env).writeScope,
+        scope: resolveCallScoping(process.env, params).writeScope,
       });
 
       return {
@@ -1188,6 +1248,7 @@ export async function handleToolCall(name: string, args: unknown): Promise<ToolR
           sessionId: params.session_id,
           budget: params.budget,
           sources: params.sources as SearchSource[] | undefined,
+          scopes: resolveCallScoping(process.env, params).readScopes,
         },
         config,
       );

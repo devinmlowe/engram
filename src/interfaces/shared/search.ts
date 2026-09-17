@@ -131,6 +131,8 @@ export async function createOrRefineRecallSession(
     sessionId?: string;
     budget?: number;
     sources?: SearchSource[];
+    /** Restrict semantic results to these tenant scopes (ADR-010). */
+    scopes?: string[];
   },
   config?: EngramConfig,
 ): Promise<RecallSessionResult> {
@@ -162,6 +164,7 @@ export async function createOrRefineRecallSession(
         sources,
         mode: "hybrid",
         budget: remainingBudget,
+        scopes: params.scopes,
       },
       config,
     );
@@ -188,6 +191,7 @@ export async function createOrRefineRecallSession(
       sources,
       mode: "hybrid",
       budget: Math.min(maxBudget, 1500), // First search gets half the budget
+      scopes: params.scopes,
     },
     config,
   );
