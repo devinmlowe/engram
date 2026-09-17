@@ -5,7 +5,7 @@ Unified LLM client factory with tiered provider cascade. Abstracts provider diff
 ## In Scope
 
 - Provider-agnostic LLM client interface
-- Tiered provider cascade (Ollama → OpenRouter → Anthropic)
+- Tiered provider cascade (default Ollama → OpenAI-compatible route → OpenRouter → Anthropic; order from `ENGRAM_LLM_PROVIDERS`)
 - Structured output via tool use with `strict: true`
 - Provider availability detection and graceful fallback
 
@@ -20,7 +20,8 @@ Unified LLM client factory with tiered provider cascade. Abstracts provider diff
 - `types.ts` — LLM request/response type definitions
 - `providers/` — Provider-specific implementations
   - `anthropic.ts` — Anthropic API client
-  - `openrouter.ts` — OpenRouter API client
+  - `openai-compatible.ts` — Generic OpenAI chat-completions client + the `openai` tier (OpenAI, LiteLLM, self-hosted gateways; endpoint/model/key-env-var from `ENGRAM_OPENAI_*`, #45)
+  - `openrouter.ts` — OpenRouter tier: a preconfigured route over the generic client
   - `ollama.ts` — Ollama local LLM client
 
 ## See Also

@@ -114,6 +114,9 @@ ensure_env_file() {
             echo "#ANTHROPIC_API_KEY="
             echo "#OPENROUTER_API_KEY="
             echo "#ENGRAM_LOCAL_MODEL="
+            echo "#ENGRAM_OPENAI_BASE_URL=   # generic OpenAI-compatible route; key read from the env var named by ENGRAM_OPENAI_API_KEY_ENV"
+            echo "#ENGRAM_OPENAI_MODEL="
+            echo "#ENGRAM_LLM_PROVIDERS=ollama,openai,openrouter,anthropic"
         } > "$ENV_FILE"
     )
     chmod 600 "$ENV_FILE"

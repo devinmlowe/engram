@@ -15,7 +15,10 @@ Unified LLM client factory with tiered provider cascade. Owns execution mechanic
 
 ## Requirements
 
-- **REQ-1**: The module shall support three provider tiers: Ollama (local), OpenRouter (cloud), Anthropic API. *(traces to L0 INV-3, INV-4)*
+- **REQ-1**: The module shall support four provider tiers: Ollama (local), a generic OpenAI-compatible route (OpenAI, LiteLLM, self-hosted gateways), OpenRouter (cloud), Anthropic API. *(traces to L0 INV-3, INV-4)*
+- **REQ-1a**: The tier order shall be configurable independently of which tiers are configured (`ENGRAM_LLM_PROVIDERS`); a tier not listed is never tried. *(#45)*
+- **REQ-1b**: Credentials shall be referenced by environment-variable name (`ENGRAM_OPENAI_API_KEY_ENV`) and read at call time; the module shall never store, log or print a credential value, and diagnostics shall name only the variable. *(#45)*
+- **REQ-1c**: Request shape shall be provider-aware: optional fields such as `temperature` are sent only where the route accepts them. *(#45)*
 - **REQ-2**: The module shall execute a caller-configured cascade: try providers in order, fall through on failure. *(traces to ADR-005)*
 - **REQ-3**: The module shall provide `generate()` (free text) and `generateStructured<T>()` (JSON via tool_use/schema). *(traces to L0 REQ-2)*
 - **REQ-4**: The module shall retry transient failures with exponential backoff and jitter. *(traces to ADR-005)*

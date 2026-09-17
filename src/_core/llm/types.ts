@@ -11,10 +11,26 @@ export interface IntelligenceConfig {
   apiModel: string;
   apiFallbackModel: string;
   timeoutMs: number;
+  /** Generic OpenAI-compatible route (OpenAI, LiteLLM, self-hosted gateway), from ENGRAM_OPENAI_* (#45). */
+  openai?: {
+    baseUrl: string;
+    model: string;
+    /** NAME of the env var holding the credential; the value is read at call time and never stored. */
+    apiKeyEnv: string;
+    /** Sent only when set; many gateways reject the field. */
+    temperature?: number;
+  };
+  /** Tier order (ENGRAM_LLM_PROVIDERS); tiers not listed are never tried. Default DEFAULT_PROVIDER_ORDER. */
+  providerOrder?: LlmProvider[];
 }
 
 /** Which tier of the cascade produced a result. */
-export type LlmProvider = "ollama" | "openrouter" | "anthropic";
+export type LlmProvider = "ollama" | "openai" | "openrouter" | "anthropic";
+
+export const ALL_PROVIDERS: readonly LlmProvider[] = ["ollama", "openai", "openrouter", "anthropic"];
+
+/** Local first, then the caller's own gateway, then OpenRouter, then Anthropic. */
+export const DEFAULT_PROVIDER_ORDER: readonly LlmProvider[] = ["ollama", "openai", "openrouter", "anthropic"];
 
 export interface GenerationResult<T = string> {
   result: T;

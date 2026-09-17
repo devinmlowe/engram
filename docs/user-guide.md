@@ -322,7 +322,9 @@ Engram is configured through environment variables. All settings have sensible d
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ANTHROPIC_API_KEY` | (none) | Enables the Anthropic tier (last in the cascade) |
-| `OPENROUTER_API_KEY` | (none) | Enables the OpenRouter tier (middle) |
+| `OPENROUTER_API_KEY` | (none) | Enables the OpenRouter tier |
+| `ENGRAM_OPENAI_BASE_URL` / `ENGRAM_OPENAI_MODEL` / `ENGRAM_OPENAI_API_KEY_ENV` | `https://api.openai.com/v1` / (none) / `OPENAI_API_KEY` | Generic OpenAI-compatible tier (OpenAI, LiteLLM, self-hosted). Setting the model activates it; the key is read from the env var *named* by `ENGRAM_OPENAI_API_KEY_ENV` |
+| `ENGRAM_LLM_PROVIDERS` | `ollama,openai,openrouter,anthropic` | Tier order; tiers left out are never tried |
 | `ENGRAM_LOCAL_MODEL` | `qwen2.5:7b` | Ollama model used by the local tier (must be pulled on `OLLAMA_HOST`) |
 | `ENGRAM_LOCAL_MODEL_FALLBACKS` | (none) | Comma-separated Ollama models tried in order when `ENGRAM_LOCAL_MODEL` is not pulled; `engram doctor` shows which model the Ollama tier resolved to |
 | `ENGRAM_DREAM_MAX_CONVERSATIONS` | (unlimited) | Cap on conversations extracted per run (bounds a manual end-to-end run) |

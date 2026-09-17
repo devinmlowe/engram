@@ -14,7 +14,7 @@ import { join, resolve } from "node:path";
 import type Database from "better-sqlite3";
 import { loadConfig } from "../../_core/config/index.js";
 import { resolveModelCacheDir } from "../../_core/embeddings/model-cache.js";
-import { buildIntelligenceConfig, resolveOllamaModel } from "../../_core/llm/index.js";
+import { buildIntelligenceConfig, describeProviders, resolveOllamaModel } from "../../_core/llm/index.js";
 import type { EngramConfig } from "../../_core/types/index.js";
 import { parseMcpPort } from "../mcp/port.js";
 
@@ -29,6 +29,7 @@ export const DOCTOR_CHECK_NAMES = [
   "transformers.js",
   "model cache",
   "ollama",
+  "llm providers",
   "data dir",
   "mcp daemon",
 ] as const;
@@ -290,6 +291,22 @@ async function checkOllama(config: EngramConfig): Promise<DoctorCheck> {
   }
 }
 
+/**
+ * Tier order and per-tier configuration (#45): endpoints, models and the
+ * NAMES of the env vars credentials come from — never their values. Warns
+ * when no cloud tier is configured (Ollama alone is fine when it answers).
+ */
+export function checkLlmProviders(config: EngramConfig, env: Record<string, string | undefined> = process.env): DoctorCheck {
+  const name = "llm providers";
+  const { order, tiers } = describeProviders(buildIntelligenceConfig(config), env);
+  const parts = tiers.map((t) => `${t.tier}: ${t.detail}`);
+  const cloudConfigured = tiers.some((t) => t.tier !== "ollama" && t.configured);
+  const detail = `order ${order.join(" > ")} (ENGRAM_LLM_PROVIDERS); ${parts.join("; ")}`;
+  return cloudConfigured
+    ? { name, level: "ok", required: false, detail }
+    : { name, level: "warn", required: false, detail: `${detail} — no cloud tier configured; extraction needs a reachable Ollama model or one of ENGRAM_OPENAI_MODEL, OPENROUTER_API_KEY, ANTHROPIC_API_KEY` };
+}
+
 /** The pre-0.2.0 default data directory on every platform (`~/.local/share/engram`). */
 export function legacyDataDir(home: string = homedir()): string {
   return join(home, ".local", "share", "engram");
@@ -400,6 +417,7 @@ export async function runDoctor(
     transformers,
     modelCache,
     ollama,
+    checkLlmProviders(config),
     checkDataDir(config),
     mcpDaemon,
   ];

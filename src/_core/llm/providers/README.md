@@ -16,7 +16,8 @@ Provider-specific LLM client implementations. Each adapter conforms to the unifi
 ## Contains
 
 - `anthropic.ts` — Anthropic API client (Claude models)
-- `openrouter.ts` — OpenRouter API client (multi-model routing)
+- `openai-compatible.ts` — Generic OpenAI chat-completions client (retry, sanitisation, tool-call/content parsing) and the `openai` tier configured from `ENGRAM_OPENAI_BASE_URL` / `ENGRAM_OPENAI_MODEL` / `ENGRAM_OPENAI_API_KEY_ENV` / `ENGRAM_OPENAI_TEMPERATURE` (#45)
+- `openrouter.ts` — OpenRouter tier as a preconfigured route over the generic client (attribution headers, `temperature: 0`)
 - `ollama.ts` — Ollama local LLM client (local inference)
 
 ## See Also
