@@ -47,7 +47,7 @@ if (-not $RepoRoot) {
 }
 
 if (-not $DataDir) {
-    $DataDir = if ($env:ENGRAM_DATA_DIR) { $env:ENGRAM_DATA_DIR } else { Join-Path $HOME '.local\share\engram' }
+    $DataDir = if ($env:ENGRAM_DATA_DIR) { $env:ENGRAM_DATA_DIR } else { if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'engram' } else { Join-Path $HOME '.local\share\engram' } }
 }
 if (-not $LogsDir) {
     $LogsDir = if ($env:ENGRAM_LOGS_DIR) { $env:ENGRAM_LOGS_DIR } else { Join-Path $DataDir 'logs' }

@@ -29,7 +29,7 @@ if (-not (Test-Path -LiteralPath $runnerPath -PathType Leaf)) {
 }
 
 if (-not $DataDir) {
-    $DataDir = if ($env:ENGRAM_DATA_DIR) { $env:ENGRAM_DATA_DIR } else { Join-Path $HOME '.local\share\engram' }
+    $DataDir = if ($env:ENGRAM_DATA_DIR) { $env:ENGRAM_DATA_DIR } else { if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'engram' } else { Join-Path $HOME '.local\share\engram' } }
 }
 $pidFile = Join-Path $DataDir "visualizer-$Port.pid"
 $runnerPidFile = Join-Path $DataDir "visualizer-$Port.runner.pid"

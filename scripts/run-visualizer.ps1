@@ -26,7 +26,7 @@ if (-not $NodePath) {
 }
 
 if (-not $DataDir) {
-    $DataDir = if ($env:ENGRAM_DATA_DIR) { $env:ENGRAM_DATA_DIR } else { Join-Path $HOME '.local\share\engram' }
+    $DataDir = if ($env:ENGRAM_DATA_DIR) { $env:ENGRAM_DATA_DIR } else { if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'engram' } else { Join-Path $HOME '.local\share\engram' } }
 }
 if (-not $DbPath) {
     $DbPath = if ($env:ENGRAM_DB_PATH) { $env:ENGRAM_DB_PATH } else { Join-Path $DataDir 'engram.db' }

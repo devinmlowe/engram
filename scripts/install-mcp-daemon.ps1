@@ -52,7 +52,7 @@ if (-not (Test-Path -LiteralPath $runnerPath -PathType Leaf)) {
 }
 
 if (-not $DataDir) {
-    $DataDir = if ($env:ENGRAM_DATA_DIR) { $env:ENGRAM_DATA_DIR } else { Join-Path $HOME '.local\share\engram' }
+    $DataDir = if ($env:ENGRAM_DATA_DIR) { $env:ENGRAM_DATA_DIR } else { if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'engram' } else { Join-Path $HOME '.local\share\engram' } }
 }
 if (-not $LogsDir) {
     $LogsDir = if ($env:ENGRAM_LOGS_DIR) { $env:ENGRAM_LOGS_DIR } else { Join-Path $DataDir 'logs' }
@@ -186,6 +186,14 @@ function Get-StatusObject {
         healthy = $health.healthy
         workers = $health.workers
         logFile = $logFile
+        dataDir = $DataDir
+        dbPath = if ($DbPath) { $DbPath } else { Join-Path $DataDir 'engram.db' }
+        # A populated pre-0.2.0 database that this install would ignore (issue #13); `engram doctor` explains.
+        legacyDbPath = $(
+            $legacy = Join-Path (Join-Path $HOME '.local\share\engram') 'engram.db'
+            $effective = if ($DbPath) { $DbPath } else { Join-Path $DataDir 'engram.db' }
+            if (($legacy -ne $effective) -and (Test-Path -LiteralPath $legacy -PathType Leaf)) { $legacy } else { $null }
+        )
     }
 }
 

@@ -6,7 +6,7 @@ with the provider for the configured transport (see ``transport`` below).
 Engram (https://github.com/devinmlowe/engram) is a cognitive memory system
 that ingests LLM conversation history and consolidates it into structured
 knowledge. It exposes a streamable-HTTP MCP server (LaunchAgent
-``ai.hermes.engram-mcp``, default ``http://127.0.0.1:9907/mcp``).
+``com.engram.mcp`` / ``engram-mcp.service`` / ``\Engram\MCP``, default ``http://127.0.0.1:9907/mcp``).
 
 Two transports live in this directory and share ``$HERMES_HOME/engram.json``:
 
@@ -763,7 +763,7 @@ class EngramMemoryProvider(MemoryProvider):
         if tripped:
             logger.warning(
                 "engram circuit breaker tripped after %d consecutive failures; "
-                "pausing calls for %ds. Check the ai.hermes.engram-mcp LaunchAgent "
+                "pausing calls for %ds. Check the engram MCP daemon (scripts/install-mcp-daemon.sh status) "
                 "and %s/health.", _BREAKER_THRESHOLD, _BREAKER_COOLDOWN_SECS,
                 self._cfg()["base_url"],
             )
@@ -799,7 +799,7 @@ class EngramMemoryProvider(MemoryProvider):
         except Exception as exc:
             self._unavailable_reason = (
                 f"engram MCP server unreachable at {cfg['base_url']}/health ({exc}). "
-                "Check the ai.hermes.engram-mcp LaunchAgent."
+                "Check the engram MCP daemon (scripts/install-mcp-daemon.sh status)."
             )
             return
         self._unavailable_reason = "" if ok else f"{cfg['base_url']}/health did not report status ok"

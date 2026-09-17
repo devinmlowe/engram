@@ -399,7 +399,10 @@ Show database statistics — exchange counts, memory counts, graph size, and las
 
 ```bash
 engram stats
+engram stats --json   # {"db", "size", "counts": {exchanges, conversations, tool_calls, memories_active, ...}}
 ```
+
+`--json` prints the row counts `engram update` snapshots before an upgrade and compares after it.
 
 ---
 
@@ -413,20 +416,60 @@ engram backfill-event-ts [--dry-run] [--tmp-dir <path>]
 
 ---
 
-### engram migrate
+### engram update
 
-Migrate data from the superpowers conversation-index database.
+Controlled self-update, modelled on `hermes update`: backup, stop services, pull or `npm install -g`, migrate, restart services (MCP before the Hermes plugin redeploy), verify.
 
 ```bash
-engram migrate [options]
+engram update --check          # current vs available (git tag or npm dist-tag)
+engram update --plan           # read-only plan; --dry-run is an alias
+engram update [--yes] [--no-backup] [--to <version>]
 ```
 
 | Flag | Description |
 |------|-------------|
-| `-s, --source <path>` | Source database path (default: `~/.config/superpowers/conversation-index/db.sqlite`) |
-| `-n, --dry-run` | Show what would be migrated without changes |
+| `--check` | Print the installed version, the install kind, and the latest available version, then exit |
+| `--plan`, `--dry-run` | Print install kind, every directory holding an `engram.db`, model cache, every service + restart command, plugin deploy targets, backup path, blockers, and the ordered steps. Changes nothing |
+| `-y, --yes` | Skip the confirmation prompt (required when stdin is not a terminal) |
+| `--no-backup` | Skip the pre-update copy of `engram.db` + WAL + `archive/` to `<data dir>.backup-<timestamp>` |
+| `--to <version>` | Target version for npm installs (default: `dist-tags.latest`) |
+
+Blockers (exit 1, nothing changed): a dirty git checkout, two directories both holding a database, a daemon answering on its port with no supervisor. On any failure after the code swap the command prints the rollback steps. Post-swap steps (`migrate schema`, `doctor --json`, `stats --json`) run the new build in a child process.
+
+---
+
+### engram migrate
+
+Install/data migration (since 0.4.0). Idempotent and safe to re-run.
+
+```bash
+engram migrate [all|data-dir|model-cache|schema] [--dry-run]
+```
+
+| Topic | What it does |
+|-------|--------------|
+| `data-dir` | Lists every candidate data directory (effective, pre-0.2.0 `~/.local/share/engram`, platform default `%LOCALAPPDATA%\engram` / `$XDG_DATA_HOME/engram`) and whether it holds a database. Moves `engram.db` (+ `-wal`/`-shm`), `archive/`, `logs/`, `tmp/` into the effective dir when only a legacy dir is populated; refuses when two dirs both hold a database; leaves `ENGRAM_DB_PATH` installs alone. Refuses to move while the MCP daemon answers on its port |
+| `model-cache` | If `ENGRAM_MODEL_CACHE_DIR` is unset, creates `<data dir>/models`, copies any downloaded models out of `node_modules/@xenova/transformers/.cache`, appends the setting to `~/.config/engram/env` when that file exists, and prints the env line to set |
+| `schema` | Opens the database once so schema migrations run, then lists the `schema_migrations` checkpoints |
+
+`--dry-run` lists every action without changing anything. `engram migrate --source <path>` is the deprecated spelling of `engram import-legacy` and forwards with a notice.
+
+---
+
+### engram import-legacy
+
+Import a legacy conversation-index SQLite database (was `engram migrate --source` before 0.4.0).
+
+```bash
+engram import-legacy --source <path> [options]
+```
+
+| Flag | Description |
+|------|-------------|
+| `-s, --source <path>` | Source database path (required; no default) |
+| `-n, --dry-run` | Show what would be imported without changes |
 | `--batch-size <n>` | Embedding batch size (default: `32`) |
-| `--force` | Force re-migration (ignore checkpoints) |
+| `--force` | Force re-import (ignore checkpoints) |
 
 ---
 
@@ -440,7 +483,7 @@ engram validate [options]
 
 | Flag | Description |
 |------|-------------|
-| `-s, --source <path>` | Source database path (default: `~/.config/superpowers/conversation-index/db.sqlite`) |
+| `-s, --source <path>` | Source database path (required; no default) |
 
 ---
 
