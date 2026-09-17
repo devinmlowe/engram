@@ -31,7 +31,7 @@ const SHARED_CAPABILITIES: Array<[string, string, string, string | null]> = [
   ["recall", "search", "recall", "../shared/search.js"],
   ["remember", "remember", "remember", "../shared/remember.js"],
   ["explore", "explore", "explore", "../shared/explore.js"],
-  ["reflect", "reflect", "reflect", null], // both read graph/reflection.js directly
+  ["reflect", "reflect", "reflect", "../shared/reflect.js"], // routed through the shared wrapper since #38
 ];
 
 let tools: Tool[];
