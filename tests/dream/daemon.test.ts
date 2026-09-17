@@ -385,7 +385,9 @@ describe("Error handling", () => {
   it("logs extraction errors as error checkpoints", async () => {
     seedConversation("conv-001");
 
-    vi.mocked(extractFromConversation).mockRejectedValueOnce(
+    // Fails on the main loop and again on the retry pass. (A one-shot
+    // rejection recovers on the retry, which since #35 leaves no error row.)
+    vi.mocked(extractFromConversation).mockRejectedValue(
       new Error("LLM timeout"),
     );
 
@@ -432,6 +434,42 @@ describe("Error handling", () => {
     }
     // A rejected key is a provider error — not retried as "unknown".
     expect(rows[0].error_class).toBe("provider");
+  });
+
+  it("a conversation that fails transiently and then succeeds on the retry pass leaves one success row and no reported error (#35)", async () => {
+    seedConversation("conv-001");
+    seedConversation("conv-002");
+
+    let conv001Calls = 0;
+    vi.mocked(extractFromConversation).mockImplementation(async (convId: string) => {
+      if (convId === "conv-001" && conv001Calls++ === 0) {
+        throw new Error("OpenRouter request timed out (503)");
+      }
+      return {
+        facts: [{ type: "fact", content: `${convId} fact`, importance: 0.7, sourceExchangeIds: [] }],
+        model: "test-model",
+        tier: "haiku",
+        confidence: 8,
+        durationMs: 100,
+      };
+    });
+
+    const report = await runDream(t.db, t.config, { phases: ["extract"] });
+
+    expect(conv001Calls).toBe(2); // main loop + retry pass
+    const phase = report.phases.find((p) => p.phase === "extract")!;
+    expect(phase.itemsProcessed).toBe(2);
+    expect(phase.errors).toBe(0); // the retry pass decrements the recovered error
+
+    const rows = t.db
+      .prepare(
+        "SELECT item_id, status, attempt_count FROM dream_checkpoints WHERE phase = 'extract' ORDER BY item_id",
+      )
+      .all() as Array<Record<string, unknown>>;
+    expect(rows).toEqual([
+      { item_id: "conv-001", status: "success", attempt_count: 2 },
+      { item_id: "conv-002", status: "success", attempt_count: 1 },
+    ]);
   });
 
   it("an always-failing cascade leaves exactly one extract error row per conversation per run, with attempt_count counting the retry (#24)", async () => {

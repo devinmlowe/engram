@@ -155,19 +155,36 @@ export function recordCheckpoint(
   const id = crypto.randomUUID();
   const now = Math.floor(Date.now() / 1000);
 
-  // Check for existing success checkpoint
-  const existing = db
-    .prepare(
-      "SELECT 1 FROM dream_checkpoints WHERE run_id = ? AND phase = ? AND item_id = ? AND status = 'success'",
-    )
-    .get(runId, phase, itemId);
+  db.transaction(() => {
+    // Check for existing success checkpoint
+    const existing = db
+      .prepare(
+        "SELECT 1 FROM dream_checkpoints WHERE run_id = ? AND phase = ? AND item_id = ? AND status = 'success'",
+      )
+      .get(runId, phase, itemId);
+    if (existing) return;
 
-  if (!existing) {
+    // #35: an item that failed earlier in this run (main loop) and now
+    // succeeds (retry pass) is superseded — drop its error row so progress,
+    // the retry pass and the web route all see one row per item. The
+    // success row carries the attempt that finally worked.
+    const failed = db
+      .prepare(
+        "SELECT attempt_count FROM dream_checkpoints WHERE run_id = ? AND phase = ? AND item_id = ? AND status = 'error'",
+      )
+      .get(runId, phase, itemId) as { attempt_count: number | null } | undefined;
+    if (failed) {
+      db.prepare(
+        "DELETE FROM dream_checkpoints WHERE run_id = ? AND phase = ? AND item_id = ? AND status = 'error'",
+      ).run(runId, phase, itemId);
+    }
+
     insertRow(db, "dream_checkpoints", {
       id, run_id: runId, phase, item_id: itemId, processed_at: now, status: "success",
       fingerprint: details.fingerprint ?? null,
+      attempt_count: failed ? (failed.attempt_count ?? 1) + 1 : 1,
     });
-  }
+  })();
 }
 
 // ─── Conversation Fingerprints (W12) ────────────────────────────
