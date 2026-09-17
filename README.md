@@ -392,6 +392,8 @@ engram backfill-event-ts  # Backfill event-time timestamps (temporal recall)
 engram commitments [status]        # List tracked commitments (same XML as the MCP tool)
 engram commitment-done <id>        # Mark a commitment done (--status dropped|superseded)
 engram commitments-extract <conv>  # Re-scan one conversation (no checkpoint; proves dedupe)
+engram export [--out f] [--scope s...] [--include-inactive] [--kinds ...]  # JSONL v1 of memories/entities/relationships/commitments (no embeddings)
+engram import <file> [--scope override] [--dry-run]  # Idempotent by id (newer wins); vectors + FTS regenerated from content
 engram mcp             # Start the MCP server (stdio; see Transports section)
 ```
 

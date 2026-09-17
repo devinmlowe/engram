@@ -1059,6 +1059,93 @@ program
     }
   });
 
+// ─── export ─────────────────────────────────────────────────────
+
+program
+  .command("export")
+  .description(
+    "Export memories, entities, relationships, and commitments as JSONL (embeddings are regenerated on import)",
+  )
+  .option("-o, --out <file>", "Write to a file instead of stdout")
+  .option("-s, --scope <scope...>", "Only memories in these scopes (default: all scopes)")
+  .option("--include-inactive", "Include superseded/inactive memories (default: active only)")
+  .option(
+    "--kinds <list>",
+    "Comma-separated record kinds: memories,entities,relationships,commitments",
+    "memories,entities,relationships,commitments",
+  )
+  .action(async (opts) => {
+    const { writeFileSync } = await import("node:fs");
+    const { exportLines, ALL_KINDS } = await import("./transfer.js");
+
+    const kinds = String(opts.kinds)
+      .split(",")
+      .map((k: string) => k.trim())
+      .filter(Boolean);
+    const unknown = kinds.filter((k) => !(ALL_KINDS as readonly string[]).includes(k));
+    if (unknown.length > 0) {
+      console.error(`Unknown kind(s): ${unknown.join(", ")}. Valid: ${ALL_KINDS.join(", ")}`);
+      process.exit(1);
+    }
+
+    const config = loadConfig();
+    const db = getDatabase(config);
+    try {
+      const lines = exportLines(db, {
+        scopes: opts.scope,
+        includeInactive: Boolean(opts.includeInactive),
+        kinds: kinds as (typeof ALL_KINDS)[number][],
+      });
+      const body = lines.join("\n") + "\n";
+      if (opts.out) {
+        writeFileSync(opts.out, body, "utf-8");
+        console.error(`Exported ${lines.length - 1} records to ${opts.out}`);
+      } else {
+        process.stdout.write(body);
+      }
+    } finally {
+      closeDatabase();
+    }
+  });
+
+// ─── import ─────────────────────────────────────────────────────
+
+program
+  .command("import <file>")
+  .description(
+    "Import a JSONL export (idempotent by id; vectors and FTS are regenerated from content)",
+  )
+  .option("-s, --scope <scope>", "Override the scope on every imported memory")
+  .option("-n, --dry-run", "Validate and report what would change without writing")
+  .action(async (file, opts) => {
+    const { readFileSync } = await import("node:fs");
+    const { importLines, formatImportSummary, ImportFormatError } = await import("./transfer.js");
+    const { initEmbeddings } = await import("../../_core/embeddings/index.js");
+
+    const lines = readFileSync(file, "utf-8").split(/\r?\n/);
+    const config = loadConfig();
+    const db = getDatabase(config);
+    try {
+      if (!opts.dryRun) await initEmbeddings(config);
+      const summary = await importLines(db, lines, {
+        scope: opts.scope,
+        dryRun: Boolean(opts.dryRun),
+        onProgress: (done, total) => {
+          if (!opts.dryRun) console.error(`  ${done}/${total} records`);
+        },
+      });
+      for (const line of formatImportSummary(summary)) console.log(line);
+    } catch (err) {
+      if (err instanceof ImportFormatError) {
+        console.error(err.message);
+        process.exit(1);
+      }
+      throw err;
+    } finally {
+      closeDatabase();
+    }
+  });
+
 // ─── doctor ─────────────────────────────────────────────────────
 
 program
