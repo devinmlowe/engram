@@ -39,6 +39,7 @@ export {
   insertVector,
   searchVector,
   deleteVector,
+  getVector,
 } from "./vector.js";
 
 // FTS helpers

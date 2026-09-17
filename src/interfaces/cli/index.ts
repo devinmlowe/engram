@@ -786,6 +786,7 @@ program
   )
   .option("--conversation <id>", "Process a specific conversation")
   .option("--dry-run", "Show what would be processed without making changes")
+  .option("--force", "Re-extract conversations even when unchanged since their last extraction")
   .option("--verbose", "Show detailed progress")
   .action(async (opts) => {
     const { runDream } = await import("../../dream/daemon.js");
@@ -804,6 +805,7 @@ program
         phases,
         conversationId: opts.conversation,
         dryRun: opts.dryRun,
+        force: opts.force,
         verbose: opts.verbose,
         onProgress: (phase, processed, total, errors) => {
           if (opts.verbose) {
@@ -831,6 +833,7 @@ program
       console.log(`  New relationships: ${report.newRelationships}`);
       console.log(`  Conflicts:         ${report.conflictsDetected}`);
       console.log(`  Pruned:            ${report.memoriesPruned}`);
+      console.log(`  Skipped unchanged: ${report.skippedUnchanged ?? 0}`);
       console.log(
         `  Commitments:       ${report.commitmentsExtracted ?? 0} new ` +
           `(${report.commitmentCandidates ?? 0} candidates, ${report.commitmentRejected ?? 0} rejected, ${report.commitmentDuplicates ?? 0} duplicates)`,

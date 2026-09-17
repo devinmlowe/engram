@@ -51,6 +51,27 @@ export function searchVector(
 }
 
 /**
+ * Read a stored vector by ID (null when absent). Decodes the Float32 blob
+ * vec0 hands back so callers get a plain number[].
+ */
+export function getVector(
+  db: Database.Database,
+  table: string,
+  id: string,
+): number[] | null {
+  const row = db
+    .prepare(`SELECT embedding FROM ${table} WHERE id = ?`)
+    .get(id) as { embedding: Buffer } | undefined;
+  if (!row) return null;
+  const f = new Float32Array(
+    row.embedding.buffer,
+    row.embedding.byteOffset,
+    row.embedding.byteLength / 4,
+  );
+  return Array.from(f);
+}
+
+/**
  * Delete a vector by ID.
  */
 export function deleteVector(

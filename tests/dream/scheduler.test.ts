@@ -11,6 +11,8 @@ import {
   getUnprocessedConversations,
   prioritizeConversations,
   getPhaseProgress,
+  computeConversationFingerprint,
+  getLatestExtractFingerprints,
 } from "../../src/dream/scheduler.js";
 import { createTestDb } from "../helpers.js";
 import type { TestDb } from "../helpers.js";
@@ -606,5 +608,62 @@ describe("Resume after crash", () => {
     completeRun(t.db, runId, makeDreamReport());
 
     expect(getIncompleteRun(t.db)).toBeNull();
+  });
+});
+
+// ─── W12: conversation fingerprints on extract checkpoints ──────
+
+describe("computeConversationFingerprint / getLatestExtractFingerprints (W12)", () => {
+  function insertExchangeRow(id: string, convId: string, index: number, assistant = `Assistant ${index}`): void {
+    t.db
+      .prepare(
+        `INSERT INTO exchanges (id, conversation_id, project, timestamp, user_message, assistant_message, exchange_index, token_estimate)
+         VALUES (?, ?, 'p', '2026-09-16T00:00:00Z', ?, ?, ?, 10)`,
+      )
+      .run(id, convId, `User ${index}`, assistant, index);
+  }
+
+  it("is a deterministic sha256 hex digest, distinct per conversation", () => {
+    insertConversation("conv-fp-a");
+    insertExchangeRow("a-1", "conv-fp-a", 1);
+    insertExchangeRow("a-0", "conv-fp-a", 0);
+    const first = computeConversationFingerprint(t.db, "conv-fp-a");
+    expect(first).toMatch(/^[0-9a-f]{64}$/);
+    expect(computeConversationFingerprint(t.db, "conv-fp-a")).toBe(first);
+
+    insertConversation("conv-fp-b");
+    insertExchangeRow("b-0", "conv-fp-b", 0);
+    expect(computeConversationFingerprint(t.db, "conv-fp-b")).not.toBe(first);
+    // a conversation with no exchanges still fingerprints (stable empty digest)
+    insertConversation("conv-fp-empty");
+    expect(computeConversationFingerprint(t.db, "conv-fp-empty")).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("changes when an exchange is edited or added", () => {
+    insertConversation("conv-fp-c");
+    insertExchangeRow("c-0", "conv-fp-c", 0);
+    const before = computeConversationFingerprint(t.db, "conv-fp-c");
+
+    t.db.prepare("UPDATE exchanges SET assistant_message = 'edited, and longer' WHERE id = 'c-0'").run();
+    const edited = computeConversationFingerprint(t.db, "conv-fp-c");
+    expect(edited).not.toBe(before);
+
+    insertExchangeRow("c-1", "conv-fp-c", 1);
+    expect(computeConversationFingerprint(t.db, "conv-fp-c")).not.toBe(edited);
+  });
+
+  it("recordCheckpoint stores the fingerprint and the latest one per conversation wins", () => {
+    const run1 = createRun(t.db);
+    recordCheckpoint(t.db, run1, "extract", "conv-x", { fingerprint: "fp-old" });
+    recordCheckpoint(t.db, run1, "extract", "conv-legacy");
+    const run2 = createRun(t.db);
+    recordCheckpoint(t.db, run2, "extract", "conv-x", { fingerprint: "fp-new" });
+    recordFailure(t.db, run2, "extract", "conv-y", { errorClass: "transient" });
+
+    const latest = getLatestExtractFingerprints(t.db);
+    expect(latest.get("conv-x")).toBe("fp-new");
+    expect(latest.has("conv-legacy")).toBe(true);
+    expect(latest.get("conv-legacy")).toBeNull();
+    expect(latest.has("conv-y")).toBe(false);
   });
 });

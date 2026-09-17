@@ -664,3 +664,125 @@ describe("Prune phase honours persisted stability (W9b)", () => {
     expect(seen.find((m) => m.id === "mem-durable")?.stability).toBeUndefined();
   });
 });
+
+// ─── W12: unchanged conversations are not re-extracted ──────────
+
+/**
+ * Live DB 2026-09-16: 1,928 conversations carried 31,297 extract checkpoints
+ * (1,193 extracted >= 5 times) because every run re-extracted every
+ * conversation. The extract phase now fingerprints each conversation's
+ * exchanges on its success checkpoint and skips unchanged ones on later runs.
+ */
+describe("Extract phase skips unchanged conversations (W12)", () => {
+  const oneFact = {
+    facts: [{ type: "fact", content: "test fact", importance: 0.7, sourceExchangeIds: [] }],
+    model: "test-model",
+    tier: "haiku",
+    confidence: 8,
+    durationMs: 1,
+  };
+
+  function latestExtractCheckpoint(convId: string): { fingerprint: string | null } | undefined {
+    return t.db
+      .prepare(
+        "SELECT fingerprint FROM dream_checkpoints WHERE phase = 'extract' AND status = 'success' AND item_id = ? ORDER BY rowid DESC LIMIT 1",
+      )
+      .get(convId) as { fingerprint: string | null } | undefined;
+  }
+
+  beforeEach(() => {
+    vi.mocked(extractFromConversation).mockResolvedValue(oneFact);
+  });
+
+  it("a second run over an unchanged conversation extracts nothing and reports skippedUnchanged = 1", async () => {
+    seedConversation("conv-same");
+
+    const report1 = await runDream(t.db, t.config, { phases: ["extract"] });
+    expect(extractFromConversation).toHaveBeenCalledTimes(1);
+    expect(report1.skippedUnchanged ?? 0).toBe(0);
+    expect(latestExtractCheckpoint("conv-same")?.fingerprint).toEqual(expect.any(String));
+
+    vi.mocked(extractFromConversation).mockClear();
+    const report2 = await runDream(t.db, t.config, { phases: ["extract", "consolidate"] });
+
+    expect(extractFromConversation).not.toHaveBeenCalled();
+    expect(report2.skippedUnchanged).toBe(1);
+    expect(report2.phases.find((p) => p.phase === "extract")?.itemsProcessed).toBe(0);
+    expect(report2.newMemories).toBe(0);
+  });
+
+  it("re-extracts a conversation whose exchanges changed", async () => {
+    seedConversation("conv-edited");
+    await runDream(t.db, t.config, { phases: ["extract"] });
+    vi.mocked(extractFromConversation).mockClear();
+
+    t.db
+      .prepare("UPDATE exchanges SET assistant_message = ? WHERE id = ?")
+      .run("A much longer assistant response that changes the transcript", "conv-edited-exch-1");
+
+    const report = await runDream(t.db, t.config, { phases: ["extract"] });
+    expect(extractFromConversation).toHaveBeenCalledTimes(1);
+    expect(report.skippedUnchanged).toBe(0);
+  });
+
+  it("re-extracts a conversation that grew by an exchange", async () => {
+    seedConversation("conv-grown", 2);
+    await runDream(t.db, t.config, { phases: ["extract"] });
+    vi.mocked(extractFromConversation).mockClear();
+
+    insertExchange("conv-grown-exch-2", "conv-grown", 2);
+
+    await runDream(t.db, t.config, { phases: ["extract"] });
+    expect(extractFromConversation).toHaveBeenCalledTimes(1);
+  });
+
+  it("force ignores fingerprints and re-extracts", async () => {
+    seedConversation("conv-forced");
+    await runDream(t.db, t.config, { phases: ["extract"] });
+    vi.mocked(extractFromConversation).mockClear();
+
+    const report = await runDream(t.db, t.config, { phases: ["extract"], force: true });
+    expect(extractFromConversation).toHaveBeenCalledTimes(1);
+    expect(report.skippedUnchanged ?? 0).toBe(0);
+  });
+
+  it("a legacy checkpoint without a fingerprint is extracted once more, then skipped", async () => {
+    seedConversation("conv-legacy");
+    // Older run that checkpointed conv-legacy before fingerprints existed.
+    t.db
+      .prepare("INSERT INTO dream_runs (id, started_at, completed_at) VALUES ('run-legacy', 1000, 1001)")
+      .run();
+    t.db
+      .prepare(
+        "INSERT INTO dream_checkpoints (id, run_id, phase, item_id, processed_at, status) VALUES ('cp-legacy', 'run-legacy', 'extract', 'conv-legacy', 1001, 'success')",
+      )
+      .run();
+    expect(latestExtractCheckpoint("conv-legacy")?.fingerprint).toBeNull();
+
+    const report1 = await runDream(t.db, t.config, { phases: ["extract"] });
+    expect(extractFromConversation).toHaveBeenCalledTimes(1);
+    expect(report1.skippedUnchanged ?? 0).toBe(0);
+    expect(latestExtractCheckpoint("conv-legacy")?.fingerprint).toEqual(expect.any(String));
+
+    vi.mocked(extractFromConversation).mockClear();
+    const report2 = await runDream(t.db, t.config, { phases: ["extract"] });
+    expect(extractFromConversation).not.toHaveBeenCalled();
+    expect(report2.skippedUnchanged).toBe(1);
+  });
+
+  it("skipped conversations are still checkpointed in the new run (resume accounting)", async () => {
+    seedConversation("conv-cp");
+    await runDream(t.db, t.config, { phases: ["extract"] });
+    await runDream(t.db, t.config, { phases: ["extract"] });
+
+    const run = t.db
+      .prepare("SELECT id FROM dream_runs ORDER BY started_at DESC, rowid DESC LIMIT 1")
+      .get() as { id: string };
+    const row = t.db
+      .prepare(
+        "SELECT fingerprint FROM dream_checkpoints WHERE run_id = ? AND phase = 'extract' AND item_id = 'conv-cp' AND status = 'success'",
+      )
+      .get(run.id) as { fingerprint: string | null } | undefined;
+    expect(row?.fingerprint).toEqual(expect.any(String));
+  });
+});

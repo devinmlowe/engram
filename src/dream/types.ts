@@ -41,6 +41,8 @@ export interface DreamReport {
   entitiesMerged?: number;
   orphansPruned?: number;
   clustersPruned?: number;
+  /** Extract phase: conversations skipped because their fingerprint was unchanged (W12). */
+  skippedUnchanged?: number;
   // Commitments pass (extract phase): candidates seen, deduped, inserted
   commitmentsExtracted?: number;
   commitmentCandidates?: number;

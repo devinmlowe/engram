@@ -150,6 +150,7 @@ export function recordCheckpoint(
   runId: string,
   phase: string,
   itemId: string,
+  details: { fingerprint?: string } = {},
 ): void {
   const id = crypto.randomUUID();
   const now = Math.floor(Date.now() / 1000);
@@ -164,8 +165,60 @@ export function recordCheckpoint(
   if (!existing) {
     insertRow(db, "dream_checkpoints", {
       id, run_id: runId, phase, item_id: itemId, processed_at: now, status: "success",
+      fingerprint: details.fingerprint ?? null,
     });
   }
+}
+
+// ─── Conversation Fingerprints (W12) ────────────────────────────
+
+/**
+ * sha256 over the conversation's exchanges in order: id, index, timestamp
+ * and message lengths. Cheap (no message text leaves SQLite) and changes
+ * whenever an exchange is added, removed, re-timestamped or re-sized.
+ */
+export function computeConversationFingerprint(
+  db: Database.Database,
+  conversationId: string,
+): string {
+  const rows = db
+    .prepare(
+      `SELECT id, exchange_index, timestamp,
+              length(user_message) AS lu, length(assistant_message) AS la
+       FROM exchanges WHERE conversation_id = ?
+       ORDER BY exchange_index ASC, id ASC`,
+    )
+    .all(conversationId) as Array<{
+      id: string;
+      exchange_index: number | null;
+      timestamp: string | null;
+      lu: number | null;
+      la: number | null;
+    }>;
+
+  const hash = crypto.createHash("sha256");
+  for (const r of rows) {
+    hash.update(`${r.id}|${r.exchange_index ?? ""}|${r.timestamp ?? ""}|${r.lu ?? 0}|${r.la ?? 0}\n`);
+  }
+  return hash.digest("hex");
+}
+
+/**
+ * Latest successful extract checkpoint per conversation across all runs,
+ * mapped to its fingerprint (null for legacy checkpoints recorded before
+ * fingerprints existed). Conversations never extracted are absent.
+ */
+export function getLatestExtractFingerprints(
+  db: Database.Database,
+): Map<string, string | null> {
+  const rows = db
+    .prepare(
+      "SELECT item_id, fingerprint FROM dream_checkpoints WHERE phase = 'extract' AND status = 'success' ORDER BY processed_at ASC, rowid ASC",
+    )
+    .all() as Array<{ item_id: string; fingerprint: string | null }>;
+  const latest = new Map<string, string | null>();
+  for (const r of rows) latest.set(r.item_id, r.fingerprint);
+  return latest;
 }
 
 /**

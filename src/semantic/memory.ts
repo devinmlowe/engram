@@ -13,6 +13,7 @@ import type { Memory, MemoryType, MemorySource, Conflict } from "./types.js";
 import {
   insertVector,
   searchVector,
+  getVector,
   deleteVector,
   insertFtsRow,
   deleteFtsRow,
@@ -302,6 +303,14 @@ export function getMemory(
 
   if (!row) return null;
   return rowToMemory(row);
+}
+
+/** Stored embedding for a memory (active or not); null when none is indexed. */
+export function getMemoryEmbedding(
+  db: Database.Database,
+  id: string,
+): number[] | null {
+  return getVector(db, "vec_memories", id);
 }
 
 /**

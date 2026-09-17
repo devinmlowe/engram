@@ -33,6 +33,8 @@ import {
   getUnprocessedConversations,
   getRetryableItems,
   prioritizeConversations,
+  computeConversationFingerprint,
+  getLatestExtractFingerprints,
 } from "./scheduler.js";
 
 // ─── Types ───────────────────────────────────────────────────────
@@ -56,6 +58,8 @@ export interface DreamOptions {
   conversationId?: string;
   dryRun?: boolean;
   verbose?: boolean;
+  /** Re-extract every conversation even when its fingerprint is unchanged (W12). */
+  force?: boolean;
   onProgress?: (phase: DreamPhase, processed: number, total: number, errors: number) => void;
 }
 
@@ -217,6 +221,7 @@ export async function runDream(
       newMemories: report.newMemories,
       newEntities: report.newEntities,
       memoriesPruned: report.memoriesPruned,
+      skippedUnchanged: report.skippedUnchanged ?? 0,
       commitmentsExtracted: report.commitmentsExtracted ?? 0,
     });
 
@@ -309,6 +314,32 @@ async function runExtractPhase(
   const checkpointed = getCheckpointedItems(db, runId, "extract");
   let toProcess = conversationIds.filter((id) => !checkpointed.has(id));
 
+  // W12: skip conversations whose exchanges are unchanged since their last
+  // successful extraction (any run). Skipped conversations are checkpointed
+  // in this run with the current fingerprint so resume accounting and the
+  // progress tracker see them as done. `force` bypasses the check; legacy
+  // checkpoints (no fingerprint) are extracted once more, then fingerprinted.
+  const fingerprints = new Map<string, string>();
+  if (!options.force) {
+    const latest = getLatestExtractFingerprints(db);
+    const changed: string[] = [];
+    for (const convId of toProcess) {
+      const fingerprint = computeConversationFingerprint(db, convId);
+      fingerprints.set(convId, fingerprint);
+      if (latest.get(convId) === fingerprint) {
+        recordCheckpoint(db, runId, "extract", convId, { fingerprint });
+      } else {
+        changed.push(convId);
+      }
+    }
+    const skipped = toProcess.length - changed.length;
+    report.skippedUnchanged = (report.skippedUnchanged ?? 0) + skipped;
+    if (skipped > 0) {
+      logEntry(logPath, "extract", `Skipping ${skipped} unchanged conversations (fingerprint match)`);
+    }
+    toProcess = changed;
+  }
+
   // Opt-in cap on fact extraction per run (ENGRAM_DREAM_MAX_CONVERSATIONS).
   // Unset = unlimited (nightly behaviour). Lets a manual end-to-end run stay
   // bounded — a full pass over every conversation takes 10-15 hours.
@@ -359,7 +390,9 @@ async function runExtractPhase(
       report.newRelationships += result.relationshipsCreated;
       report.conflictsDetected += result.conflictsDetected;
 
-      recordCheckpoint(db, runId, "extract", convId);
+      recordCheckpoint(db, runId, "extract", convId, {
+        fingerprint: fingerprints.get(convId) ?? computeConversationFingerprint(db, convId),
+      });
       processed++;
 
       options.onProgress?.("extract", processed, toProcess.length, errors);
@@ -406,7 +439,9 @@ async function runExtractPhase(
           report.newRelationships += result.relationshipsCreated;
           report.conflictsDetected += result.conflictsDetected;
 
-          recordCheckpoint(db, runId, "extract", item.itemId);
+          recordCheckpoint(db, runId, "extract", item.itemId, {
+            fingerprint: fingerprints.get(item.itemId) ?? computeConversationFingerprint(db, item.itemId),
+          });
           processed++;
           errors--; // Recovered from previous error
 

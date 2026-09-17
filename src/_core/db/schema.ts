@@ -336,6 +336,12 @@ function createSchema(db: Database.Database, config: EngramConfig): void {
   idempotentAlter(db, "dream_checkpoints", "error_message", "ALTER TABLE dream_checkpoints ADD COLUMN error_message TEXT");
   idempotentAlter(db, "dream_checkpoints", "attempt_count", "ALTER TABLE dream_checkpoints ADD COLUMN attempt_count INTEGER DEFAULT 1");
 
+  // W12: fingerprint of the conversation's exchanges at extract time, so
+  // later runs skip conversations that have not changed (NULL = legacy
+  // checkpoint, extracted once more and then fingerprinted).
+  idempotentAlter(db, "dream_checkpoints", "fingerprint", "ALTER TABLE dream_checkpoints ADD COLUMN fingerprint TEXT");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_dream_checkpoints_item ON dream_checkpoints(phase, item_id)");
+
   // Add extraction_basis metadata to memories
   idempotentAlter(db, "memories", "extraction_basis", "ALTER TABLE memories ADD COLUMN extraction_basis TEXT DEFAULT 'observed'");
 

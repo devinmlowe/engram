@@ -35,6 +35,7 @@ import { embedDocument } from "../_core/embeddings/index.js";
 import {
   findNearestMemories,
   getMemory,
+  getMemoryEmbedding,
   insertMemory,
   recordAccess,
   deactivateMemory,
@@ -42,7 +43,7 @@ import {
   applyContradiction,
 } from "./memory.js";
 import { classifyNli } from "./nli.js";
-import { collapseExact, collapseByEmbedding } from "./collapse.js";
+import { collapseExact, collapseByEmbedding, normalizeContent } from "./collapse.js";
 import { applyTransientPolicy } from "./transient.js";
 
 // ─── Module State ───────────────────────────────────────────────
@@ -64,6 +65,9 @@ const NLI_THRESHOLD = 0.85;
 /** NLI probability thresholds for classification */
 const ENTAILMENT_THRESHOLD = 0.7;
 const CONTRADICTION_THRESHOLD = 0.7;
+
+/** How far up a memory's superseded_by chain the ping-pong guard looks (W12). */
+const SUPERSESSION_CHAIN_MAX_HOPS = 5;
 
 // ─── Initialization ─────────────────────────────────────────────
 
@@ -384,10 +388,30 @@ async function resolveMemoryConflict(
   conversationId: string,
   scope: string,
 ): Promise<DeduplicationResult> {
+  const now = Math.floor(Date.now() / 1000);
+
+  // W12: refuse supersession ping-pong. If the candidate restates a memory
+  // that `existingMemory` (transitively) already superseded, the existing
+  // chain is authoritative — record the conflict for review, create nothing.
+  const predecessor = findSupersededAncestorMatching(db, existingMemory, newFact, newEmbedding);
+  if (predecessor) {
+    const conflictId = crypto.randomUUID();
+    insertConflict(db, {
+      id: conflictId,
+      memoryId: existingMemory.id,
+      conflictingMemoryId: predecessor.id,
+      description:
+        `Supersession ping-pong refused: candidate "${newFact.content.slice(0, 120)}" ` +
+        `restates memory ${predecessor.id}, which ${existingMemory.id} already superseded ` +
+        `(conversation ${conversationId}).`,
+      createdAt: now,
+    });
+    return { action: "skip", memoryId: existingMemory.id, conflictId };
+  }
+
   const resolution = await callConflictResolution(existingMemory, newFact);
 
   const newId = crypto.randomUUID();
-  const now = Math.floor(Date.now() / 1000);
 
   switch (resolution.action) {
     case "update": {
@@ -458,6 +482,59 @@ async function resolveMemoryConflict(
       };
     }
   }
+}
+
+/**
+ * Walk `memory`'s superseded_by chain upward (the memories it replaced, and
+ * theirs, …) for at most SUPERSESSION_CHAIN_MAX_HOPS hops and return the
+ * first ancestor whose content matches the candidate — normalised-equal text
+ * or embedding cosine at/above the auto-merge threshold.
+ */
+function findSupersededAncestorMatching(
+  db: Database.Database,
+  memory: Memory,
+  fact: ExtractedFact,
+  factEmbedding: number[],
+): Memory | null {
+  const predecessorsOf = db.prepare("SELECT id FROM memories WHERE superseded_by = ?");
+  const wanted = normalizeContent(fact.content);
+  const visited = new Set<string>([memory.id]);
+  let frontier = [memory.id];
+
+  for (let hop = 0; hop < SUPERSESSION_CHAIN_MAX_HOPS && frontier.length > 0; hop++) {
+    const next: string[] = [];
+    for (const id of frontier) {
+      const rows = predecessorsOf.all(id) as Array<{ id: string }>;
+      for (const { id: predId } of rows) {
+        if (visited.has(predId)) continue;
+        visited.add(predId);
+        const pred = getMemory(db, predId);
+        if (!pred) continue;
+        if (normalizeContent(pred.content) === wanted) return pred;
+        const predEmbedding = getMemoryEmbedding(db, predId);
+        if (predEmbedding && cosineSimilarity(predEmbedding, factEmbedding) >= AUTO_MERGE_THRESHOLD) {
+          return pred;
+        }
+        next.push(predId);
+      }
+    }
+    frontier = next;
+  }
+  return null;
+}
+
+function cosineSimilarity(a: readonly number[], b: readonly number[]): number {
+  let dot = 0;
+  let na = 0;
+  let nb = 0;
+  const n = Math.min(a.length, b.length);
+  for (let i = 0; i < n; i++) {
+    dot += a[i] * b[i];
+    na += a[i] * a[i];
+    nb += b[i] * b[i];
+  }
+  const denom = Math.sqrt(na) * Math.sqrt(nb);
+  return denom === 0 ? 0 : dot / denom;
 }
 
 /**
