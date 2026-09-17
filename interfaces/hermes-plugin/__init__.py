@@ -79,10 +79,13 @@ Configuration (non-secret, lives in ``$HERMES_HOME/engram.json``, written by
   sync_turns             — post each turn to ingest_turn (default true)
   mirror_memory_writes   — mirror MEMORY.md/USER.md adds+replaces to remember (default true)
   prefetch_contexts      — agent contexts that get per-turn recall (default ["primary"])
+  token                  — bearer token sent as ``Authorization: Bearer …`` when the daemon
+                           runs with ENGRAM_MCP_TOKEN (default "" = none). The one secret in
+                           this file, which is why it is written mode 0600. Never logged.
 
 The stdio transport reads its own keys from the same file (``repo_path``,
 ``node_path``, ``db_path``, ``budget``, ``read_scopes``, ``idle_kill_s``);
-see ``provider.py``. There are no secrets.
+see ``provider.py``.
 """
 
 from __future__ import annotations
@@ -306,6 +309,7 @@ def _load_config(hermes_home: Optional[str] = None) -> Dict[str, Any]:
         "sync_turns": DEFAULT_SYNC_TURNS,
         "mirror_memory_writes": DEFAULT_MIRROR_MEMORY_WRITES,
         "prefetch_contexts": list(DEFAULT_PREFETCH_CONTEXTS),
+        "token": "",
     }
     file_cfg, err = _read_config_file(hermes_home)
     if err:
@@ -324,6 +328,7 @@ def _load_config(hermes_home: Optional[str] = None) -> Dict[str, Any]:
         config.get("mirror_memory_writes"), DEFAULT_MIRROR_MEMORY_WRITES)
     config["prefetch_contexts"] = _coerce_contexts(
         config.get("prefetch_contexts"), DEFAULT_PREFETCH_CONTEXTS)
+    config["token"] = str(config.get("token") or "").strip()
     return config
 
 
@@ -527,8 +532,9 @@ class EngramMcpClient:
     session, forcing a fresh ``initialize`` on the next call.
     """
 
-    def __init__(self, base_url: str):
+    def __init__(self, base_url: str, token: str = ""):
         self.base_url = base_url.rstrip("/")
+        self.token = (token or "").strip()   # sent as Authorization: Bearer on /mcp; never logged
         self.mcp_url = f"{self.base_url}/mcp"
         self._session_id: Optional[str] = None
         self._lock = threading.Lock()
@@ -544,6 +550,8 @@ class EngramMcpClient:
         }
         if session_id:
             h["mcp-session-id"] = session_id
+        if self.token:
+            h["Authorization"] = f"Bearer {self.token}"
         return h
 
     def _rpc_id(self) -> int:
@@ -554,7 +562,7 @@ class EngramMcpClient:
 
     def health(self, timeout: float) -> bool:
         status, _get, raw = _http("GET", f"{self.base_url}/health", None,
-                                  {"Accept": "application/json"}, timeout)
+                                  {"Accept": "application/json"}, timeout)  # /health is never authenticated
         if status != 200:
             raise EngramMcpError(f"/health returned HTTP {status}")
         try:
@@ -698,9 +706,10 @@ class EngramMemoryProvider(MemoryProvider):
         return self._config
 
     def _get_client(self) -> EngramMcpClient:
-        base_url = self._cfg()["base_url"]
-        if self._client is None or self._client.base_url != base_url:
-            self._client = EngramMcpClient(base_url)
+        cfg = self._cfg()
+        base_url, token = cfg["base_url"], cfg["token"]
+        if self._client is None or self._client.base_url != base_url or self._client.token != token:
+            self._client = EngramMcpClient(base_url, token=token)
         return self._client
 
     # -- circuit breaker ------------------------------------------------
@@ -1183,6 +1192,13 @@ class EngramMemoryProvider(MemoryProvider):
                 "description": "Comma-separated agent contexts that get automatic recall (primary, subagent, cron, flush)",
                 "default": ",".join(DEFAULT_PREFETCH_CONTEXTS),
                 "type": "text",
+            },
+            {
+                "key": "token",
+                "description": "Bearer token for a daemon started with ENGRAM_MCP_TOKEN (leave empty for a loopback daemon without auth)",
+                "default": "",
+                "type": "text",
+                "secret": True,
             },
         ]
 

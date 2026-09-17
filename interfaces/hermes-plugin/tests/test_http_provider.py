@@ -102,6 +102,8 @@ class FakeServer:
         self.calls = []                 # (method, path, rpc_method, session, args)
         self.threads = []               # thread name per recorded call
         self.gate = None                # threading.Event: ingest_turn blocks until set
+        self.auth_headers = []          # Authorization header per recorded call (None when absent)
+        self.required_token = None      # when set, /mcp without the matching bearer answers 401 (#27)
         self.ingest_started = threading.Event()
 
     def ingest_calls(self):
@@ -119,6 +121,9 @@ class FakeServer:
         self.calls.append((req.get_method(), path, rpc_method, session,
                            (rpc.get("params") or {}).get("arguments")))
         self.threads.append(threading.current_thread().name)
+        self.auth_headers.append(req.headers.get("Authorization"))
+        if self.required_token and path == "/mcp" and req.headers.get("Authorization") != f"Bearer {self.required_token}":
+            raise urllib.error.HTTPError(req.full_url, 401, "unauthorized", _Headers(), None)
 
         def _maybe_fail(key):
             f = self.fail.get(key)
@@ -487,11 +492,12 @@ def test_config_defaults_and_schema(plugin, provider):
     cfg = plugin._load_config()
     assert cfg == {"base_url": "http://127.0.0.1:9907", "timeout_secs": 4.0,
                    "prefetch_token_budget": 300, "sync_turns": True, "mirror_memory_writes": True,
-                   "prefetch_contexts": ["primary"]}
+                   "prefetch_contexts": ["primary"], "token": ""}
     keys = [f["key"] for f in provider.get_config_schema()]
     assert keys == ["base_url", "timeout_secs", "prefetch_token_budget", "sync_turns",
-                    "mirror_memory_writes", "prefetch_contexts"]
-    assert not any(f.get("secret") for f in provider.get_config_schema())
+                    "mirror_memory_writes", "prefetch_contexts", "token"]
+    # the bearer token (#27) is the only secret field
+    assert [f["key"] for f in provider.get_config_schema() if f.get("secret")] == ["token"]
 
 
 def test_save_config_round_trip(plugin, provider, tmp_path):
@@ -956,3 +962,45 @@ def test_register_collects_provider(plugin):
     plugin.register(ctx)
     assert isinstance(ctx.provider, plugin.EngramMemoryProvider)
     assert ctx.provider.name == "engram"
+
+
+# ---------------------------------------------------------------------------
+# bearer token (#27)
+# ---------------------------------------------------------------------------
+
+def test_token_is_sent_as_bearer_on_mcp_but_never_on_health(plugin, server, tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    (tmp_path / "engram.json").write_text(json.dumps({"token": " s3cr3t "}))
+    server.required_token = "s3cr3t"
+    p = plugin.EngramMemoryProvider()
+    p.initialize("s", hermes_home=str(tmp_path), platform="cli")
+    assert p.unavailable_reason() == ""                          # /health probe needs no token
+    assert "port 9907" in p.prefetch("engram HTTP MCP server")   # initialize + recall carried the bearer
+    mcp_auth = [a for (c, a) in zip(server.calls, server.auth_headers) if c[1] == "/mcp"]
+    assert mcp_auth and all(a == "Bearer s3cr3t" for a in mcp_auth)
+    health_auth = [a for (c, a) in zip(server.calls, server.auth_headers) if c[1] == "/health"]
+    assert health_auth == [None]
+    p.shutdown()
+
+
+def test_missing_token_against_an_authenticated_daemon_is_a_plain_failure(plugin, server, tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    server.required_token = "s3cr3t"
+    p = plugin.EngramMemoryProvider()
+    p.initialize("s", hermes_home=str(tmp_path), platform="cli")
+    assert p.prefetch("q") == ""                                  # 401 -> empty recall, no exception
+    assert p._consecutive_failures == 1
+    p.shutdown()
+
+
+def test_token_change_recreates_the_client(plugin, server, tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    p = plugin.EngramMemoryProvider()
+    p.initialize("s", hermes_home=str(tmp_path), platform="cli")
+    first = p._get_client()
+    assert first.token == ""
+    p.save_config({"token": "abc"}, str(tmp_path))
+    second = p._get_client()
+    assert second is not first and second.token == "abc"
+    assert any(f["key"] == "token" and f.get("secret") for f in p.get_config_schema())
+    p.shutdown()

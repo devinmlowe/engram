@@ -17,11 +17,14 @@ import type { AddressInfo } from "node:net";
 import { randomUUID } from "node:crypto";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { assertBindAllowed, bearerFromHeaders, tokensEqual, MCP_TOKEN_ENV, WWW_AUTHENTICATE } from "./auth.js";
 
 export interface EngramHttpOptions {
   port: number;
-  /** Bind address. Default 127.0.0.1 — the server has no auth. */
+  /** Bind address. Default 127.0.0.1; anything else requires `token` (#27). */
   host?: string;
+  /** Bearer token required on `/mcp` when set. `/health` stays open. */
+  token?: string;
   /** Registers list-tools / call-tool handlers on each per-session Server. */
   registerHandlers: (server: Server) => void;
   serverInfo?: { name: string; version: string };
@@ -103,6 +106,11 @@ export function createEngramHttpServer(options: EngramHttpOptions): EngramHttpSe
       return;
     }
     if (url === "/mcp") {
+      if (options.token && !tokensEqual(bearerFromHeaders(req), options.token)) {
+        res.writeHead(401, { "Content-Type": "application/json", "WWW-Authenticate": WWW_AUTHENTICATE });
+        res.end(JSON.stringify({ error: "unauthorized: Authorization: Bearer <token> required" }));
+        return;
+      }
       handleMcp(req, res).catch((error) => {
         log(`MCP handler crashed: ${String(error)}`);
         if (!res.headersSent) sendJson(res, 500, { error: String(error) });
@@ -118,6 +126,12 @@ export function createEngramHttpServer(options: EngramHttpOptions): EngramHttpSe
     sessions,
     listen: () =>
       new Promise<AddressInfo>((resolve, reject) => {
+        try {
+          assertBindAllowed(host, options.token, MCP_TOKEN_ENV);
+        } catch (err) {
+          reject(err);
+          return;
+        }
         httpServer.once("error", reject);
         httpServer.listen(options.port, host, () => {
           httpServer.off("error", reject);
