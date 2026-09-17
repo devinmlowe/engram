@@ -72,6 +72,9 @@ export function pluginDeployTargets(hermesHome: string): { targets: string[]; pr
   return { targets, profiles };
 }
 
+/** How long a cold start may take before the update gives up on a service. */
+export const START_WAIT_MS: Record<"mcp" | "visualizer" | "dream", number> = { mcp: 90_000, visualizer: 180_000, dream: 30_000 };
+
 export function backupDirFor(dataDir: string, now: Date): string {
   const ts = now.toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z").replace("T", "-");
   return `${dataDir}.backup-${ts}`;
@@ -274,13 +277,17 @@ export async function runUpdate(plan: UpdatePlan, deps: UpdateDeps, opts: { dryR
   if (mig.status !== 0) { say(`  !! migrate failed: ${(mig.stderr || mig.stdout).trim()}`); return finish(false); }
   for (const l of mig.stdout.trim().split("\n")) say(`  ${l}`);
 
-  // 7. restart services in order, MCP first
+  // 7. restart services in order, MCP first. Cold starts are slow: the MCP
+  // daemon loads the embedding model, the visualizer pre-renders every page
+  // over the whole graph (a 15k-entity store takes ~40 s), so each gets its
+  // own budget rather than the 30 s poll default (#46).
   for (const id of START_ORDER) {
     const s = running.find((r) => r.id === id);
     if (!s) continue;
     say(`starting ${s.id} (${s.startCommand})`);
     await startService(s, sdeps);
-    if (!(await waitForPort(s, sdeps, true))) { say(`  !! ${s.id} did not answer on its port within 30s`); return finish(false); }
+    const budget = START_WAIT_MS[s.id];
+    if (!(await waitForPort(s, sdeps, true, budget))) { say(`  !! ${s.id} did not answer on its port within ${budget / 1000}s`); return finish(false); }
   }
   // dream is a timer/scheduled job: nothing to start, but on launchd the agent must be loaded again
   const dream = running.find((r) => r.id === "dream");
@@ -343,7 +350,7 @@ export async function runUpdate(plan: UpdatePlan, deps: UpdateDeps, opts: { dryR
       if (!s) continue;
       try {
         await startService(s, sdeps);
-        const up = await waitForPort(s, sdeps, true, 30_000);
+        const up = await waitForPort(s, sdeps, true, START_WAIT_MS[s.id]);
         out.push(`  restarted ${s.id}${up ? "" : " (port not answering yet)"}`);
       } catch (err) {
         out.push(`  !! could not restart ${s.id}: ${err instanceof Error ? err.message : String(err)} — run: ${s.startCommand}`);
