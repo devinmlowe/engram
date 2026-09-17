@@ -1,6 +1,6 @@
 """EngramMemoryProvider — Hermes memory provider backed by engram (ADR-010).
 
-Architecture (see decisions/adr-010-memory-provider-integration.md):
+Architecture (see decisions/010-memory-provider-integration.md):
 - Spawns engram's MCP server as a persistent stdio child, lazily, and only for
   primary agent contexts (cron/subagent/flush never pay the ~300MB Node cost).
 - Reads recall from the shared knowledge graph (scopes: global + own profile).

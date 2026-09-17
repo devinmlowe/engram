@@ -343,14 +343,24 @@ service restart, never a re-install:
 git fetch origin
 git status --short        # resolve any local changes first
 git pull origin main
-# if package-lock.json changed in the diff, reinstall dependencies:
-#   npm install
-npm install               # also rebuilds via the "prepare" hook and runs the
-                          # install preflight (node >= 22, platform checks)
+npm ci                    # exact dependencies from package-lock.json; rebuilds via
+                          # the "prepare" hook and runs the install preflight
+npm run build             # only needed if you skipped npm ci
+```
+
+Schema migrations are additive and checkpointed; they run on the next database
+open (any `engram` command), so there is no separate migration step. Read
+[CHANGELOG.md](./CHANGELOG.md) for the release's upgrade notes — 0.2.0, for
+example, re-extracts every conversation once on the first dream run (bound it
+with `ENGRAM_DREAM_MAX_CONVERSATIONS`) and needs the Hermes plugin redeployed:
+
+```bash
+interfaces/hermes-plugin/deploy.sh                       # default profile
+ENGRAM_PLUGIN_PROFILES="a b" interfaces/hermes-plugin/deploy.sh   # + named profiles
 ```
 
 Then restart whatever supervises the running processes so they load the new
-`dist/` output:
+`dist/` output (and restart Hermes gateways so they load the redeployed plugin):
 
 | Platform | MCP HTTP daemon | Dream daemon | Visualizer |
 |---|---|---|---|
@@ -576,6 +586,7 @@ At least one must be configured for `engram extract` and `engram dream`; search,
 ## References
 
 - [SPEC.md](./SPEC.md) — Full system specification with requirements and interface contract
+- [CHANGELOG.md](./CHANGELOG.md) — Release notes and upgrade steps per version
 - [docs/history/SPEC-legacy.md](./docs/history/SPEC-legacy.md) — Original vision document with detailed design rationale (archived)
 - [plans/](./plans/) — Implementation plans (phases 1–4, phase 6 RLM, phase 7 extensions)
 - [decisions/](./decisions/) — Architecture Decision Records
