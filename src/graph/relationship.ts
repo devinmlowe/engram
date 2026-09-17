@@ -239,7 +239,7 @@ export function findOrCreateRelationship(
       .get(id) as RelationshipRow;
   });
 
-  const row = run();
+  const row = run.immediate(); // #26: read-then-write, take the write lock up front
   return rowToRelationship(row);
 }
 

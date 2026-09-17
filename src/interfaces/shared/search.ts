@@ -8,6 +8,7 @@
  */
 
 import type Database from "better-sqlite3";
+import { isBusyError, withBusyRetry } from "../../_core/db/busy.js";
 import type {
   SearchSource,
   RecallResponse,
@@ -98,10 +99,15 @@ export function reinforceRecalledMemories(
   if (ids.size === 0) return;
 
   try {
-    db.transaction(() => {
-      for (const id of ids) recordAccess(db, id);
-    }).immediate();
+    // #26: the dream daemon may hold the write lock for a while. Retry a few
+    // times with backoff, then skip — reinforcement is bookkeeping, the
+    // recall result is already in hand.
+    withBusyRetry(
+      () => db.transaction(() => { for (const id of ids) recordAccess(db, id); }).immediate(),
+      { attempts: 3, baseMs: 25 },
+    );
   } catch (error) {
+    if (isBusyError(error)) return; // another writer won; skip this round
     console.error(
       `[engram] recall reinforcement failed for ${ids.size} memories: ${
         error instanceof Error ? error.message : String(error)

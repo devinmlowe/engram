@@ -184,7 +184,7 @@ export function recordCheckpoint(
       fingerprint: details.fingerprint ?? null,
       attempt_count: failed ? (failed.attempt_count ?? 1) + 1 : 1,
     });
-  })();
+  }).immediate(); // #26: read-then-write starts as a writer, no lock upgrade
 }
 
 // ─── Conversation Fingerprints (W12) ────────────────────────────

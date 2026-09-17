@@ -20,6 +20,7 @@ import type Database from "better-sqlite3";
 import type { DreamPhase, DreamReport } from "./types.js";
 import type { EngramConfig } from "../_core/types/index.js";
 import { loadConfig } from "../_core/config/index.js";
+import { acquireDreamLock } from "./lock.js";
 import type { ExtractedFact } from "../semantic/types.js";
 import { OpenRouterError } from "../_core/llm/providers/openrouter.js";
 import { CascadeError } from "../_core/llm/index.js";
@@ -131,6 +132,23 @@ export async function runDream(
 
   setupSignalHandlers(logPath);
   shuttingDown = false;
+
+  // #26: one run per data dir; a second `engram dream` (shell, timer, web
+  // button) fails fast instead of contending for the write lock for hours.
+  const releaseLock = acquireDreamLock(config);
+  try {
+    return await runDreamLocked(db, config, options, { startedAt, logPath });
+  } finally {
+    releaseLock();
+  }
+}
+
+async function runDreamLocked(
+  db: Database.Database,
+  config: EngramConfig,
+  options: DreamOptions,
+  { startedAt, logPath }: { startedAt: number; logPath: string },
+): Promise<DreamReport> {
 
   const phasesToRun = options.phases ?? [
     "ingest", "extract", "consolidate", "reflect", "prune",
@@ -535,6 +553,9 @@ async function runConsolidatePhase(
 
   for (const batch of pendingFacts) {
     if (shuttingDown) break;
+    // #26: each fact commits its own short transaction; yielding between
+    // conversations lets recall reinforcement from the MCP workers slip in.
+    await new Promise<void>((resolve) => setImmediate(resolve));
 
     try {
       // W2: facts inherit the source conversation's tenant scope (ADR-010).
