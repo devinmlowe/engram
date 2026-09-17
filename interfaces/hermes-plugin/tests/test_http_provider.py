@@ -728,7 +728,8 @@ def test_memory_write_add_posts_remember_with_scope_and_type(plugin, server, tmp
     p.shutdown()
     (args,) = server.remember_calls()
     assert args == {"content": "Repo uses pnpm, not npm", "type": "fact", "importance": 0.6,
-                    "source": "import", "scope": "hermes:career"}
+                    "source": "hermes-mirror", "context": "mirrored from built-in memory: add",
+                    "scope": "hermes:career"}
 
 
 def test_memory_write_replace_posts_new_content_only(provider, server):
@@ -738,6 +739,8 @@ def test_memory_write_replace_posts_new_content_only(provider, server):
     (args,) = server.remember_calls()
     assert args["content"] == "Repo uses bun"
     assert "pnpm" not in json.dumps(args)
+    assert args["source"] == "hermes-mirror"
+    assert args["context"] == "mirrored from built-in memory: replace"
 
 
 def test_memory_write_remove_posts_nothing(provider, server):

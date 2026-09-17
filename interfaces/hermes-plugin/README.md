@@ -73,7 +73,7 @@ inheriting the profile scope.
 
 `add` / `replace` of the Hermes MEMORY.md (`memory` → type `fact`) and USER.md
 (`user` → type `preference`) memory tool are mirrored as `remember` under the
-profile scope with `source: "import"` and importance 0.6. `replace` sends only
+profile scope with `source: "hermes-mirror"`, `context: "mirrored from built-in memory: <add|replace>"` and importance 0.6 (servers older than #19 reject `hermes-mirror`; deploy the server first). `replace` sends only
 the new text: engram's `remember` dedup merges/supersedes the old wording
 there. Writes share the turn queue and drain thread.
 

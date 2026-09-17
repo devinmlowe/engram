@@ -7,6 +7,11 @@ All notable changes to engram are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- MCP `ingest_turn` accepts an optional `author {id, name, is_bot}` object, stored as JSON in the new nullable `exchanges.author_json` column; the Hermes plugin forwards `turn_author` and parks queued turns while its circuit breaker is open instead of dropping them (#18).
+- MCP `remember` / `remember_batch` accept `source: "hermes-mirror"` and an optional `context` provenance note (stored in `memories.context`); the Hermes plugin's built-in memory mirror tags its writes with both instead of `source: "import"`. Older servers reject `hermes-mirror`, so deploy the server before the plugin (#19).
+
 ### Security
 
 - npm `overrides` pin the transitive `protobufjs` to `^7.6.3` (code-injection advisories in ≤7.6.2, reached via `@xenova/transformers` → `onnxruntime-web` → `onnx-proto`) and `sharp` to `^0.35.4` (libvips CVEs; engram never uses the image pipeline). `npm audit` reports 0 vulnerabilities; embeddings, the reranker and `engram doctor` were verified live against onnxruntime after the change (#40).

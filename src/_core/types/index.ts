@@ -16,7 +16,7 @@ export type MemoryType =
   | "solution"
   | "convention";
 
-export type MemorySource = "user" | "dream" | "rlm" | "import";
+export type MemorySource = "user" | "dream" | "rlm" | "import" | "hermes-mirror";
 
 // ─── Search & Retrieval ─────────────────────────────────────────
 

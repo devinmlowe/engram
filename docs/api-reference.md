@@ -73,6 +73,8 @@ Store a fact, preference, decision, or other knowledge as a semantic memory. Aut
 | `content` | string | yes | — | The knowledge to remember |
 | `type` | string | no | `"fact"` | One of: `"preference"`, `"decision"`, `"pattern"`, `"fact"`, `"solution"`, `"convention"` |
 | `importance` | number | no | `0.7` | Importance score (0-1) |
+| `source` | string | no | `"user"` | Provenance: `"user"`, `"dream"`, `"rlm"`, `"import"`, `"hermes-mirror"` (the Hermes plugin's built-in memory mirror). `remember_batch` accepts the same per-memory `source` |
+| `context` | string | no | — | Provenance note (≤ 500 chars, trimmed) stored in `memories.context` and FTS-indexed; `remember_batch` accepts it per memory |
 | `scope` | string | no | `ENGRAM_SCOPE` | Tenant scope stamped on the memory; overrides the server's `ENGRAM_SCOPE` for this call only. `remember_batch` accepts the same `scope` |
 
 **Output:** Confirmation text.
@@ -485,6 +487,8 @@ engram import engram.jsonl [options]
 |------|-------------|
 | `-s, --scope <scope>` | Override the scope on every imported memory |
 | `-n, --dry-run` | Validate and report what would change without writing |
+
+**Source values:** a memory record's `source` is one of `user`, `dream`, `rlm`, `import`, `hermes-mirror` and is preserved as exported; a record without one is imported as `import`.
 
 **Idempotency:** records are matched by `id`. An existing row is updated in place only when the incoming record is newer — `updated_at` for memories and relationships, `last_seen` for entities, `resolved_at` for commitments (each falling back to `created_at`) — otherwise it is skipped, so re-importing the same file is a no-op. The whole file is parsed and validated before the first write; a malformed line aborts with nothing changed.
 

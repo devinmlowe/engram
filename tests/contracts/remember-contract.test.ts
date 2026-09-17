@@ -150,6 +150,39 @@ describe("existing remember tool backward compatible", () => {
   });
 });
 
+describe("hermes-mirror provenance (#19)", () => {
+  it("rememberFact stores source hermes-mirror and the context note", async () => {
+    const { rememberFact } = await import("../../src/interfaces/shared/remember.js");
+    const result = await rememberFact(t.db, {
+      content: "User keeps notes in MEMORY.md",
+      type: "fact",
+      importance: 0.6,
+      source: "hermes-mirror",
+      context: "mirrored from built-in memory: add",
+      scope: "hermes:career",
+    });
+    expect(result.action).toBe("created");
+    const mem = getMemory(t.db, result.memoryId);
+    expect(mem!.source).toBe("hermes-mirror");
+    expect(mem!.context).toBe("mirrored from built-in memory: add");
+    expect(mem!.scope).toBe("hermes:career");
+  });
+
+  it("storeMemoryBatch stores per-memory source and context", async () => {
+    const { storeMemoryBatch } = await import("../../src/interfaces/shared/remember.js");
+    const result = await storeMemoryBatch(t.db, [
+      { content: "Batch mirrored preference", type: "preference", source: "hermes-mirror", context: "mirrored from built-in memory: replace" },
+      { content: "Batch plain fact", type: "fact" },
+    ]);
+    expect(result.created).toBe(2);
+    const ids = result.details.map((d) => d.id!);
+    expect(getMemory(t.db, ids[0])!.source).toBe("hermes-mirror");
+    expect(getMemory(t.db, ids[0])!.context).toBe("mirrored from built-in memory: replace");
+    expect(getMemory(t.db, ids[1])!.source).toBe("user");
+    expect(getMemory(t.db, ids[1])!.context).toBeUndefined();
+  });
+});
+
 describe("MCP remember tool schema", () => {
   it("remember tool definition includes optional source parameter", async () => {
     const { readFileSync } = await import("node:fs");

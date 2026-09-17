@@ -40,7 +40,8 @@ the bounded queue loses turns, and that count is reported by
 Built-in memory mirror (``on_memory_write``): ``add``/``replace`` of the
 Hermes MEMORY.md / USER.md memory tool are mirrored as ``remember`` under
 the same profile scope (``memory`` -> fact, ``user`` -> preference,
-``source = "import"``, modest importance). ``replace`` sends only the NEW
+``source = "hermes-mirror"``, ``context`` naming the action, modest
+importance). ``replace`` sends only the NEW
 text; engram's ``remember`` dedups/merges against existing memories, so the
 old wording is superseded there rather than deleted here. ``remove`` is a
 no-op. Writes ride the same bounded queue/drain thread as turns.
@@ -143,7 +144,7 @@ _TOOL_IO_MAX_CHARS = 1000
 TURN_SOURCE = "hermes"
 
 # on_memory_write mirror: engram ``remember`` source label + importance.
-_MIRROR_SOURCE = "import"
+_MIRROR_SOURCE = "hermes-mirror"
 _MIRROR_IMPORTANCE = 0.6
 _MIRROR_TYPE_BY_TARGET = {"memory": "fact", "user": "preference"}
 _MIRRORED_ACTIONS = ("add", "replace")
@@ -1031,7 +1032,8 @@ class EngramMemoryProvider(MemoryProvider):
         """Mirror a committed MEMORY.md / USER.md write into engram (non-blocking).
 
         ``add``/``replace`` enqueue a ``remember`` under the profile scope with
-        the NEW text (``replace`` old text arrives only in ``metadata["old_text"]``
+        the NEW text, ``source: "hermes-mirror"`` and a ``context`` note naming
+        the action (``replace`` old text arrives only in ``metadata["old_text"]``
         and is not sent; engram's remember dedup supersedes it). ``remove`` and
         unknown actions are no-ops. Nothing runs on the caller thread but the
         enqueue.
@@ -1049,6 +1051,7 @@ class EngramMemoryProvider(MemoryProvider):
             "type": _MIRROR_TYPE_BY_TARGET.get(str(target), "fact"),
             "importance": _MIRROR_IMPORTANCE,
             "source": _MIRROR_SOURCE,
+            "context": f"mirrored from built-in memory: {action}",
             "scope": self._write_scope(),
         })
 

@@ -187,6 +187,18 @@ describe("per-request scope params are advertised in the tool schemas", () => {
     expect(properties("recall_drill").scope).toBeUndefined();
   });
 
+  it.each(["remember", "remember_batch"])("%s source enum includes hermes-mirror and context is a bounded string (#19)", (tool) => {
+    const props = properties(tool);
+    const memoryProps = tool === "remember"
+      ? props
+      : ((props.memories as { items: { properties: Record<string, unknown> } }).items.properties);
+    expect(memoryProps.source).toMatchObject({
+      type: "string",
+      enum: ["user", "dream", "rlm", "import", "hermes-mirror"],
+    });
+    expect(memoryProps.context).toMatchObject({ type: "string", maxLength: 500 });
+  });
+
   it("ingest_turn declares an optional closed author {id, name, is_bot} object (#18)", () => {
     const props = properties("ingest_turn");
     expect(props.author).toMatchObject({

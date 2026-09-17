@@ -114,7 +114,7 @@ const VALID_MEMORY_TYPES: readonly MemoryType[] = [
 
 const VALID_SOURCES: readonly SearchSource[] = ["episodic", "semantic", "graph"];
 
-const VALID_MEMORY_SOURCES: readonly MemorySource[] = ["user", "dream", "rlm", "import"];
+const VALID_MEMORY_SOURCES = ["user", "dream", "rlm", "import", "hermes-mirror"] as const satisfies readonly MemorySource[];
 
 
 // ─── Input Schemas ─────────────────────────────────────────────
@@ -206,7 +206,8 @@ const RememberInputSchema = z.object({
     "convention",
   ]).optional().default("fact"),
   importance: z.number().min(0).max(1).optional().default(0.7),
-  source: z.enum(["user", "dream", "rlm", "import"]).optional().default("user"),
+  source: z.enum(VALID_MEMORY_SOURCES).optional().default("user"),
+  context: z.string().trim().max(500, "context must be at most 500 characters").optional(),
 });
 
 const RememberBatchInputSchema = z.object({
@@ -221,7 +222,8 @@ const RememberBatchInputSchema = z.object({
       "convention",
     ]).optional().default("fact"),
     importance: z.number().min(0).max(1).optional(),
-    source: z.enum(["user", "dream", "rlm", "import"]).optional(),
+    source: z.enum(VALID_MEMORY_SOURCES).optional(),
+    context: z.string().trim().max(500, "context must be at most 500 characters").optional(),
     relates_to_entities: z.array(z.string()).max(10).optional(),
   })).min(1, "At least one memory is required").max(50, "Maximum batch size is 50"),
   scope: ScopeParamSchema.optional(),
@@ -486,9 +488,14 @@ export const MCP_TOOL_DEFINITIONS: Tool[] = [
         },
         source: {
           type: "string",
-          enum: ["user", "dream", "rlm", "import"],
+          enum: [...VALID_MEMORY_SOURCES],
           default: "user",
-          description: "Source of this memory (user, dream, rlm, import)",
+          description: "Source of this memory (user, dream, rlm, import, hermes-mirror)",
+        },
+        context: {
+          type: "string",
+          maxLength: 500,
+          description: "Provenance note stored alongside the memory (e.g. what produced this write)",
         },
         scope: {
           type: "string",
@@ -551,8 +558,13 @@ export const MCP_TOOL_DEFINITIONS: Tool[] = [
               },
               source: {
                 type: "string",
-                enum: ["user", "dream", "rlm", "import"],
-                description: "Source of this memory",
+                enum: [...VALID_MEMORY_SOURCES],
+                description: "Source of this memory (user, dream, rlm, import, hermes-mirror)",
+              },
+              context: {
+                type: "string",
+                maxLength: 500,
+                description: "Provenance note stored alongside the memory",
               },
               relates_to_entities: {
                 type: "array",
@@ -1249,6 +1261,7 @@ export async function handleToolCall(name: string, args: unknown): Promise<ToolR
           type: params.type as MemoryType,
           importance: params.importance,
           source: params.source as MemorySource,
+          context: params.context || undefined,
           scope: resolveCallScoping(process.env, params).writeScope,
         },
         // The merge runs inside a synchronous tool call; the dream pipeline's
@@ -1294,6 +1307,7 @@ export async function handleToolCall(name: string, args: unknown): Promise<ToolR
         type: m.type as MemoryType,
         importance: m.importance,
         source: m.source as MemorySource | undefined,
+        context: m.context || undefined,
         relates_to_entities: m.relates_to_entities,
       }));
 
