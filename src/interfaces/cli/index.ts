@@ -308,6 +308,7 @@ program
         merge: 0,
         conflict: 0,
         skip: 0,
+        error: 0,
       };
       for (const cr of consolidationResults) {
         actions[cr.action]++;
@@ -318,6 +319,7 @@ program
       console.log(`  Merged:   ${actions.merge}`);
       console.log(`  Conflicts: ${actions.conflict}`);
       console.log(`  Skipped:  ${actions.skip}`);
+      if (actions.error > 0) console.log(`  Failed:   ${actions.error}`);
     } finally {
       closeDatabase();
     }
@@ -741,21 +743,13 @@ program
     const db = getDatabase(config);
     try {
       const depth = parseInt(opts.depth, 10);
-      let result;
-      try {
-        result = exploreEntity(db, {
-          entity,
-          depth: Math.min(Math.max(depth, 1), 3),
-          relationshipTypes: opts.type ? [opts.type] : undefined,
-        });
-      } catch (err) {
-        // graph SPEC POST-2: unknown entity is a descriptive throw
-        if (err instanceof Error && err.message.startsWith("Entity not found")) {
-          console.error(err.message);
-          process.exit(1);
-        }
-        throw err;
-      }
+      // graph SPEC POST-2: an unknown entity is a descriptive throw; the
+      // top-level handler prints it as one line and exits 1 (#29, #37).
+      const result = exploreEntity(db, {
+        entity,
+        depth: Math.min(Math.max(depth, 1), 3),
+        relationshipTypes: opts.type ? [opts.type] : undefined,
+      });
       console.log(`\n${result.centerEntity.name} (${result.centerEntity.type})`);
       if (result.centerEntity.description) {
         console.log(`  ${result.centerEntity.description}`);
@@ -1188,7 +1182,13 @@ program
     }
   });
 
-program.parse();
+// #37: an async action that throws must surface as one line + exit 1, not
+// an unhandled-rejection stack trace. Per-command catches that need their
+// own wording keep it; everything else lands here.
+program.parseAsync(process.argv).catch((err: unknown) => {
+  console.error(err instanceof Error ? err.message : String(err));
+  process.exit(1);
+});
 
 // ─── Reflect Formatting ──────────────────────────────────────────
 

@@ -385,7 +385,9 @@ describe("Error handling", () => {
   it("logs extraction errors as error checkpoints", async () => {
     seedConversation("conv-001");
 
-    vi.mocked(extractFromConversation).mockRejectedValueOnce(
+    // Fails on the main loop and again on the retry pass. (A one-shot
+    // rejection recovers on the retry, which since #35 leaves no error row.)
+    vi.mocked(extractFromConversation).mockRejectedValue(
       new Error("LLM timeout"),
     );
 
@@ -432,6 +434,42 @@ describe("Error handling", () => {
     }
     // A rejected key is a provider error — not retried as "unknown".
     expect(rows[0].error_class).toBe("provider");
+  });
+
+  it("a conversation that fails transiently and then succeeds on the retry pass leaves one success row and no reported error (#35)", async () => {
+    seedConversation("conv-001");
+    seedConversation("conv-002");
+
+    let conv001Calls = 0;
+    vi.mocked(extractFromConversation).mockImplementation(async (convId: string) => {
+      if (convId === "conv-001" && conv001Calls++ === 0) {
+        throw new Error("OpenRouter request timed out (503)");
+      }
+      return {
+        facts: [{ type: "fact", content: `${convId} fact`, importance: 0.7, sourceExchangeIds: [] }],
+        model: "test-model",
+        tier: "haiku",
+        confidence: 8,
+        durationMs: 100,
+      };
+    });
+
+    const report = await runDream(t.db, t.config, { phases: ["extract"] });
+
+    expect(conv001Calls).toBe(2); // main loop + retry pass
+    const phase = report.phases.find((p) => p.phase === "extract")!;
+    expect(phase.itemsProcessed).toBe(2);
+    expect(phase.errors).toBe(0); // the retry pass decrements the recovered error
+
+    const rows = t.db
+      .prepare(
+        "SELECT item_id, status, attempt_count FROM dream_checkpoints WHERE phase = 'extract' ORDER BY item_id",
+      )
+      .all() as Array<Record<string, unknown>>;
+    expect(rows).toEqual([
+      { item_id: "conv-001", status: "success", attempt_count: 2 },
+      { item_id: "conv-002", status: "success", attempt_count: 1 },
+    ]);
   });
 
   it("an always-failing cascade leaves exactly one extract error row per conversation per run, with attempt_count counting the retry (#24)", async () => {
@@ -631,6 +669,103 @@ describe("Phase runners", () => {
       expect(rows).toHaveLength(2);
       expect(rows[0]).toMatchObject({ item_id: "conv-001", status: "error", error_class: "transient", attempt_count: 1 });
       expect(String(rows[0].error_message)).toMatch(/anthropic \(unknown\): No tool_use block in API response/);
+      expect(rows[1]).toMatchObject({ item_id: "conv-002", status: "success" });
+    });
+  });
+
+  describe("checkpoint error_class from CascadeError tierErrors (#34)", () => {
+    // The consolidate phase has no retry pass, so the recorded class is the
+    // classifier's verdict, not a retry escalation.
+    async function consolidateErrorClass(err: unknown): Promise<string> {
+      seedConversation("conv-001");
+      vi.mocked(consolidateFacts).mockRejectedValue(err);
+      await runDream(t.db, t.config, { phases: ["extract", "consolidate"] });
+      const row = t.db
+        .prepare("SELECT error_class FROM dream_checkpoints WHERE phase = 'consolidate' AND status = 'error' AND item_id = 'conv-001'")
+        .get() as { error_class: string };
+      return row.error_class;
+    }
+
+    it("takes the most severe attempted tier: ollama 500 + openrouter 401 → provider, not the first status in the message", async () => {
+      const cascade = new CascadeError([
+        { tier: "ollama", errorClass: "transient", message: "Ollama HTTP 500: internal error" },
+        { tier: "openrouter", errorClass: "provider", message: "OpenRouter API error 401: {\"error\":{\"message\":\"User not found.\",\"code\":401}}" },
+        { tier: "anthropic", errorClass: "config", message: "skipped: ANTHROPIC_API_KEY not set" },
+      ]);
+      expect(await consolidateErrorClass(cascade)).toBe("provider");
+    });
+
+    it("an all-config-skipped cascade is permanent (retrying within the run cannot help)", async () => {
+      const cascade = new CascadeError([
+        { tier: "ollama", errorClass: "config", message: "skipped: Ollama not reachable at http://localhost:11434" },
+        { tier: "openrouter", errorClass: "config", message: "skipped: OPENROUTER_API_KEY not set" },
+        { tier: "anthropic", errorClass: "config", message: "skipped: ANTHROPIC_API_KEY not set" },
+      ]);
+      expect(await consolidateErrorClass(cascade)).toBe("permanent");
+    });
+
+    it("a non-cascade error still falls back to the message regex: a 500 is transient", async () => {
+      expect(await consolidateErrorClass(new Error("Request failed with status 500"))).toBe("transient");
+    });
+
+    it("a cascade wrapped as `cause` (the extractor's wrapper, #15) classifies the same as the bare cascade", async () => {
+      const cascade = new CascadeError([
+        { tier: "ollama", errorClass: "transient", message: "Ollama HTTP 500: internal error" },
+        { tier: "openrouter", errorClass: "provider", message: "OpenRouter API error 401: User not found." },
+        { tier: "anthropic", errorClass: "config", message: "skipped: ANTHROPIC_API_KEY not set" },
+      ]);
+      const wrapped = new Error(`All extraction tiers failed for conversation conv-001: ${cascade.message}`, { cause: cascade });
+      expect(await consolidateErrorClass(wrapped)).toBe("provider");
+    });
+  });
+
+  describe("Consolidate phase partial-batch failure (#36)", () => {
+    it("stores and counts the surviving facts, records one error checkpoint for the batch, and still processes the next batch", async () => {
+      seedConversation("conv-001");
+      seedConversation("conv-002");
+      vi.mocked(extractFromConversation).mockImplementation(async (convId: string) => ({
+        facts: [1, 2, 3].map((i) => ({
+          type: "fact" as const,
+          content: `${convId} fact ${i}`,
+          importance: 0.7,
+          sourceExchangeIds: [],
+        })),
+        model: "test-model",
+        tier: "haiku",
+        confidence: 8,
+        durationMs: 100,
+      }));
+
+      const cascade = new CascadeError([
+        { tier: "ollama", errorClass: "config", message: "skipped: Ollama not reachable at http://localhost:11434" },
+        { tier: "openrouter", errorClass: "config", message: "skipped: OPENROUTER_API_KEY not set" },
+        { tier: "anthropic", errorClass: "unknown", message: "No tool_use block in API response" },
+      ]);
+      // conv-001: the consolidator continues past fact 2 and reports it in place.
+      vi.mocked(consolidateFacts).mockImplementation(async (_db, facts, conversationId) =>
+        facts.map((_f, i) =>
+          conversationId === "conv-001" && i === 1
+            ? { action: "error", memoryId: "", error: cascade }
+            : { action: "insert", memoryId: `mem-${conversationId}-${i}` },
+        ),
+      );
+
+      const report = await runDream(t.db, t.config, { phases: ["extract", "consolidate"] });
+
+      expect(vi.mocked(consolidateFacts).mock.calls.map((c) => c[2])).toEqual(["conv-001", "conv-002"]);
+      expect(report.newMemories).toBe(5); // 2 survivors from conv-001 + 3 from conv-002
+      const phase = report.phases.find((p) => p.phase === "consolidate")!;
+      expect(phase.errors).toBe(1);
+      expect(phase.itemsProcessed).toBe(1);
+
+      const rows = t.db
+        .prepare(
+          "SELECT item_id, status, error_class, error_message, attempt_count FROM dream_checkpoints WHERE phase = 'consolidate' ORDER BY item_id",
+        )
+        .all() as Array<Record<string, unknown>>;
+      expect(rows).toHaveLength(2); // one row per batch: no success row alongside the error row
+      expect(rows[0]).toMatchObject({ item_id: "conv-001", status: "error", error_class: "transient", attempt_count: 1 });
+      expect(String(rows[0].error_message)).toMatch(/^1 of 3 facts failed: .*anthropic \(unknown\): No tool_use block in API response/);
       expect(rows[1]).toMatchObject({ item_id: "conv-002", status: "success" });
     });
   });

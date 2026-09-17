@@ -549,6 +549,41 @@ describe("Progress Tracking", () => {
       expect(getRetryableItems(t.db, runId, "extract")[0]?.attempts).toBe(2);
     });
 
+    it("a success checkpoint supersedes the same item's error row in the same run (#35)", () => {
+      const runId = createRun(t.db);
+      insertConversation("conv-001");
+      insertConversation("conv-002");
+
+      recordFailure(t.db, runId, "extract", "conv-001", {
+        provider: "auto",
+        errorClass: "transient",
+        errorMessage: "LLM timeout",
+      });
+      recordCheckpoint(t.db, runId, "extract", "conv-002");
+      // conv-001 recovers on the retry pass
+      recordCheckpoint(t.db, runId, "extract", "conv-001", { fingerprint: "fp-1" });
+
+      const rows = t.db
+        .prepare(
+          "SELECT status, error_class, fingerprint, attempt_count FROM dream_checkpoints WHERE run_id = ? AND phase = 'extract' AND item_id = 'conv-001'",
+        )
+        .all(runId) as Array<Record<string, unknown>>;
+      expect(rows).toEqual([{ status: "success", error_class: null, fingerprint: "fp-1", attempt_count: 2 }]);
+
+      const progress = getPhaseProgress(t.db, runId, "extract");
+      expect(progress.processed).toBe(2); // one row per item, not inflated by the superseded error
+      expect(progress.errors).toBe(0);
+      expect(getRetryableItems(t.db, runId, "extract")).toEqual([]);
+      expect(isCheckpointed(t.db, runId, "extract", "conv-001")).toBe(true);
+
+      // Another run's error row for the same item is untouched.
+      const run2 = createRun(t.db);
+      recordFailure(t.db, run2, "extract", "conv-001", { errorClass: "unknown" });
+      recordCheckpoint(t.db, runId, "extract", "conv-001"); // idempotent re-record in run 1
+      expect(getPhaseProgress(t.db, run2, "extract").errors).toBe(1);
+      expect(getPhaseProgress(t.db, runId, "extract").processed).toBe(2);
+    });
+
     it("counts errors from error status checkpoints", () => {
       const runId = createRun(t.db);
       insertConversation("conv-001");

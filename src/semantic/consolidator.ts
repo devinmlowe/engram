@@ -159,7 +159,9 @@ export interface ConsolidateOptions {
  * embedding cosine at the auto-merge threshold. Survivors are then
  * deduplicated against the DB sequentially (order matters). The result list
  * has one entry per input fact, in input order: a collapsed member reports
- * a `merge` into whatever memory its survivor resolved to.
+ * a `merge` into whatever memory its survivor resolved to. A fact whose
+ * deduplication throws is reported as `error` (with the cause) and the
+ * remaining facts are still processed (#36).
  */
 export async function consolidateFacts(
   db: Database.Database,
@@ -178,15 +180,25 @@ export async function consolidateFacts(
 
   const survivorResults: DeduplicationResult[] = [];
   for (let i = 0; i < near.survivors.length; i++) {
-    survivorResults.push(
-      await deduplicateEmbeddedFact(
-        db,
-        near.survivors[i],
-        near.embeddings[i],
-        conversationId,
-        options,
-      ),
-    );
+    try {
+      survivorResults.push(
+        await deduplicateEmbeddedFact(
+          db,
+          near.survivors[i],
+          near.embeddings[i],
+          conversationId,
+          options,
+        ),
+      );
+    } catch (err) {
+      // #36: one fact's failure (typically LLM conflict resolution) must not
+      // drop the rest of the batch. Report it in place and carry on.
+      survivorResults.push({
+        action: "error",
+        memoryId: "",
+        error: err instanceof Error ? err : new Error(String(err)),
+      });
+    }
   }
 
   const results: DeduplicationResult[] = [];
@@ -197,6 +209,8 @@ export async function consolidateFacts(
     if (!reported.has(survivor)) {
       reported.add(survivor);
       results.push(base);
+    } else if (base.action === "error") {
+      results.push({ ...base, collapsed: true });
     } else {
       results.push({
         action: "merge",
