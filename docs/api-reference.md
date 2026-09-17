@@ -24,6 +24,11 @@ Retrieve relevant memories from past conversations and extracted knowledge. Uses
 | `dateBasis` | string | no | `"filed"` | What dates refer to. `"filed"` = when the memory was recorded (memories **in** March). `"event"` = when the described events happened, via the earliest source-exchange timestamp with `created_at` as fallback (memories **about** March). Episodic results are identical under both |
 | `depth` | string | no | `"shallow"` | `"shallow"` or `"deep"` |
 | `sources` | string[] | no | `["episodic", "semantic"]` | Memory stores to search: `"episodic"`, `"semantic"`, `"graph"` |
+| `scope` | string | no | `ENGRAM_SCOPE` | Tenant identity for this call (e.g. `"hermes:career"`); reads default to `global` + this scope. Overrides the server's `ENGRAM_SCOPE` for this call only |
+| `read_scopes` | string[] | no | `ENGRAM_READ_SCOPES` | Explicit scopes to read from (e.g. `["global", "hermes:career"]`). Overrides `ENGRAM_READ_SCOPES` for this call only |
+| `reinforce` | boolean | no | `true` | Reinforce the semantic memories this call returns — FSRS bookkeeping: `access_count`, `last_accessed` and stability growth. Set `false` for read-only/diagnostic callers |
+
+**Reinforcement and `readOnlyHint`.** Retrieval strengthens the returned memories' FSRS stability (they decay more slowly) and records the access; it never creates, edits or deletes a memory or changes its content, so `recall`, `recall_session` and `recall_drill` keep `readOnlyHint: true` (a write hint would make MCP clients confirm every recall). Pass `reinforce: false` to opt out. The same three params (`scope`, `read_scopes`, `reinforce`) exist on `recall_session`; `recall_drill` takes `reinforce` only (it drills an already-scoped session result).
 
 **Output:** XML-formatted results within the token budget. When any date filter was requested the first child is a `<date_filter>` element describing exactly what was applied (`basis`, `after`, `before`, `anniversary="MM-DD"`, `hint`, `overridden`, `note`). Semantic results carry a `date` attribute: the basis date they were filtered on.
 
@@ -68,6 +73,7 @@ Store a fact, preference, decision, or other knowledge as a semantic memory. Aut
 | `content` | string | yes | — | The knowledge to remember |
 | `type` | string | no | `"fact"` | One of: `"preference"`, `"decision"`, `"pattern"`, `"fact"`, `"solution"`, `"convention"` |
 | `importance` | number | no | `0.7` | Importance score (0-1) |
+| `scope` | string | no | `ENGRAM_SCOPE` | Tenant scope stamped on the memory; overrides the server's `ENGRAM_SCOPE` for this call only. `remember_batch` accepts the same `scope` |
 
 **Output:** Confirmation text.
 
@@ -190,6 +196,29 @@ Resolve a commitment once the user confirms it is handled.
 
 **Output:** `Commitment <id> marked <status>: <content>`. Resolved items leave the default pending list; `resolved_at` is recorded.
 
+### ingest_turn
+
+Record one user/assistant turn of an external agent conversation (e.g. a Hermes profile) in the episodic layer so it becomes searchable and feeds the nightly dream extraction. This is how hosts other than Claude Code get conversations into engram (the Hermes plugin's `sync_turns` calls it per turn).
+
+**Input Schema:**
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `session_id` | string | yes | — | Caller's conversation/session identifier, stable across turns |
+| `turn_index` | integer | yes | — | 0-based position of the turn within the session |
+| `scope` | string | yes | — | Tenant scope of the conversation (e.g. `"hermes:career"`) |
+| `user_text` | string | yes | — | The user's message |
+| `assistant_text` | string | yes | — | The assistant's reply |
+| `tool_calls` | object[] | no | — | `{name, input?, output?}` per tool invoked during the turn (input/output truncated to 1000 chars) |
+| `timestamp` | string | no | now | ISO-8601 time of the turn |
+| `source` | string | no | `"hermes"` | Platform label; part of the conversation key |
+
+**Idempotency:** the conversation id is `<source>:<session_id>` and the exchange id `<source>:<session_id>:<turn_index>`; re-sending the same key updates the turn in place, so a restarted client re-sending indexes 0… of a resumed session never duplicates rows. Gaps in `turn_index` are tolerated.
+
+**Scope inheritance:** the conversation row carries `scope`, and every memory the dream pipeline later extracts from it inherits that scope (`conversations.scope` → extracted memories), so per-tenant recall sees them and other tenants do not.
+
+**Output:** JSON `{ "conversationId", "exchangeId", "created": true|false }` (`created` is false on an update).
+
 ## CLI Commands
 
 All commands are invoked as `engram <command> [options]`.
@@ -240,6 +269,7 @@ engram search "database setup" [options]
 | `--date-basis <basis>` | `filed` (when recorded, default) or `event` (when the described events happened) |
 | `--budget <tokens>` | Token budget for results (default: `1500`) |
 | `--json` | Print the raw `RecallResponse` as JSON (ids, metadata, `dateFilter`) |
+| `--no-reinforce` | Do not reinforce returned memories (skip the FSRS `access_count` / stability growth that a normal search records) |
 
 ---
 
@@ -334,7 +364,14 @@ engram dream [options]
 | `--phase <phase>` | Run only a specific phase: `ingest`, `extract`, `consolidate`, `reflect`, `prune` |
 | `--conversation <id>` | Process a specific conversation |
 | `--dry-run` | Show what would be processed without changes |
+| `--force` | Re-extract conversations even when unchanged since their last extraction (ignores the extract fingerprint) |
 | `--verbose` | Show detailed progress |
+
+**Extract fingerprint.** Each successful extract checkpoint stores a sha256 over the conversation's exchanges (id, index, timestamp and message text). On later runs a conversation whose fingerprint is unchanged is skipped — an added, removed, re-timestamped or edited exchange (including a same-length in-place edit from `ingest_turn`) changes it. `--force` ignores the fingerprint.
+
+**Report.** The summary printed at the end (and the `DreamReport` returned by `runDream`) carries per-phase items/errors/duration plus `New memories`, `Updated memories`, `New entities`, `New relationships`, `Conflicts`, `Pruned`, `Skipped unchanged` (`skippedUnchanged`: conversations skipped by fingerprint), `Collapsed dupes` (`collapsedCandidates`: candidate facts folded into a near-duplicate sibling before insertion, across the run and within each batch) and `Commitments`.
+
+**Failure classification.** Every LLM call walks the tier cascade (Ollama → OpenRouter → Anthropic). When all tiers fail the error names each tier and its reason (a config skip such as a missing key or un-pulled model, or a runtime failure such as an OpenRouter 401), and that text is what an extract/consolidate error checkpoint's `error_message` records — one checkpoint row per conversation per run, `attempt_count` incremented on retry.
 
 ---
 
@@ -416,6 +453,44 @@ This is typically not invoked directly — Claude Code launches it via the MCP c
 
 ---
 
+### engram export
+
+Export memories, entities, relationships and commitments as JSONL v1 (embeddings are not exported).
+
+```bash
+engram export [options] > engram.jsonl
+```
+
+| Flag | Description |
+|------|-------------|
+| `-o, --out <file>` | Write to a file instead of stdout |
+| `-s, --scope <scope...>` | Only memories in these scopes (default: all scopes) |
+| `--include-inactive` | Include superseded/inactive memories (default: active only) |
+| `--kinds <list>` | Comma-separated record kinds: `memories,entities,relationships,commitments` (default: all four) |
+
+**Format:** one JSON object per line. Line 1 is a header — `{"kind":"header","v":1,"exported_at","schema_version","counts","scopes","include_inactive","embeddings":"not exported; regenerated on import from content"}` — then one `{"kind":"memory"|"entity"|"relationship"|"commitment","v":1,"data":{…every column, JSON columns decoded, booleans as true/false}}` per row. Embeddings are deliberately omitted: they are model-specific and large, and the importing database regenerates them.
+
+---
+
+### engram import \<file\>
+
+Import a JSONL v1 file produced by `engram export`.
+
+```bash
+engram import engram.jsonl [options]
+```
+
+| Flag | Description |
+|------|-------------|
+| `-s, --scope <scope>` | Override the scope on every imported memory |
+| `-n, --dry-run` | Validate and report what would change without writing |
+
+**Idempotency:** records are matched by `id`. An existing row is updated in place only when the incoming record is newer — `updated_at` for memories and relationships, `last_seen` for entities, `resolved_at` for commitments (each falling back to `created_at`) — otherwise it is skipped, so re-importing the same file is a no-op. The whole file is parsed and validated before the first write; a malformed line aborts with nothing changed.
+
+**Cost:** every imported memory and entity is re-embedded from its content and re-indexed into the FTS5 and vector tables, so importing is bounded by embedding throughput (roughly the speed of `engram sync`), not by file size.
+
+---
+
 ### engram health
 
 Check system health — database, embedding model, Ollama, MCP server, and tool availability.
@@ -462,11 +537,14 @@ interface EngramConfig {
 
   // Dream state processing
   dream: {
-    localModel?: string;        // MLX model path (optional)
+    localModel?: string;        // Ollama model tag (ENGRAM_LOCAL_MODEL; default qwen2.5:7b at call time)
+    localModelFallbacks?: string[]; // Ollama tags tried in order when localModel is not pulled (ENGRAM_LOCAL_MODEL_FALLBACKS)
+    openrouterModel?: string;   // OpenRouter model id (ENGRAM_OPENROUTER_MODEL)
     apiModel: string;           // "claude-haiku-4-5-20251001"
     apiFallbackModel: string;   // "claude-sonnet-4-6"
     concurrency: number;        // 1
     scheduleHour: number;       // 2 (2 AM)
+    chunkingStrategy: "fixed" | "adaptive"; // ENGRAM_CHUNKING_STRATEGY, default "fixed"
   };
 
   // Confidence decay rates per memory type

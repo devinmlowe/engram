@@ -275,7 +275,7 @@ Four domains with shared core infrastructure:
 
 | Tool | Purpose |
 |------|---------|
-| `recall` | Hybrid search (vector + FTS5 + graph) with token budget |
+| `recall` | Hybrid search (vector + FTS5 + graph) with token budget; reinforces returned memories (FSRS bookkeeping, `reinforce: false` opts out) and accepts per-call `scope` / `read_scopes` |
 | `remember` | Store a single memory (fact, decision, pattern, etc.) |
 | `show` | Retrieve full conversation or memory context |
 | `explore` | Fixed-depth graph traversal from an entity |
@@ -289,7 +289,7 @@ Four domains with shared core infrastructure:
 | `scan_file` | Regex-based file scanning with function context detection |
 | `commitments` | List tracked commitments (promises, intentions, follow-ups owed by others) — overdue first |
 | `commitments_update` | Mark a commitment done, dropped, or superseded |
-| `ingest_turn` | Record one user/assistant turn of an external agent session (`session_id`, `turn_index`, `scope`, `user_text`, `assistant_text`) — idempotent upsert into the episodic layer |
+| `ingest_turn` | Record one user/assistant turn of an external agent session (`session_id`, `turn_index`, `scope`, `user_text`, `assistant_text`) — idempotent upsert into the episodic layer; extracted memories inherit the scope |
 
 ### Transports: stdio (default) and HTTP
 
@@ -378,7 +378,7 @@ engram sync            # Ingest conversations from Claude Code projects
 engram search <query>  # Hybrid search across all memory layers
 engram remember <text> # Store a memory
 engram extract         # LLM-based fact extraction from a conversation
-engram dream           # Run autonomous consolidation pipeline
+engram dream           # Run autonomous consolidation pipeline (--force re-extracts unchanged conversations)
 engram reflect         # Show emergent graph patterns
 engram explore <name>  # Explore entity connections
 engram entities        # List/search entities
@@ -504,7 +504,7 @@ Run via `engram dream`, the web UI dream button, or nightly at 02:00 via `script
 
 ```bash
 npm run build        # TypeScript compilation
-npm run test:run     # Run tests (vitest, 56 test files)
+npm run test:run     # Run tests (vitest, 111 test files)
 npm run mcp          # Start MCP server
 npm run dev          # Dev CLI via tsx
 npm run dream        # Run dream consolidation

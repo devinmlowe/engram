@@ -173,19 +173,26 @@ re-storing the same fact is safe.
 
 ### Scoping (multi-tenant)
 
-Scoping is set by **environment variables on the engram server process**, not
-by tool arguments, so the model cannot escalate its own scope.
+Scoping has a per-process default and a per-call override.
 
 | Variable | Effect |
 |----------|--------|
-| `ENGRAM_SCOPE` | Write scope stamped on every `remember` / `remember_batch`. |
-| `ENGRAM_READ_SCOPES` | Comma-separated scopes `recall` may return. When unset but `ENGRAM_SCOPE` is set, defaults to `global` plus the write scope. |
+| `ENGRAM_SCOPE` | Default write scope stamped on every `remember` / `remember_batch`. |
+| `ENGRAM_READ_SCOPES` | Comma-separated scopes `recall` may return by default. When unset but `ENGRAM_SCOPE` is set, defaults to `global` plus the write scope. |
 
-With neither set the server is single-tenant: writes land in `global`, reads
+Per call, `recall` and `recall_session` accept `scope` (reads then default to
+`global` + that scope) and `read_scopes` (explicit list); `remember` and
+`remember_batch` accept `scope`; `ingest_turn` requires `scope`. A parameter
+overrides the environment for that call only, so one HTTP daemon can serve
+several tenants — the Hermes plugin sends `hermes:<profile>` on every write.
+With nothing set the server is single-tenant: writes land in `global`, reads
 see everything. Convention: name scopes `<host>:<profile>`, for example
-`codex:work` or `hermes:career`. Because scope lives on the server process,
-one HTTP daemon serves one scope; run a second daemon on another port if two
-hosts need isolation.
+`codex:work` or `hermes:career`.
+
+Because the model can pass `scope` / `read_scopes` itself, the integration
+layer (your hook or plugin), not the tool schema, is what pins a tenant: set
+the params from your side and do not expose them to the model if it must not
+choose its own scope.
 
 **Caveat:** scope filtering applies to the **semantic** memory table only.
 Episodic conversation exchanges and graph entities are not scope-filtered.
@@ -211,14 +218,18 @@ context. Wire a script that:
    var, argument).
 2. Checks `GET /health` with a short timeout. On anything but `status: ok`,
    exit silently with no output.
-3. Calls `recall` with `{"query": <prompt>, "budget": 300}` with a 2 second
-   timeout.
+3. Calls `recall` with `{"query": <prompt>, "budget": 300}` with a 4 second
+   timeout (cold recall on a large store measured ≈ 2 s; warm 0.7–1.1 s).
+   Add `"scope": "<host>:<profile>"` for a multi-tenant daemon. Consider one
+   cheap warm-up recall (`"limit": 1, "reinforce": false`) at session start
+   so the first real turn is not the cold one.
 4. If `total_results` is 0, or on any error, produce no output.
 5. Otherwise emit the recall text in the host's "additional context" format.
 
 Rules:
 
-- **Memory must never block a turn or break the conversation.** Every failure path is silent.
+- **Memory must never block a turn or break the conversation.** Every failure path returns
+  nothing to the model; log timeouts (rate-limited) so misses are not invisible to you.
   Timeouts are mandatory. Add a circuit breaker: after 5 consecutive failures,
   stop calling engram for 120 seconds.
 - Keep the injected block small. The Hermes provider uses a 300-token budget.

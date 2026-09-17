@@ -41,6 +41,12 @@ Shared infrastructure in `_core/` (config, db, types, embeddings, search, llm, c
 - **commitments** — List tracked commitments extracted nightly from conversations (first-person promises, intentions, follow-ups owed by others). Pending by default; overdue first, then by due date. `include_due_within_days` narrows to what is due soon.
 - **commitments_update** — Mark a commitment `done`, `dropped`, or `superseded` (with `superseded_by`) once the user confirms it is handled.
 
+### External Ingestion
+
+- **ingest_turn** — Record one user/assistant turn of an external agent session (`session_id`, `turn_index`, `scope`, `user_text`, `assistant_text`); idempotent upsert, extracted memories inherit the scope. 15 tools total; `src/interfaces/mcp/tool-names.ts` is canonical.
+
+Recall tools (`recall`, `recall_session`, `recall_drill`) reinforce returned memories (FSRS bookkeeping only) and keep `readOnlyHint: true`; `reinforce: false` opts out. `recall`/`recall_session`/`remember`/`remember_batch` accept per-call `scope` / `read_scopes` over the `ENGRAM_SCOPE` / `ENGRAM_READ_SCOPES` defaults.
+
 ### Recommended Workflow
 
 For large file analysis, combine tools in this order:
@@ -49,9 +55,9 @@ For large file analysis, combine tools in this order:
 3. `scan_file` → exhaustive regex search for enumeration tasks (breadth)
 4. `fetch_snippets` → read specific line ranges for detail extraction (depth)
 
-## CLI Commands (20)
+## CLI Commands (22)
 
-`init`, `sync`, `search`, `remember`, `extract`, `dream`, `reflect`, `explore`, `entities`, `relationships`, `stats`, `health`, `migrate`, `validate`, `backfill-event-ts`, `mcp`, `commitments`, `commitment-done`, `commitments-extract`, `doctor`
+`init`, `sync`, `search`, `remember`, `extract`, `dream`, `reflect`, `explore`, `entities`, `relationships`, `stats`, `health`, `migrate`, `validate`, `backfill-event-ts`, `mcp`, `commitments`, `commitment-done`, `commitments-extract`, `doctor`, `export`, `import`
 
 ## Web Visualization
 
@@ -90,13 +96,13 @@ Stdio mode never spawns workers. Startup logs
 
 - `ENGRAM_DB_PATH` — Database path (default: `~/.local/share/engram/engram.db`)
 - `ENGRAM_CHUNKING_STRATEGY` — `fixed` or `adaptive` (content-aware chunk boundaries)
-- `ENGRAM_LLM_PROVIDER` / `ENGRAM_LLM_MODEL` — LLM provider and model selection
+- `ENGRAM_LOCAL_MODEL` / `ENGRAM_LOCAL_MODEL_FALLBACKS` / `ENGRAM_OPENROUTER_MODEL` — Ollama model (+ ordered fallbacks when it is not pulled) and OpenRouter model; `OLLAMA_HOST`, `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY` enable the three cascade tiers. All-tier failures name every tier's reason (`CascadeError`); dream checkpoints record it once per conversation per run
 
 ## Development
 
 ```bash
 npm run build        # TypeScript compilation
-npm run test:run     # Run tests (vitest, 56 test files)
+npm run test:run     # Run tests (vitest, 111 test files)
 npm run mcp          # Start MCP server
 npm run dev          # Dev CLI via tsx
 npm run dream        # Run dream consolidation
@@ -107,4 +113,4 @@ npm run lint         # Type-check without emit
 
 - `SPEC.md` — Full specification with requirements and interface contract
 - `plans/` — Implementation plans (phases 1–4, phase 6 RLM, phase 7 extensions)
-- `decisions/` — Architecture Decision Records (9 ADRs)
+- `decisions/` — Architecture Decision Records (10 ADRs)

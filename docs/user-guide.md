@@ -151,6 +151,21 @@ a date hint when both are passed. Applied filters are reported in the response
 as `<date_filter …>` metadata. In the CLI: `engram search <query> --date-hint
 "last month" --date-basis event` (also `--after`/`--before`).
 
+**Recall reinforces what it returns.** Each semantic memory a recall returns
+gets its FSRS access recorded (`access_count`, `last_accessed`) and its
+stability grown, so memories you keep using decay more slowly. That is
+bookkeeping, not a content change — the recall tools stay `readOnlyHint: true`
+so MCP clients do not prompt on every search. Pass `reinforce: false` (CLI:
+`engram search … --no-reinforce`) for diagnostic searches that must not touch
+the store.
+
+**Per-request scope.** `recall` and `recall_session` accept `scope` (tenant
+identity; reads default to `global` + that scope) and `read_scopes` (explicit
+list); `remember` and `remember_batch` accept `scope`. The server's
+`ENGRAM_SCOPE` / `ENGRAM_READ_SCOPES` remain the defaults — a parameter wins
+for that call only. See [integrate-your-agent.md](./integrate-your-agent.md)
+for the scoping model.
+
 ### remember — Store Knowledge
 
 Explicitly store a fact, preference, decision, or other knowledge that should persist across conversations. Automatically deduplicates against existing memories.
@@ -174,6 +189,30 @@ explore("SQLite")
 ### reflect — View Emergent Patterns
 
 Shows topic communities, bridge entities connecting different domains, temporal patterns, and graph health metrics. Use after working on a topic to understand how it connects to other knowledge domains.
+
+### ingest_turn — Feed Conversations From Other Hosts
+
+Claude Code transcripts are picked up by `engram sync`; every other host records
+its turns with `ingest_turn(session_id, turn_index, scope, user_text,
+assistant_text)`. It is an idempotent upsert — the same `session_id` +
+`turn_index` updates the turn in place — and the conversation's `scope` is
+inherited by every memory the dream pipeline later extracts from it. The
+Hermes plugin does this per turn automatically (`sync_turns`). Full schema in
+[api-reference.md](./api-reference.md#ingest_turn).
+
+### export / import — Move the Semantic Layer
+
+```bash
+engram export --out engram.jsonl                 # memories, entities, relationships, commitments
+engram export --scope hermes:career --kinds memories
+engram import engram.jsonl --dry-run             # validate, report, write nothing
+engram import engram.jsonl --scope hermes:work   # re-scope every imported memory
+```
+
+JSONL v1: a header line, then one record per row; embeddings are not in the
+file. Import is idempotent by id (a row is replaced only when the incoming
+record is newer) and re-embeds and re-indexes every memory and entity, so it
+runs at embedding speed. Details in [api-reference.md](./api-reference.md#engram-export).
 
 ---
 
@@ -219,15 +258,22 @@ engram dream --phase extract    # Only run fact/entity extraction
 engram dream --phase reflect    # Only run reflection analysis
 engram dream --verbose          # Show detailed progress
 engram dream --dry-run          # Preview without making changes
+engram dream --force            # Re-extract conversations even when unchanged
 ```
+
+Extract skips conversations whose exchanges have not changed since their last
+successful extraction (a content fingerprint on the checkpoint; an edited,
+added or removed exchange changes it). The summary reports them as
+`Skipped unchanged`, and `Collapsed dupes` counts candidate facts folded into
+a near-duplicate sibling before insertion. `--force` ignores the fingerprint.
 
 ### Dream Pipeline Phases
 
 | Phase | What It Does |
 |-------|-------------|
 | **ingest** | Syncs new conversations, parses exchanges, generates embeddings |
-| **extract** | Extracts facts, entities, and relationships from new exchanges |
-| **consolidate** | Deduplicates memories, resolves conflicts, merges entities |
+| **extract** | Extracts facts, entities, and relationships from new exchanges. The model scores each fact's `importance` and its own `confidence` (0–1; used as the memory's initial confidence). Point-in-time status ("phase 3 is complete", "added 12 tests") is filed as a transient tier: importance capped at 0.3 and FSRS stability 7 days, so it fades quickly unless recalled |
+| **consolidate** | Deduplicates memories (against the store and within the batch), resolves conflicts, merges entities |
 | **reflect** | Runs community detection, finds bridge entities, generates observations |
 | **prune** | Applies confidence decay, archives low-confidence memories, cleans orphans |
 
@@ -274,9 +320,11 @@ Engram is configured through environment variables. All settings have sensible d
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ANTHROPIC_API_KEY` | (none) | Required for Claude API extraction |
+| `ANTHROPIC_API_KEY` | (none) | Enables the Anthropic tier (last in the cascade) |
+| `OPENROUTER_API_KEY` | (none) | Enables the OpenRouter tier (middle) |
 | `ENGRAM_LOCAL_MODEL` | `qwen2.5:7b` | Ollama model used by the local tier (must be pulled on `OLLAMA_HOST`) |
-| `ENGRAM_LOCAL_MODEL_FALLBACKS` | (none) | Comma-separated Ollama models tried in order when `ENGRAM_LOCAL_MODEL` is not pulled |
+| `ENGRAM_LOCAL_MODEL_FALLBACKS` | (none) | Comma-separated Ollama models tried in order when `ENGRAM_LOCAL_MODEL` is not pulled; `engram doctor` shows which model the Ollama tier resolved to |
+| `ENGRAM_DREAM_MAX_CONVERSATIONS` | (unlimited) | Cap on conversations extracted per run (bounds a manual end-to-end run) |
 
 ---
 
