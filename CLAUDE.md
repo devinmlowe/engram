@@ -45,7 +45,7 @@ Shared infrastructure in `_core/` (config, db, types, embeddings, search, llm, c
 
 - **ingest_turn** — Record one user/assistant turn of an external agent session (`session_id`, `turn_index`, `scope`, `user_text`, `assistant_text`); idempotent upsert, extracted memories inherit the scope. 15 tools total; `src/interfaces/mcp/tool-names.ts` is canonical.
 
-Recall tools (`recall`, `recall_session`, `recall_drill`) reinforce returned memories (FSRS bookkeeping only) and keep `readOnlyHint: true`; `reinforce: false` opts out. `recall`/`recall_session`/`remember`/`remember_batch` accept per-call `scope` / `read_scopes` over the `ENGRAM_SCOPE` / `ENGRAM_READ_SCOPES` defaults.
+Recall tools (`recall`, `recall_session`, `recall_drill`) reinforce returned memories (FSRS bookkeeping only) and keep `readOnlyHint: true`; `reinforce: false` opts out. `recall`/`recall_session`/`remember`/`remember_batch`/`explore`/`explore_selective`/`commitments` accept per-call `scope` / `read_scopes` over the `ENGRAM_SCOPE` / `ENGRAM_READ_SCOPES` defaults. Since #25 `scope` lives on memories, conversations, exchanges, entities, relationships and commitments (`src/_core/db/scope.ts`): episodic recall, graph search, explore and the commitments ledger filter by `read_scopes`; dream extraction stamps entities/relationships/commitments with the conversation's scope, and a graph row seen from a second scope widens to `global`. `reflect` stays global.
 
 ### Recommended Workflow
 

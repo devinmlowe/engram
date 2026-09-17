@@ -14,6 +14,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { scopeInClause } from "../_core/db/scope.js";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -45,6 +46,8 @@ export interface Commitment {
   createdAt: number;
   resolvedAt: number | null;
   supersededBy: string | null;
+  /** Tenant scope of the source conversation (#25). */
+  scope: string;
 }
 
 /** A validated extraction result before it is deduped and stored. */
@@ -483,6 +486,7 @@ interface CommitmentRow {
   created_at: number;
   resolved_at: number | null;
   superseded_by: string | null;
+  scope?: string | null;
 }
 
 function rowToCommitment(row: CommitmentRow): Commitment {
@@ -504,6 +508,7 @@ function rowToCommitment(row: CommitmentRow): Commitment {
     createdAt: row.created_at,
     resolvedAt: row.resolved_at,
     supersededBy: row.superseded_by,
+    scope: row.scope ?? "global",
   };
 }
 
@@ -515,11 +520,12 @@ export function insertCommitments(
   db: Database.Database,
   candidates: CommitmentCandidate[],
   exchangeTimestamps: ReadonlyMap<string, string>,
+  scope: string = "global",
 ): Commitment[] {
   if (candidates.length === 0) return [];
   const stmt = db.prepare(
-    `INSERT INTO commitments (id, content, status, origin, subject, source_exchanges, due_at, created_at)
-     VALUES (?, ?, 'pending', ?, ?, ?, ?, ?)`,
+    `INSERT INTO commitments (id, content, status, origin, subject, source_exchanges, due_at, created_at, scope)
+     VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?)`,
   );
   const now = Math.floor(Date.now() / 1000);
   const inserted: Commitment[] = [];
@@ -533,7 +539,7 @@ export function insertCommitments(
       const base = stamps.length > 0 ? new Date(stamps[0]) : new Date(now * 1000);
       const dueAt = resolveDueHint(cand.dueHint, base);
       const id = randomUUID();
-      stmt.run(id, cand.content, cand.origin, cand.subject, JSON.stringify(cand.sourceExchangeIds), dueAt, now);
+      stmt.run(id, cand.content, cand.origin, cand.subject, JSON.stringify(cand.sourceExchangeIds), dueAt, now, scope);
       inserted.push({
         id,
         content: cand.content,
@@ -545,6 +551,7 @@ export function insertCommitments(
         createdAt: now,
         resolvedAt: null,
         supersededBy: null,
+        scope,
       });
     }
   });
@@ -561,6 +568,8 @@ export interface ListCommitmentsOptions {
   limit?: number;
   /** Unix seconds; defaults to Date.now(). */
   now?: number;
+  /** Tenant read scopes (#25); unset = every scope. */
+  scopes?: string[];
 }
 
 export interface ListCommitmentsResult {
@@ -591,6 +600,11 @@ export function listCommitments(
   if (options.dueWithinDays !== undefined) {
     where.push("due_at IS NOT NULL AND due_at <= ?");
     params.push(now + Math.max(0, options.dueWithinDays) * DAY);
+  }
+  const scopeFilter = scopeInClause("scope", options.scopes);
+  if (scopeFilter) {
+    where.push(scopeFilter.sql);
+    params.push(...scopeFilter.params);
   }
   const clause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
 

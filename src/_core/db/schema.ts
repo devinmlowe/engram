@@ -378,6 +378,10 @@ function createSchema(db: Database.Database, config: EngramConfig): void {
   // schema_migrations so a re-open is a provable no-op.
   migrateCommitments(db);
 
+  // #25: tenant scope on exchanges/entities/relationships/commitments (after the
+  // entity/relationship rebuild and after the commitments table exists).
+  migrateGraphScope(db);
+
   // W2: conversations.scope — tenant scope of a conversation's origin
   // ('global' for Claude Code transcripts, 'hermes:<profile>' for turns pushed
   // via the ingest_turn tool). The dream consolidate phase stamps every memory
@@ -611,6 +615,41 @@ export function migrateConversationScope(db: Database.Database): boolean {
   );
   db.exec("CREATE INDEX IF NOT EXISTS idx_conversations_scope ON conversations(scope)");
   db.prepare("INSERT OR IGNORE INTO schema_migrations (name) VALUES (?)").run(CONVERSATIONS_SCOPE_MIGRATION);
+  return added;
+}
+
+/** Checkpoint name recorded in schema_migrations when scope lands on exchanges, entities, relationships, commitments. */
+export const GRAPH_SCOPE_MIGRATION = "graph_scope_v1";
+
+/** Tables that carry a tenant `scope` column since #25 (memories and conversations had one before). */
+export const SCOPED_TABLES = ["exchanges", "entities", "relationships", "commitments"] as const;
+
+/**
+ * #25: `scope TEXT DEFAULT 'global'` + index on exchanges, entities,
+ * relationships and commitments, so episodic recall, explore and the
+ * commitments ledger can honour read_scopes like the semantic layer does.
+ * Existing rows take the default. Must run AFTER migrateExpandedTypes (which
+ * rebuilds entities/relationships with `INSERT ... SELECT *`) and AFTER
+ * migrateCommitments (which creates the table). Returns `true` only on the
+ * open that added at least one column.
+ */
+export function migrateGraphScope(db: Database.Database): boolean {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      name TEXT PRIMARY KEY,
+      applied_at INTEGER DEFAULT (unixepoch())
+    )
+  `);
+  let added = false;
+  for (const table of SCOPED_TABLES) {
+    const exists = db
+      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
+      .get(table);
+    if (!exists) continue;
+    if (idempotentAlter(db, table, "scope", `ALTER TABLE ${table} ADD COLUMN scope TEXT DEFAULT 'global'`)) added = true;
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_${table}_scope ON ${table}(scope)`);
+  }
+  db.prepare("INSERT OR IGNORE INTO schema_migrations (name) VALUES (?)").run(GRAPH_SCOPE_MIGRATION);
   return added;
 }
 

@@ -311,16 +311,16 @@ Four domains with shared core infrastructure:
 | `recall` | Hybrid search (vector + FTS5 + graph) with token budget; reinforces returned memories (FSRS bookkeeping, `reinforce: false` opts out) and accepts per-call `scope` / `read_scopes` |
 | `remember` | Store a single memory (fact, decision, pattern, etc.) |
 | `show` | Retrieve full conversation or memory context |
-| `explore` | Fixed-depth graph traversal from an entity |
+| `explore` | Fixed-depth graph traversal from an entity; honours per-call `scope` / `read_scopes` (#25) |
 | `reflect` | Graph analysis — communities, bridges, temporal patterns |
 | `recall_session` | Stateful iterative search with session tracking and budget |
 | `recall_drill` | Deep drill into a specific search result with budget deduction |
-| `explore_selective` | Model-directed selective graph traversal with relevance filtering |
+| `explore_selective` | Model-directed selective graph traversal with relevance filtering; honours `read_scopes` |
 | `remember_batch` | Batch memory ingest with entity linking and adaptive chunking |
 | `fetch_snippets` | Multi-range file snippet fetching (up to 20 ranges) |
 | `index_file_structure` | Parse file structure into graph entities (multi-language) |
 | `scan_file` | Regex-based file scanning with function context detection |
-| `commitments` | List tracked commitments (promises, intentions, follow-ups owed by others) — overdue first |
+| `commitments` | List tracked commitments (promises, intentions, follow-ups owed by others) — overdue first; honours `read_scopes` |
 | `commitments_update` | Mark a commitment done, dropped, or superseded |
 | `ingest_turn` | Record one user/assistant turn of an external agent session (`session_id`, `turn_index`, `scope`, `user_text`, `assistant_text`) — idempotent upsert into the episodic layer; extracted memories inherit the scope |
 

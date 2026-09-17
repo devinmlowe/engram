@@ -18,6 +18,8 @@ export interface ExploreParams {
   depth?: number;
   limit?: number;
   relationshipTypes?: RelationshipType[];
+  /** Tenant read scopes (#25); unset = every scope. */
+  scopes?: string[];
 }
 
 // ─── Core Operation ─────────────────────────────────────────────
@@ -37,6 +39,7 @@ export function explore(
     depth: params.depth ?? 1,
     limit: params.limit ?? 25,
     relationshipTypes: params.relationshipTypes,
+    scopes: params.scopes,
   });
 }
 
@@ -48,6 +51,8 @@ export interface ExploreSelectiveParams {
   maxDepth?: number;
   maxNodes?: number;
   relationshipTypes?: RelationshipType[];
+  /** Tenant read scopes (#25); unset = every scope. */
+  scopes?: string[];
 }
 
 /**
@@ -66,6 +71,7 @@ export async function exploreSelectiveEntity(
     maxDepth: params.maxDepth ?? 3,
     maxNodes: params.maxNodes ?? 50,
     relationshipTypes: params.relationshipTypes,
+    scopes: params.scopes,
   });
 }
 

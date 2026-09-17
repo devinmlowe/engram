@@ -148,6 +148,7 @@ export async function ingestTurn(
     tokenEstimate: Math.ceil((input.userText.length + input.assistantText.length) / 4),
     createdAt: existing?.createdAt ?? now,
     authorJson: input.author === undefined ? undefined : JSON.stringify(input.author),
+    scope,
   };
 
   const exchangeCount = db.transaction(() => {
