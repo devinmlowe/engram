@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import shutil
 import threading
 import time
@@ -55,7 +56,15 @@ def load_hermes_memory_provider_abc() -> type:
         path = os.path.join(agent_dir, "agent", "memory_provider.py")
         spec = importlib.util.spec_from_file_location("_hermes_memory_provider", path)
         module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)  # type: ignore[union-attr]
+        # Register BEFORE exec: the Hermes contract module defines @dataclass
+        # classes, and dataclass field resolution looks the defining module up
+        # in sys.modules by name (fails on 3.14 with a NoneType __dict__ error).
+        sys.modules[spec.name] = module
+        try:
+            spec.loader.exec_module(module)  # type: ignore[union-attr]
+        except Exception:
+            sys.modules.pop(spec.name, None)
+            raise
         MemoryProvider = module.MemoryProvider
     _HERMES_ABC_CACHE = MemoryProvider
     return MemoryProvider
