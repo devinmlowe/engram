@@ -353,7 +353,7 @@ The extract and reflect phases use the Claude API for LLM inference. Set `ANTHRO
 
 ### Database is locked
 
-Engram uses SQLite with WAL mode for concurrent reads. If you see lock errors, ensure only one write process (dream daemon or CLI command) is running at a time.
+Engram uses SQLite with WAL mode: readers never block, writers serialise with a 5 s `busy_timeout`, and recall reinforcement retries briefly then skips rather than failing the recall. Only one dream run per data dir is allowed (`<data dir>/tmp/dream.lock`; a second `engram dream` reports the owning pid). If you still see lock errors, look for a long-running writer (`engram dream`, a bulk `engram import`) and let it finish.
 
 ### High memory usage during sync
 
