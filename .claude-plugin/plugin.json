@@ -5,6 +5,24 @@
   "author": {
     "name": "Devin Lowe"
   },
+  "homepage": "https://github.com/devinmlowe/engram#readme",
+  "repository": "https://github.com/devinmlowe/engram",
   "license": "MIT",
-  "mcpServers": "../.mcp.json"
+  "keywords": [
+    "memory",
+    "mcp",
+    "knowledge-graph",
+    "episodic",
+    "semantic"
+  ],
+  "mcpServers": {
+    "engram": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@devinmlowe/engram@0.3.0",
+        "mcp"
+      ]
+    }
+  }
 }

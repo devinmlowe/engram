@@ -82,9 +82,31 @@ The MCP server is configured in `~/.claude/settings.json` under `mcpServers`:
 }
 ```
 
-There is also a `.mcp.json` in the project root for project-scoped MCP configuration.
+There is also a `.mcp.json` in the project root for project-scoped MCP configuration (used when you open this checkout in Claude Code; the published plugin does not use it).
 
 After rebuilding the MCP server code, restart it by running `/mcp` in Claude Code or restarting the Claude Code session.
+
+**Bridge vs inline while developing.** A stdio start (`node dist/interfaces/mcp/server.js`, `engram mcp`, `npm run mcp`) bridges to the HTTP daemon if one answers on `ENGRAM_MCP_PORT` (default 9907) — so with the supervised daemon running, your freshly built stdio server is *not* what handles tool calls; the daemon is. To exercise the in-process build, pass `--standalone` (or set `ENGRAM_MCP_STANDALONE=1` in the `.mcp.json` `env`), or restart the daemon so it picks up `dist/`. The stderr line `Engram MCP: bridging stdio to …` / `running inline (…)` tells you which happened. See `src/interfaces/mcp/bridge.ts` and `tests/interfaces/mcp/bridge.test.ts`.
+
+## Releasing (#58)
+
+`package.json` is the only place the version is edited by hand; `src/_core/version/index.ts` reads it at runtime and `scripts/sync-manifests.cjs` copies it into the distribution manifests (`.claude-plugin/plugin.json` incl. the `npx -y @devinmlowe/engram@<v>` pin, `.claude-plugin/marketplace.json`, `server.json`).
+
+```bash
+npm run check-manifests          # what CI runs: versions + shape agree (exit 1 with the list otherwise)
+npm version minor                # bumps package.json, runs sync-manifests via the "version" hook, commits, tags v<version>
+git push origin main --follow-tags
+```
+
+The tag triggers `.github/workflows/release.yml`: verify (tag = version, manifests, preflight, lint, full tests) → `npm publish --provenance` (needs the `NPM_TOKEN` repository secret) → `mcp-publisher login github-oidc` + `mcp-publisher publish` for registry.modelcontextprotocol.io (`io.github.devinmlowe/engram`; no secret — GitHub OIDC proves the repo owner). The marketplace has no publish step: Claude Code reads `.claude-plugin/marketplace.json` from this repo, so users get the new plugin version with `/plugin update engram@engram` once the bump is on `main`. Validate locally before tagging:
+
+```bash
+claude plugin validate .claude-plugin/plugin.json
+claude plugin validate .claude-plugin/marketplace.json --strict
+claude plugin validate commands --strict
+```
+
+The Hermes plugin is unrelated to this channel and is still deployed by `engram update` / `interfaces/hermes-plugin/deploy.sh`.
 
 ## Development Workflow
 

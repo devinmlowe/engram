@@ -83,7 +83,8 @@ Defaults the agent needs to know:
 |------|-------|
 | Database | `~/.local/share/engram/engram.db` (override: `ENGRAM_DB_PATH`) |
 | MCP server entry point | `dist/interfaces/mcp/server.js` |
-| stdio transport | `node dist/interfaces/mcp/server.js` (default) |
+| stdio transport | `npx -y @devinmlowe/engram mcp` (from npm), or `node dist/interfaces/mcp/server.js` from a checkout. Bridges to the HTTP daemon when one is healthy on the port below; `--standalone` forces in-process |
+| Registry entry | `io.github.devinmlowe/engram` on registry.modelcontextprotocol.io (npm artifact `@devinmlowe/engram`, stdio) — hosts that install from the registry get the same `npx … mcp` command |
 | HTTP transport | `node dist/interfaces/mcp/server.js --http` on `http://127.0.0.1:9907` (`--port N` to change) |
 | Nightly consolidation | `engram dream` (macOS: `scripts/install-daemon.sh install` installs a 02:00 launchd job) |
 
@@ -251,8 +252,14 @@ Register engram with the host's MCP client, HTTP transport preferred:
 or stdio if the host has no HTTP transport or no hook system at all:
 
 ```json
-{ "mcpServers": { "engram": { "command": "node", "args": ["/abs/path/to/engram/dist/interfaces/mcp/server.js"] } } }
+{ "mcpServers": { "engram": { "command": "npx", "args": ["-y", "@devinmlowe/engram", "mcp"] } } }
 ```
+
+(`node /abs/path/to/engram/dist/interfaces/mcp/server.js` from a checkout does the same.) A
+stdio start bridges to the HTTP daemon when it is running, so a host that has both a hook
+script talking HTTP and a stdio MCP registration still shares one warm process. Claude Code
+users can skip all of this with the plugin: `/plugin marketplace add devinmlowe/engram` then
+`/plugin install engram@engram`.
 
 Then add a short **static** instruction block to the host's instruction file
 (AGENTS.md, CLAUDE.md, system prompt, or equivalent). Keep it byte-stable so
@@ -378,7 +385,7 @@ threads into `~/.codex/memories/`. Running both is harmless but redundant.
 
 ## Other hosts, briefly
 
-- **Claude Code:** `claude mcp add --transport stdio --scope user engram -- node /abs/path/to/engram/dist/interfaces/mcp/server.js` (or the HTTP form). Auto-recall via a `UserPromptSubmit` hook works the same way as Codex. Claude Code is also the host whose transcripts the dream pipeline ingests natively.
+- **Claude Code:** the plugin (`/plugin marketplace add devinmlowe/engram`, `/plugin install engram@engram`) or `claude mcp add --transport stdio --scope user engram -- npx -y @devinmlowe/engram mcp` (or the HTTP form). Auto-recall via a `UserPromptSubmit` hook works the same way as Codex. Claude Code is also the host whose transcripts the dream pipeline ingests natively.
 - **Hermes Agent:** already done; deploy with `interfaces/hermes-plugin/deploy.sh`. Hermes has a real memory-provider interface, so no hooks are needed.
 - **Anything else with MCP but no hooks:** register the server, add the instruction block with the "call `recall` first" variant, and accept that recall is model-initiated.
 

@@ -113,6 +113,43 @@ jobs:
         if: matrix.verdict == 'unsupported'
         run: npm run test:run -- tests/deployment tests/contracts/spec-references.test.ts
 
+  # Distribution manifests (#58): plugin.json / marketplace.json / server.json
+  # must agree with package.json and validate with the Claude Code CLI. The
+  # shape checks in scripts/sync-manifests.cjs --check always run (no
+  # dependency); `claude plugin validate` runs when the CLI installs
+  # non-interactively (it needs no login), and is skipped with a notice —
+  # not silently — if the install itself fails on the runner.
+  manifests:
+    name: plugin + marketplace + registry manifests
+    runs-on: ubuntu-latest
+    env:
+      CI: "true"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Manifest versions and shape agree with package.json
+        run: node scripts/sync-manifests.cjs --check
+
+      - name: Install the Claude Code CLI
+        id: claude-cli
+        continue-on-error: true
+        run: npm install -g @anthropic-ai/claude-code && claude --version
+
+      - name: claude plugin validate (plugin manifest, marketplace manifest, bundled commands)
+        if: steps.claude-cli.outcome == 'success'
+        run: |
+          claude plugin validate .claude-plugin/plugin.json
+          claude plugin validate .claude-plugin/marketplace.json --strict
+          claude plugin validate commands --strict
+
+      - name: claude CLI unavailable — manifests were still shape-checked above
+        if: steps.claude-cli.outcome != 'success'
+        run: echo "::warning::@anthropic-ai/claude-code did not install on this runner; skipped claude plugin validate (scripts/sync-manifests.cjs --check passed)"
+
   # Alpine / musl is documented as NOT supported: better-sqlite3 ships
   # linuxmusl-* prebuilds (and loads), but sqlite-vec and onnxruntime-node
   # publish glibc-only Linux binaries that need ld-linux and do not load on

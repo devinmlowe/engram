@@ -105,6 +105,34 @@ and is mandatory before `ENGRAM_MCP_HOST` may be anything but loopback; the visu
   `remember_batch`, `index_file_structure` and `reflect --refresh` use higher
   floors. A worker still silent at 2× the timeout is killed and respawned.
 
+**Stdio bridge (#58, decision #60).** A stdio start — `engram mcp` (the Claude Code
+plugin's command, via `npx -y @devinmlowe/engram@<version> mcp`) or `server.js`
+without `--http` — first probes `GET http://127.0.0.1:<port>/health` (`--port`, else
+`ENGRAM_MCP_PORT`, else 9907; 1.5 s). If the engram daemon answers, the process is a thin
+proxy (`src/interfaces/mcp/bridge.ts`): an MCP SDK client over Streamable HTTP to the
+daemon's `/mcp` plus an MCP server on stdio forwarding `tools/list`, `tools/call`, `ping`.
+It opens no database and loads no model — the CLI decides before `server.ts` is imported.
+Otherwise it runs inline. `engram mcp --standalone` / `ENGRAM_MCP_STANDALONE=1` force
+inline. One stderr line names the mode: `Engram MCP: bridging stdio to
+http://127.0.0.1:9907/mcp (daemon healthy)` / `Engram MCP: running inline (no daemon on
+:9907 (ECONNREFUSED))`. The bridge forwards `Authorization: Bearer $ENGRAM_MCP_TOKEN` from
+its own env, re-opens its daemon session under the host's `clientInfo` after `initialize`
+(so `forget`'s actor is the host, not `engram-bridge`), retries once after a transport
+failure (daemon restarted by `engram update`) and sends `tools/list_changed`, forwards
+daemon JSON-RPC errors verbatim, and exits 0 on stdin EOF / SIGTERM.
+
+**Distribution (#58).** `.claude-plugin/plugin.json` (inline `mcpServers` → the npx command
+above, version pinned), `.claude-plugin/marketplace.json` (this repo is the `engram`
+marketplace: `/plugin marketplace add devinmlowe/engram` → `/plugin install engram@engram`),
+`commands/` (the five portable slash commands, tools named `mcp__plugin_engram_engram__<tool>`,
+decision #59) and `server.json` (registry.modelcontextprotocol.io, `io.github.devinmlowe/engram`,
+npm artifact; `package.json` `mcpName` must equal it). `scripts/sync-manifests.cjs` writes the
+`package.json` version into all of them (`--check` in CI and `.github/workflows/release.yml`;
+the npm `version` hook runs it). A `v*` tag publishes npm (`--provenance`) then the registry
+entry (`mcp-publisher login github-oidc`). The root `.mcp.json` remains for developing inside
+the checkout only. `engram update` still redeploys the Hermes plugin; the Claude plugin updates
+through the marketplace.
+
 ## Key Configuration
 
 - `ENGRAM_DB_PATH` — Database path (default: `~/.local/share/engram/engram.db`)

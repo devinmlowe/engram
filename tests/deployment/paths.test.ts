@@ -91,6 +91,9 @@ describe("deployment path integrity (ADR-010 Phase 0)", () => {
     expect(script, "creates the env file with mode 600").toMatch(/chmod 600 "\$ENV_FILE"/);
   });
 
+  // The root .mcp.json is for developing inside the checkout. Since #58 the Claude
+  // Code plugin no longer references it (plugin.json runs the npm binary via npx);
+  // that manifest is pinned by tests/deployment/manifests.test.ts.
   it(".mcp.json: server entry point resolves relative to the repo (no absolute cwd)", () => {
     const cfg = JSON.parse(readFileSync(join(ROOT, ".mcp.json"), "utf-8"));
     const engram = cfg.mcpServers.engram;

@@ -49,6 +49,8 @@ npm link
 npx -y @devinmlowe/engram mcp
 ```
 
+`engram mcp` is the stdio MCP server. When the engram HTTP daemon is running (`scripts/install-mcp-daemon.sh install`) it bridges to it instead of loading the model itself; `engram mcp --standalone` forces the in-process server.
+
 ---
 
 ## First-Time Setup
@@ -93,7 +95,28 @@ Checks database status, embedding model availability, Ollama (optional), and MCP
 
 Register Engram as an MCP server so Claude Code can use its memory tools automatically.
 
-### Option A: CLI Registration
+### Option A: Plugin (recommended)
+
+Inside Claude Code:
+
+```
+/plugin marketplace add devinmlowe/engram
+/plugin install engram@engram
+```
+
+The plugin runs `npx -y @devinmlowe/engram@<version> mcp` (no clone, no paths) and adds
+`/engram:recall`, `/engram:remember`, `/engram:explore-graph`, `/engram:reflect` and
+`/engram:engram-connect`. The very first start installs the package into the npm cache;
+if Claude Code times out during that one-off install, start it with a longer MCP startup
+timeout: `MCP_TIMEOUT=120000 claude`. Update later with `/plugin update engram@engram`.
+
+### Option B: CLI Registration
+
+```bash
+claude mcp add --transport stdio --scope user engram -- npx -y @devinmlowe/engram mcp
+```
+
+or, for a source checkout:
 
 ```bash
 claude mcp add --transport stdio --scope user engram -- \
@@ -102,7 +125,7 @@ claude mcp add --transport stdio --scope user engram -- \
 
 Replace `/path/to/engram` with the actual path to your clone.
 
-### Option B: Manual Configuration
+### Option C: Manual Configuration
 
 Add to `~/.claude.json`:
 
