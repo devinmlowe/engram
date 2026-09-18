@@ -19,7 +19,7 @@ import Database from "better-sqlite3";
 import type { EngramConfig } from "../../_core/types/index.js";
 import { compareSemver, detectInstall, latestAvailable, type AvailableVersion, type InstallInfo } from "./install-kind.js";
 import {
-  applyDataDirPlan, applyModelCachePlan, planDataDir, planModelCache, type DataDirPlan, type ModelCachePlan,
+  applyDataDirPlan, applyModelCachePlan, modelCacheSourceLabel, planDataDir, planModelCache, type DataDirPlan, type ModelCachePlan,
 } from "./data-migration.js";
 import {
   listServices, portFor, startService, stopService, waitForPort, START_ORDER, STOP_ORDER,
@@ -75,6 +75,9 @@ export function pluginDeployTargets(hermesHome: string): { targets: string[]; pr
 /** How long a cold start may take before the update gives up on a service. */
 export const START_WAIT_MS: Record<"mcp" | "visualizer" | "dream", number> = { mcp: 90_000, visualizer: 180_000, dream: 30_000 };
 
+/** Decision #54: the backup is an allowlist (engram.db + wal/shm + archive/); model weights are re-downloadable and never enter it. */
+export const MODEL_CACHE_BACKUP_NOTE = "models/ is not backed up (re-downloadable); rollback re-downloads if the cache is missing";
+
 export function backupDirFor(dataDir: string, now: Date): string {
   const ts = now.toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z").replace("T", "-");
   return `${dataDir}.backup-${ts}`;
@@ -105,6 +108,7 @@ export async function buildUpdatePlan(deps: UpdateDeps, opts: { noBackup?: boole
   const running = STOP_ORDER.map((id) => services.find((s) => s.id === id)!).filter((s) => s.running);
   steps.push(running.length ? `stop ${running.map((s) => `${s.id} (${s.stopCommand})`).join(", ")}` : "no running services to stop");
   steps.push("snapshot row counts (exchanges, conversations, memories, entities, relationships, commitments)");
+  if (modelCache.hasModels) steps.push(`move the downloaded models from ${modelCache.durable ? modelCache.legacy : modelCache.current} to ${modelCache.proposed} before npm touches node_modules`);
   if (!modelCache.durable) steps.push(`give the embedding model a durable cache at ${modelCache.proposed} before npm touches node_modules`);
   if (install.kind === "git") steps.push(`git pull --ff-only in ${install.root}${install.branch ? ` (${install.branch})` : ""}, then npm ci (builds dist/)`);
   else steps.push(`npm install -g ${install.packageName}@${target ?? "latest"}`);
@@ -136,8 +140,10 @@ export function formatPlan(plan: UpdatePlan): string[] {
   else if (dataDir.action.kind === "refuse") lines.push(`  !! ${dataDir.action.reason}`);
   else lines.push(`  -> ${dataDir.action.reason}`);
   lines.push("");
-  lines.push(`Model cache: ${modelCache.current}${modelCache.durable ? " (durable, ENGRAM_MODEL_CACHE_DIR)" : " (inside node_modules: wiped by npm ci)"}`);
-  if (!modelCache.durable) lines.push(`  -> will use ${modelCache.proposed}${modelCache.hasModels ? " and copy the downloaded models there" : ""}; set ${modelCache.envLine}`);
+  lines.push(`Model cache: ${modelCache.current} (${modelCache.durable ? "durable" : "inside node_modules: wiped by npm ci"}; ${modelCacheSourceLabel(modelCache.source)})`);
+  if (!modelCache.durable) lines.push(`  -> will use ${modelCache.proposed}; unset ENGRAM_MODEL_CACHE_DIR or set ${modelCache.envLine}`);
+  if (modelCache.hasModels) lines.push(`  -> will move the downloaded models from ${modelCache.durable ? modelCache.legacy : modelCache.current} to ${modelCache.proposed}`);
+  lines.push(`  ${MODEL_CACHE_BACKUP_NOTE}`);
   lines.push("");
   lines.push("Services:");
   for (const s of services) {
@@ -235,11 +241,13 @@ export async function runUpdate(plan: UpdatePlan, deps: UpdateDeps, opts: { dryR
     say("snapshot: no database yet");
   }
 
-  // 4. durable model cache, before npm touches node_modules
+  // 4. durable model cache, before npm touches node_modules: move a legacy
+  //    node_modules cache into the resolved dir and/or relocate an explicit
+  //    setting that still points inside node_modules (#53)
   const npmEnv: NodeJS.ProcessEnv = { ...sdeps.env };
-  if (!plan.modelCache.durable) {
+  if (!plan.modelCache.durable || plan.modelCache.hasModels) {
     for (const l of applyModelCachePlan(plan.modelCache, { dryRun: false })) say(`model-cache: ${l}`);
-    npmEnv.ENGRAM_MODEL_CACHE_DIR = plan.modelCache.proposed;
+    if (!plan.modelCache.durable) npmEnv.ENGRAM_MODEL_CACHE_DIR = plan.modelCache.proposed;
   }
 
   // 5. code
@@ -338,6 +346,7 @@ export async function runUpdate(plan: UpdatePlan, deps: UpdateDeps, opts: { dryR
       say("Rollback steps, in order (services were restarted on the code currently on disk):");
       for (const s of STOP_ORDER) { const r = running.find((x) => x.id === s); if (r) say(`  stop ${r.id}: ${r.stopCommand}`); }
       for (const r of rollback) say(`  ${r}`);
+      say(`  ${MODEL_CACHE_BACKUP_NOTE}`);
       say("  then: engram doctor && engram stats");
     }
     return { ok, lines };

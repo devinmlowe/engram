@@ -92,11 +92,12 @@ describe("doctor report shape", () => {
     expect(names).toContain("sqlite-vec");
   });
 
-  it("reports the model cache directory it was configured with, and whether it is writable", () => {
+  it("reports the model cache directory it was configured with, its durability and whether it is writable", () => {
     const cache = report.checks.find((c) => c.name === "model cache")!;
     expect(cache.detail).toContain(join(tmpRoot, "models"));
     expect(cache.detail).toMatch(/writable/);
-    expect(cache.detail).toContain("ENGRAM_MODEL_CACHE_DIR");
+    expect(cache.detail).toContain("durable: yes");
+    expect(cache.detail).toContain("from config override");
   });
 
   it("knows the prebuilt matrix that the README documents", () => {
@@ -142,35 +143,44 @@ describe("doctor text output", () => {
   });
 });
 
-describe("model cache check", () => {
-  it("prefers the engram override over the library default and creates it", () => {
+describe("model cache check (#53)", () => {
+  it("reports an explicit ENGRAM_MODEL_CACHE_DIR as durable and creates it", () => {
     const dir = join(tmpRoot, "override-me");
-    const check = checkModelCache(dir, "/lib/default/.cache/");
+    const check = checkModelCache({ dir, source: "ENGRAM_MODEL_CACHE_DIR" });
     expect(check.level).toBe("ok");
     expect(check.detail).toContain(dir);
+    expect(check.detail).toContain("durable: yes");
     expect(check.detail).toContain("from ENGRAM_MODEL_CACHE_DIR");
     expect(existsSync(dir)).toBe(true);
   });
 
-  it("falls back to the transformers default and says how to override it", () => {
-    const dir = join(tmpRoot, "library-default");
-    const check = checkModelCache(undefined, dir);
+  it("names the default tier and says how to relocate it", () => {
+    const dir = join(tmpRoot, "data", "models");
+    const check = checkModelCache({ dir, source: "default" });
     expect(check.level).toBe("ok");
     expect(check.detail).toContain(dir);
-    expect(check.detail).toMatch(/set ENGRAM_MODEL_CACHE_DIR/);
+    expect(check.detail).toContain("durable: yes");
+    expect(check.detail).toMatch(/default; set ENGRAM_MODEL_CACHE_DIR/);
+    expect(checkModelCache({ dir, source: "HF_HOME" }).detail).toContain("from HF_HOME");
   });
 
-  it("fails when neither the override nor the library default is known", () => {
-    const check = checkModelCache(undefined, undefined);
-    expect(check.level).toBe("fail");
+  it("says durable: no (and warns) only when the dir sits inside a node_modules directory", () => {
+    const inside = join(tmpRoot, "pkg", "node_modules", "@xenova", "transformers", ".cache");
+    const check = checkModelCache({ dir: inside, source: "ENGRAM_MODEL_CACHE_DIR" });
+    expect(check.level).toBe("warn");
     expect(check.required).toBe(true);
+    expect(check.detail).toContain("durable: no");
+    expect(check.detail).toMatch(/wiped by npm ci/);
+    // a path that merely *contains* the word is not inside node_modules
+    const lookalike = join(tmpRoot, "my_node_modules_backup", "models");
+    expect(checkModelCache({ dir: lookalike, source: "ENGRAM_MODEL_CACHE_DIR" }).detail).toContain("durable: yes");
   });
 
   it("fails when the directory cannot be created", () => {
     // A path *under a regular file* cannot be mkdir'd on any platform.
     const file = join(tmpRoot, "not-a-dir");
     writeFileSync(file, "x");
-    const check = checkModelCache(join(file, "models"), undefined);
+    const check = checkModelCache({ dir: join(file, "models"), source: "ENGRAM_MODEL_CACHE_DIR" });
     expect(check.level).toBe("fail");
     expect(check.detail).toMatch(/not writable/);
   });
@@ -183,7 +193,7 @@ describe("model cache check", () => {
       writeFileSync(join(dir, "model.onnx"), "weights");
       chmodSync(dir, 0o555);
       try {
-        const check = checkModelCache(dir, undefined);
+        const check = checkModelCache({ dir, source: "default" });
         expect(check.level).toBe("warn");
         expect(check.detail).toMatch(/read-only/);
       } finally {
@@ -202,11 +212,15 @@ describe("model cache resolution", () => {
     expect(env.cacheDir).toBe("/lib/.cache/");
   });
 
-  it("applyModelCacheDir mutates env only when an override is given", () => {
+  it("applyModelCacheDir points env at the override, else at the config's resolved dir", () => {
     const env = { cacheDir: "/lib/.cache/" };
     expect(applyModelCacheDir(env, "/custom")).toBe("/custom");
     expect(env.cacheDir).toBe("/custom");
-    expect(applyModelCacheDir(env, undefined)).toBe("/custom");
+    // No override: loadConfig() always resolves a durable dir now (#53), never the library default.
+    const resolved = applyModelCacheDir(env, undefined);
+    expect(resolved).toBe(loadConfig().modelCacheDir);
+    expect(env.cacheDir).toBe(resolved);
+    expect(resolved).not.toContain("node_modules");
   });
 });
 

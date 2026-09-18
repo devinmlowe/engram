@@ -12,10 +12,11 @@ import { request as httpRequest } from "node:http";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type Database from "better-sqlite3";
-import { loadConfig } from "../../_core/config/index.js";
-import { resolveModelCacheDir } from "../../_core/embeddings/model-cache.js";
+import { describeModelCacheDir, loadConfig, type ModelCacheResolution } from "../../_core/config/index.js";
+import { isInsideNodeModules } from "../../_core/embeddings/model-cache.js";
 import { buildIntelligenceConfig, describeProviders, resolveOllamaModel } from "../../_core/llm/index.js";
 import type { EngramConfig } from "../../_core/types/index.js";
+import { modelCacheSourceLabel } from "./data-migration.js";
 import { parseMcpPort } from "../mcp/port.js";
 
 export type DoctorLevel = "ok" | "warn" | "fail";
@@ -182,38 +183,21 @@ function probeWritable(dir: string): true | string {
 }
 
 /**
- * Report where transformers.js will put model weights and whether it can.
- * Exported for tests. `defaultDir` is what `@xenova/transformers` reports as
- * `env.cacheDir`, or undefined if the library itself failed to load.
+ * Report where transformers.js will put model weights, whether it can, and
+ * whether the location survives `npm ci` (#53). Exported for tests. `durable:
+ * no` only when the resolved dir sits inside a `node_modules` directory, which
+ * since 0.4.0 takes an explicit ENGRAM_MODEL_CACHE_DIR pointing there.
  */
-export function checkModelCache(
-  override: string | undefined,
-  defaultDir: string | undefined,
-): DoctorCheck {
+export function checkModelCache(resolution: ModelCacheResolution): DoctorCheck {
   const name = "model cache";
-  const source = override
-    ? "from ENGRAM_MODEL_CACHE_DIR"
-    : "default; set ENGRAM_MODEL_CACHE_DIR to relocate";
-  const dir =
-    defaultDir !== undefined
-      ? resolveModelCacheDir({ cacheDir: defaultDir }, override)
-      : override && override.trim() !== ""
-        ? override
-        : undefined;
-
-  if (!dir) {
-    return {
-      name,
-      level: "fail",
-      required: true,
-      detail:
-        "unknown (transformers.js failed to load and ENGRAM_MODEL_CACHE_DIR is not set)",
-    };
-  }
+  const { dir, source } = resolution;
+  const durable = !isInsideNodeModules(dir);
+  const detail = (access: string): string =>
+    `${dir} (${access}; durable: ${durable ? "yes" : "no — inside node_modules, wiped by npm ci"}; ${modelCacheSourceLabel(source)})`;
 
   const writable = probeWritable(dir);
   if (writable === true) {
-    return { name, level: "ok", required: true, detail: `${dir} (writable; ${source})` };
+    return { name, level: durable ? "ok" : "warn", required: true, detail: detail("writable") };
   }
 
   // A read-only but already-populated cache still works offline.
@@ -223,39 +207,33 @@ export function checkModelCache(
         name,
         level: "warn",
         required: true,
-        detail: `${dir} (read-only: ${writable}; cached models will load but new downloads will fail; ${source})`,
+        detail: detail(`read-only: ${writable}; cached models will load but new downloads will fail`),
       }
     : {
         name,
         level: "fail",
         required: true,
-        detail: `${dir} (not writable: ${writable}; ${source})`,
+        detail: detail(`not writable: ${writable}`),
       };
 }
 
-async function checkTransformersAndCache(
-  config: EngramConfig,
-): Promise<[DoctorCheck, DoctorCheck]> {
-  let defaultDir: string | undefined;
-  let transformers: DoctorCheck;
+async function checkTransformers(): Promise<DoctorCheck> {
   try {
     const { env } = await import("@xenova/transformers");
-    defaultDir = env.cacheDir;
-    transformers = {
+    return {
       name: "transformers.js",
       level: "ok",
       required: true,
       detail: `loaded (@xenova/transformers ${env.version})`,
     };
   } catch (err) {
-    transformers = {
+    return {
       name: "transformers.js",
       level: "fail",
       required: true,
       detail: `failed to load for ${currentTarget()}: ${errMsg(err)}`,
     };
   }
-  return [transformers, checkModelCache(config.modelCacheDir, defaultDir)];
 }
 
 /**
@@ -406,7 +384,8 @@ export async function runDoctor(
   config: EngramConfig = loadConfig(),
 ): Promise<DoctorReport> {
   const [betterSqlite, sqliteVec] = await checkNativeSqlite();
-  const [transformers, modelCache] = await checkTransformersAndCache(config);
+  const transformers = await checkTransformers();
+  const modelCache = checkModelCache(describeModelCacheDir(config));
   const ollama = await checkOllama(config);
   const mcpDaemon = await checkMcpDaemon();
   const checks: DoctorCheck[] = [
