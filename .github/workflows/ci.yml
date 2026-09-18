@@ -7,17 +7,32 @@ on:
 
 jobs:
   test:
-    name: lint + test (${{ matrix.os }})
+    name: lint + test (${{ matrix.os }}, node ${{ matrix.node }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # Every target Engram documents as supported (README "Supported
+        # platform/arch set", generated from scripts/preflight.cjs), on the two
+        # Node LTS lines better-sqlite3 ^12.11.1 ships prebuilds for (#63).
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
+        node: [22, 24]
         include:
-          # Windows is newly supported; keep it visible without blocking merges
+          # Windows x64 is newly supported; keep it visible without blocking merges
           # until it has been green for a while. Flip to false once stable.
           - os: windows-latest
             experimental: true
+          # Windows on ARM (win32-arm64) is documented as NOT supported: better-sqlite3
+          # and onnxruntime-node ship win32-arm64 binaries but sqlite-vec publishes no
+          # windows-arm64 package, so `engram init` fails on the sqlite-vec load. The
+          # job asserts exactly that documented verdict (a sqlite-vec release that adds
+          # the package flips it, which is the signal to promote this target) and runs
+          # the smoke subset that needs no native load. Experimental: ARM Windows
+          # runner availability is the least certain part of the matrix.
+          - os: windows-11-arm
+            node: 22
+            experimental: true
+            verdict: unsupported
     continue-on-error: ${{ matrix.experimental == true }}
     env:
       # Where the tests' model downloads land; see "Cache transformer model downloads".
@@ -27,12 +42,28 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ matrix.node }}
           cache: npm
 
       # `prepare` runs `npm run build` (tsc), so dist/ exists for tests that
-      # exercise the built entry points.
+      # exercise the built entry points. postinstall runs the preflight too, but
+      # npm hides its output; the explicit steps below make the verdict visible.
       - run: npm ci
+
+      # Supported targets: every native module must be *prebuilt* here. --strict
+      # fails on any [FAIL] (a module that does not load); --expect prebuilt also
+      # fails when a dependency bump silently fell back to node-gyp (the runner
+      # has a toolchain, so the install itself would have succeeded), which is
+      # exactly the regression this matrix exists to catch.
+      - name: Native-dependency preflight (must be prebuilt on a supported target)
+        if: matrix.verdict != 'unsupported'
+        run: node scripts/preflight.cjs --strict --expect prebuilt
+
+      # Documented-unsupported target: assert the documented verdict instead of
+      # --strict (which would always fail here by design).
+      - name: Native-dependency preflight (documented-unsupported target)
+        if: matrix.verdict == 'unsupported'
+        run: node scripts/preflight.cjs --expect "better-sqlite3=prebuilt,sqlite-vec=unsupported,onnxruntime-node=prebuilt"
 
       # Cache the ONNX model weights that @xenova/transformers downloads on
       # first use (all-MiniLM-L6-v2, bge-reranker-base, ...). Engram resolves
@@ -40,16 +71,74 @@ jobs:
       # else <data dir>/models — never node_modules), so the job pins one
       # location for every OS via ENGRAM_MODEL_CACHE_DIR above and caches that.
       - name: Cache transformer model downloads
+        if: matrix.verdict != 'unsupported'
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/engram-model-cache
-          key: ${{ runner.os }}-transformers-${{ hashFiles('package-lock.json') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-node${{ matrix.node }}-transformers-${{ hashFiles('package-lock.json') }}
           restore-keys: |
-            ${{ runner.os }}-transformers-
+            ${{ runner.os }}-${{ runner.arch }}-node${{ matrix.node }}-transformers-
+            ${{ runner.os }}-${{ runner.arch }}-
 
       - run: npm run lint
+
+      # The same verdict through the built CLI (`npx @devinmlowe/engram preflight`
+      # is what the README install snippet runs first), so the dist entry point
+      # and the createRequire bridge to scripts/preflight.cjs are exercised.
+      - name: engram preflight (built CLI)
+        if: matrix.verdict != 'unsupported'
+        run: node dist/interfaces/cli/index.js preflight --strict --expect prebuilt
+
+      - name: engram preflight (built CLI, documented-unsupported target)
+        if: matrix.verdict == 'unsupported'
+        run: node dist/interfaces/cli/index.js preflight --expect "better-sqlite3=prebuilt,sqlite-vec=unsupported,onnxruntime-node=prebuilt"
 
       # tests/deployment validates the launchd template + installer contract and
       # .mcp.json path resolution; it runs on every OS now that templates use
       # placeholders instead of one developer's paths.
-      - run: npm run test:run
+      - name: Test suite
+        if: matrix.verdict != 'unsupported'
+        run: npm run test:run
+
+      # sqlite-vec cannot load here, so anything that opens a database fails by
+      # design. Smoke subset: the preflight/probe/README-table contracts and the
+      # deployment path tests, none of which load a native module.
+      - name: Smoke tests (no native load)
+        if: matrix.verdict == 'unsupported'
+        run: npm run test:run -- tests/deployment tests/contracts/spec-references.test.ts
+
+  # Alpine / musl is documented as NOT supported: better-sqlite3 ships
+  # linuxmusl-* prebuilds (and loads), but sqlite-vec and onnxruntime-node
+  # publish glibc-only Linux binaries that need ld-linux and do not load on
+  # musl even with gcompat (verified on node:22-alpine). This job proves the
+  # preflight detects musl and reports exactly the documented verdict, and
+  # that a better-sqlite3 bump dropping its musl prebuild shows up here as
+  # `compiled` (build-base is installed so the install would still succeed —
+  # the preflight is what turns that into a failure). The full suite cannot
+  # run without sqlite-vec, so it runs the same smoke subset as windows-11-arm.
+  musl:
+    name: preflight + smoke (node:22-alpine, musl)
+    runs-on: ubuntu-latest
+    container: node:22-alpine
+    steps:
+      # git for actions/checkout; the toolchain so a missing prebuild compiles
+      # instead of aborting npm ci (the preflight then reports `compiled locally`).
+      - run: apk add --no-cache build-base python3 git
+
+      - uses: actions/checkout@v4
+
+      - run: npm ci
+
+      - name: Native-dependency preflight (documented-unsupported target)
+        run: node scripts/preflight.cjs --expect "better-sqlite3=prebuilt,sqlite-vec=unsupported,onnxruntime-node=unsupported"
+
+      - name: musl was detected, not guessed
+        run: node scripts/preflight.cjs --json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=JSON.parse(s);if(r.target.libc!=="musl"||r.target.key!=="linuxmusl-x64"){console.error("expected linuxmusl-x64, got",r.target);process.exit(1)}console.log("target",r.target.key)})'
+
+      - run: npm run lint
+
+      - name: engram preflight (built CLI, documented-unsupported target)
+        run: node dist/interfaces/cli/index.js preflight --expect "better-sqlite3=prebuilt,sqlite-vec=unsupported,onnxruntime-node=unsupported"
+
+      - name: Smoke tests (no native load)
+        run: npm run test:run -- tests/deployment tests/contracts/spec-references.test.ts
