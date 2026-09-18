@@ -11,7 +11,10 @@ export {
   pruneZeroEntityVectors,
   backfillEventTs,
   migrateCommitments,
+  migrateForget,
   COMMITMENTS_MIGRATION,
+  FORGET_MIGRATION,
+  MEMORY_CHANGE_OPS,
   EVENT_TS_SUBQUERY,
 } from "./schema.js";
 

@@ -393,6 +393,12 @@ function createSchema(db: Database.Database, config: EngramConfig): void {
   // transcripts and for turns sent without an author.
   migrateExchangeAuthor(db);
 
+  // #55: forget tool + memory inspection surface — soft-delete columns on
+  // memories, the memory change log, the content-hash suppression table and
+  // the graph `stale_since` flags (#56/#57). Must run AFTER
+  // migrateExpandedTypes (entities/relationships rebuild).
+  migrateForget(db);
+
   // FTS5 virtual tables (created separately — can't use IF NOT EXISTS)
   createFtsIfNeeded(db, "exchanges_fts", `
     CREATE VIRTUAL TABLE exchanges_fts USING fts5(
@@ -712,6 +718,82 @@ export function migrateCommitments(db: Database.Database): boolean {
   `);
   db.prepare("INSERT OR IGNORE INTO schema_migrations (name) VALUES (?)").run(COMMITMENTS_MIGRATION);
   return true;
+}
+
+/** Checkpoint name recorded in schema_migrations when the forget surface lands (#55). */
+export const FORGET_MIGRATION = "forget_v1";
+
+/** Operations recorded in `memory_changes.op`. */
+export const MEMORY_CHANGE_OPS = ["forget", "edit", "purge", "restore"] as const;
+
+/**
+ * #55: the memory lifecycle surface behind the `forget` tool and
+ * `engram memories`.
+ *
+ * - `memories.deleted_at` / `memories.deleted_by` — soft delete (#56): a
+ *   forgotten memory keeps its row (with `is_active = 0`) until the dream
+ *   prune phase purges it after `ENGRAM_FORGET_RETENTION_DAYS`; its vector
+ *   and FTS rows are removed immediately.
+ * - `memory_changes` — append-only audit log: one row per forget / edit /
+ *   purge / restore with the content before and after and the actor (MCP
+ *   client name or `cli`).
+ * - `memory_suppressions` — content hashes of forgotten memories, consulted
+ *   by dream extract so the same fact is not re-extracted from the same
+ *   exchanges on the next run.
+ * - `entities.stale_since` / `relationships.stale_since` (#57) — stamped by
+ *   forget when a row loses its last evidence; dream prune deletes flagged
+ *   rows with zero remaining evidence regardless of age. Forget itself never
+ *   deletes graph rows.
+ *
+ * Idempotent and checkpointed in schema_migrations. Returns `true` only on
+ * the open that added something.
+ */
+export function migrateForget(db: Database.Database): boolean {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      name TEXT PRIMARY KEY,
+      applied_at INTEGER DEFAULT (unixepoch())
+    )
+  `);
+  let added = false;
+  if (idempotentAlter(db, "memories", "deleted_at", "ALTER TABLE memories ADD COLUMN deleted_at TEXT")) added = true;
+  if (idempotentAlter(db, "memories", "deleted_by", "ALTER TABLE memories ADD COLUMN deleted_by TEXT")) added = true;
+  db.exec("CREATE INDEX IF NOT EXISTS idx_memories_deleted_at ON memories(deleted_at)");
+
+  for (const table of ["entities", "relationships"] as const) {
+    if (idempotentAlter(db, table, "stale_since", `ALTER TABLE ${table} ADD COLUMN stale_since TEXT`)) added = true;
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_${table}_stale_since ON ${table}(stale_since)`);
+  }
+
+  const hadChanges = db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'memory_changes'")
+    .get();
+  const hadSuppressions = db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'memory_suppressions'")
+    .get();
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS memory_changes (
+      id TEXT PRIMARY KEY,
+      memory_id TEXT NOT NULL,
+      op TEXT NOT NULL CHECK(op IN ('forget', 'edit', 'purge', 'restore')),
+      before TEXT,
+      after TEXT,
+      actor TEXT NOT NULL,
+      at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_memory_changes_memory ON memory_changes(memory_id, at);
+    CREATE INDEX IF NOT EXISTS idx_memory_changes_at ON memory_changes(at);
+
+    CREATE TABLE IF NOT EXISTS memory_suppressions (
+      content_hash TEXT PRIMARY KEY,
+      memory_id TEXT,
+      scope TEXT DEFAULT 'global',
+      created_at TEXT NOT NULL
+    );
+  `);
+  if (!hadChanges || !hadSuppressions) added = true;
+  db.prepare("INSERT OR IGNORE INTO schema_migrations (name) VALUES (?)").run(FORGET_MIGRATION);
+  return added;
 }
 
 /**

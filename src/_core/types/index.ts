@@ -135,4 +135,13 @@ export interface EngramConfig {
     solution: number; // 0.03
     convention: number; // 0.015
   };
+
+  forget: {
+    /**
+     * Days a forgotten (soft-deleted) memory is kept before dream prune
+     * hard-deletes it (ENGRAM_FORGET_RETENTION_DAYS, default 30; 0 = purge
+     * on the next prune). `forget --hard` / `engram memories purge` bypass it (#56).
+     */
+    retentionDays: number;
+  };
 }

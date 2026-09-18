@@ -91,6 +91,9 @@ export function describeModelCacheDir(
 // resolveDefaultDataDir(env) so environment changes after import still apply.
 const IMPORT_TIME_DATA_DIR = resolveDefaultDataDir();
 
+/** Default retention (days) for forgotten memories before dream prune hard-deletes them (#56). */
+export const DEFAULT_FORGET_RETENTION_DAYS = 30;
+
 const defaults: EngramConfig = {
   dataDir: IMPORT_TIME_DATA_DIR,
   dbPath: join(IMPORT_TIME_DATA_DIR, "engram.db"),
@@ -134,7 +137,22 @@ const defaults: EngramConfig = {
     solution: 0.03,
     convention: 0.015,
   },
+
+  forget: {
+    retentionDays: DEFAULT_FORGET_RETENTION_DAYS,
+  },
 };
+
+/**
+ * Parse ENGRAM_FORGET_RETENTION_DAYS: a non-negative integer number of days
+ * (0 = purge on the next prune). Anything else falls back to `fallback`.
+ */
+export function parseRetentionDays(raw: string | undefined, fallback: number): number {
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 0) return fallback;
+  return n;
+}
 
 /**
  * Build configuration by merging defaults with environment overrides.
@@ -202,6 +220,15 @@ export function loadConfig(overrides?: Partial<EngramConfig>): EngramConfig {
     decay: {
       ...defaults.decay,
       ...overrides?.decay,
+    },
+
+    forget: {
+      ...defaults.forget,
+      ...overrides?.forget,
+      retentionDays: parseRetentionDays(
+        env.ENGRAM_FORGET_RETENTION_DAYS,
+        overrides?.forget?.retentionDays ?? defaults.forget.retentionDays,
+      ),
     },
   };
 }
