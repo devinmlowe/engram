@@ -796,6 +796,54 @@ export function migrateForget(db: Database.Database): boolean {
   return added;
 }
 
+// ─── schema version (#65) ────────────────────────────────────────────
+
+/**
+ * Every checkpoint `createSchema` records, in the order it applies them. This
+ * list IS the schema version of a build: `SCHEMA_VERSION` is its length, and
+ * a database's version is the checkpoints it has recorded (`schemaVersion`).
+ * Append here whenever a new checkpointed migration lands.
+ */
+export const SCHEMA_MIGRATIONS = [
+  COMMITMENTS_MIGRATION,
+  GRAPH_SCOPE_MIGRATION,
+  CONVERSATIONS_SCOPE_MIGRATION,
+  EXCHANGES_AUTHOR_MIGRATION,
+  FORGET_MIGRATION,
+] as const;
+
+/** Number of checkpointed migrations this build applies (5 as of `forget_v1`). */
+export const SCHEMA_VERSION: number = SCHEMA_MIGRATIONS.length;
+
+/**
+ * Checkpoints an OLDER build cannot read past — a column dropped or renamed,
+ * a table rewritten in a shape the previous release does not understand.
+ * Empty today: every migration is additive (`ALTER TABLE … ADD COLUMN`,
+ * `CREATE TABLE IF NOT EXISTS`), so a previous build opens a newer database
+ * and simply ignores what it does not know. `engram update --rollback`
+ * refuses a code-only rollback across any name listed here (decision #66);
+ * add a checkpoint to this set in the same change that makes it breaking.
+ */
+export const BREAKING_MIGRATIONS: ReadonlySet<string> = new Set<string>();
+
+export interface SchemaVersion {
+  /** Number of checkpoints recorded in the database. */
+  version: number;
+  /** The recorded checkpoint names, sorted. Empty for a pre-checkpoint or fresh database. */
+  applied: string[];
+}
+
+/** The checkpoints a database has recorded. Read-only; never runs a migration and never throws on an old schema. */
+export function schemaVersion(db: Database.Database): SchemaVersion {
+  const exists = db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'")
+    .get();
+  if (!exists) return { version: 0, applied: [] };
+  const rows = db.prepare("SELECT name FROM schema_migrations ORDER BY name").all() as Array<{ name: string }>;
+  const applied = rows.map((r) => r.name);
+  return { version: applied.length, applied };
+}
+
 /**
  * SQL that resolves a memory's event timestamp: the earliest `exchanges.timestamp`
  * among its `source_exchanges` ids, as unix seconds. NULL when nothing resolves.

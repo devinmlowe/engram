@@ -33,6 +33,8 @@ export interface ExecResult {
 export interface ExecOptions {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
+  /** Kill the child after this many ms (exit status 124, like coreutils `timeout`). Unbounded by default. */
+  timeoutMs?: number;
 }
 export type Exec = (cmd: string, args: string[], opts?: ExecOptions) => Promise<ExecResult>;
 /** True when `GET http://127.0.0.1:port<path>` answers 200. */
@@ -111,9 +113,10 @@ export function portFor(id: ServiceId, env: NodeJS.ProcessEnv): { port: number; 
 
 export const realExec: Exec = (cmd, args, opts = {}) =>
   new Promise((resolve) => {
-    execFile(cmd, args, { encoding: "utf8", windowsHide: true, maxBuffer: 16 * 1024 * 1024, cwd: opts.cwd, env: opts.env ?? process.env }, (err, stdout, stderr) => {
-      const status = err && typeof (err as { code?: unknown }).code === "number" ? ((err as { code: number }).code) : err ? 1 : 0;
-      resolve({ status, stdout: String(stdout ?? ""), stderr: String(stderr ?? "") });
+    execFile(cmd, args, { encoding: "utf8", windowsHide: true, maxBuffer: 16 * 1024 * 1024, cwd: opts.cwd, env: opts.env ?? process.env, timeout: opts.timeoutMs }, (err, stdout, stderr) => {
+      const killed = Boolean(err && (err as { killed?: boolean }).killed);
+      const status = killed ? 124 : err && typeof (err as { code?: unknown }).code === "number" ? ((err as { code: number }).code) : err ? 1 : 0;
+      resolve({ status, stdout: String(stdout ?? ""), stderr: killed ? `timed out after ${opts.timeoutMs} ms` : String(stderr ?? "") });
     });
   });
 

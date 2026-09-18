@@ -581,14 +581,19 @@ describe("update run (git install, macOS, legacy data dir)", () => {
     const res = await runUpdate(plan, d);
     expect(res.ok).toBe(false);
     const text = res.lines.join("\n");
-    expect(text).toContain("counts DROPPED after the update: conversations: 1 -> 0; entities: 1 -> 0");
+    expect(text).toContain("counts DROPPED: conversations: 1 -> 0; entities: 1 -> 0");
     expect(text).toContain("UPDATE FAILED.");
-    expect(text).toContain("Rollback steps, in order");
+    // #65: not a terminal and no --yes → the rollback command is printed, not run; --no-backup → code-only
+    expect(text).toContain("Not a terminal: run `engram update --rollback 20260917-123456Z` to roll back");
+    expect(text).toContain("no backup to restore, so a rollback is code-only");
+    expect(text).toContain("Manual steps, in order");
     expect(text).toContain(MODEL_CACHE_BACKUP_NOTE); // #54: rollback re-downloads, never restores, models/
     expect(text).toContain("restarted mcp"); // services come back even when verification fails
     expect(text).toContain("stop mcp: launchctl unload");
     expect(text).toContain("git -C " + root + " checkout abc1234 && npm ci");
-    expect(text).toContain("move the items back");
+    expect(text).toContain("the update moved it from");
+    expect(res.rollback).toBeUndefined();
+    expect(JSON.parse(readFileSync(res.planFile!, "utf-8")).progress).toBe("failed:verify");
   });
 
   it("a failed git pull aborts before the data dir moves", async () => {
