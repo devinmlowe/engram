@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { PreflightModule, PrebuildProbe } from "../../src/interfaces/cli/preflight.js";
+import type { NativeDepSpec, PreflightModule, PrebuildProbe } from "../../src/interfaces/cli/preflight.js";
 
 // Issue #63: scripts/preflight.cjs decides prebuilt | compiled | will-compile |
 // unsupported | unknown per native dependency, inspecting node_modules when the
@@ -96,13 +96,27 @@ function tree(name: string, spec: TreeSpec): string {
   return root;
 }
 
-function probe(dep: string, root: string, opts: Record<string, unknown> = {}): PrebuildProbe {
+function probe(dep: string | NativeDepSpec, root: string, opts: Record<string, unknown> = {}): PrebuildProbe {
   return cjs.probePrebuild(dep, { root, platform: "darwin", arch: "arm64", libc: "", abi: 127, ...opts });
 }
 
+/**
+ * better-sqlite3 as 12.x published it — per-Node-ABI prebuild-install tarballs.
+ * 13.x (the pinned range) is N-API and needs no ABI bookkeeping, but the probe
+ * keeps the ABI branches for any future dependency that ships per-ABI builds,
+ * so they stay covered through this spec.
+ */
+const ABI_BOUND: NativeDepSpec = {
+  name: "better-sqlite3",
+  via: "prebuild-install (GitHub release tarball per Node ABI), node-gyp fallback",
+  abis: [127, 137, 141, 147],
+  targets: ["darwin-arm64", "darwin-x64", "linux-arm", "linux-arm64", "linux-x64", "linuxmusl-arm", "linuxmusl-arm64", "linuxmusl-x64", "win32-arm64", "win32-x64"],
+  compiles: true,
+};
+
 describe("prebuild probe: installed packages", () => {
-  it("reports prebuilt when better-sqlite3 has only the prebuild-install binary", () => {
-    const p = probe("better-sqlite3", tree("bs3-prebuilt", { betterSqlite: "prebuilt" }));
+  it("reports prebuilt when a pre-13 better-sqlite3 has only the prebuild-install binary", () => {
+    const p = probe(ABI_BOUND, tree("bs3-prebuilt", { betterSqlite: "prebuilt" }));
     expect(p.status).toBe("prebuilt");
     expect(p.level).toBe("ok");
     expect(p.source).toBe("installed");
@@ -119,16 +133,25 @@ describe("prebuild probe: installed packages", () => {
     expect(p.label).toBe("compiled locally");
     expect(p.detail).toMatch(/config\.gypi/);
     expect(p.detail).toMatch(/obj\.target/);
-    // prebuilt exists for this ABI/target: a local build means the download failed
-    expect(p.detail).toMatch(/prebuild-install did not use it/);
+    // a prebuilt exists for this target: a local build means the install did not use it
+    expect(p.detail).toMatch(/a prebuilt exists for darwin-arm64 but the install did not use it/);
     expect(p.fix).toEqual([]);
   });
 
   it("suggests the nearest LTS with prebuilds when a local build was forced by the Node major", () => {
-    const p = probe("better-sqlite3", tree("bs3-compiled-abi", { betterSqlite: "compiled" }), { abi: 131 });
+    const p = probe(ABI_BOUND, tree("bs3-compiled-abi", { betterSqlite: "compiled" }), { abi: 131 });
     expect(p.status).toBe("compiled");
-    expect(p.detail).toMatch(/no prebuilt for node-v131-darwin-arm64/);
+    expect(p.detail).toMatch(/no prebuilt for darwin-arm64, so every upgrade needs the toolchain/);
     expect(p.fix).toEqual([expect.stringMatching(/^fix: nvm use 24/)]);
+  });
+
+  it("13.x: the bundled prebuild wins even when npm's implicit node-gyp run left artefacts behind", () => {
+    const root = tree("bs3-bundled-and-gyp", { betterSqlite: "bundled" });
+    mkdirSync(join(root, "node_modules", "better-sqlite3", "build"), { recursive: true });
+    writeFileSync(join(root, "node_modules", "better-sqlite3", "build", "config.gypi"), "");
+    const p = probe("better-sqlite3", root);
+    expect(p.status).toBe("prebuilt");
+    expect(p.detail).toContain(join("prebuilds", "darwin-arm64.node"));
   });
 
   it("recognises the 13.x bundled prebuilds/ layout", () => {
@@ -241,7 +264,7 @@ describe("prebuild probe: static table (package absent)", () => {
   });
 
   it("predicts a source build with the toolchain fix and an LTS alternative for an uncovered Node major", () => {
-    const p = probe("better-sqlite3", absent, { platform: "linux", arch: "x64", libc: "glibc", abi: 131 });
+    const p = probe(ABI_BOUND, absent, { platform: "linux", arch: "x64", libc: "glibc", abi: 131 });
     expect(p.status).toBe("will-compile");
     expect(p.level).toBe("warn");
     expect(p.label).toBe("will compile (needs python3 + C++ toolchain)");
@@ -253,12 +276,26 @@ describe("prebuild probe: static table (package absent)", () => {
   });
 
   it("names the OS toolchain command", () => {
-    expect(probe("better-sqlite3", absent, { abi: 131 }).fix[0]).toBe("fix: xcode-select --install");
-    const win = probe("better-sqlite3", absent, { platform: "win32", arch: "x64", abi: 131 });
+    expect(probe(ABI_BOUND, absent, { abi: 131 }).fix[0]).toBe("fix: xcode-select --install");
+    const win = probe(ABI_BOUND, absent, { platform: "win32", arch: "x64", abi: 131 });
     expect(win.fix[0]).toMatch(/Visual Studio Build Tools.*Desktop development with C\+\+/);
     expect(win.fix[0]).toMatch(/windows-build-tools is deprecated/);
-    const musl = probe("better-sqlite3", absent, { platform: "linux", arch: "x64", libc: "musl", abi: 131 });
+    const musl = probe(ABI_BOUND, absent, { platform: "linux", arch: "x64", libc: "musl", abi: 131 });
     expect(musl.fix[0]).toBe("fix: apk add build-base python3");
+  });
+
+  it("13.x: N-API — every Node major is prebuilt on a bundled target, armv7 compiles from source", () => {
+    for (const abi of [127, 131, 137, 147]) {
+      const p = probe("better-sqlite3", absent, { platform: "linux", arch: "x64", libc: "glibc", abi });
+      expect(p.status).toBe("prebuilt");
+      expect(p.fix).toEqual([]);
+    }
+    const arm = probe("better-sqlite3", absent, { platform: "linux", arch: "arm", libc: "glibc" });
+    expect(arm.status).toBe("will-compile");
+    expect(arm.detail).toMatch(/bundles no prebuilt for linux-arm/);
+    expect(arm.fix[0]).toMatch(/^fix: .*python3/);
+    expect(arm.fix).toHaveLength(1); // no Node-major alternative: the ABI is irrelevant
+    expect(cjs.PREBUILT_NODE_MAJORS).toEqual([22, 23, 24, 25, 26]);
   });
 
   it("is unsupported (not will-compile) for deps without a source fallback", () => {

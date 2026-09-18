@@ -17,10 +17,13 @@
  * unsupported | unknown` for `process.versions.modules` (the Node ABI) +
  * platform + arch + libc:
  *
- *   - post-install (the package is on disk): inspect it. better-sqlite3 leaves
- *     only `build/Release/better_sqlite3.node` behind when prebuild-install
- *     downloaded a release tarball, while a node-gyp build also writes
- *     `build/config.gypi`, `build/Makefile` (or `*.vcxproj`) and `build/Release/obj*`;
+ *   - post-install (the package is on disk): inspect it. better-sqlite3 13.x
+ *     bundles `prebuilds/<platform>[musl]-<arch>.node` (the one for this
+ *     target wins, whatever else npm's implicit node-gyp run left under
+ *     build/); a pre-13 install leaves only `build/Release/better_sqlite3.node`
+ *     behind when prebuild-install downloaded a release tarball, while a
+ *     node-gyp build also writes `build/config.gypi`, `build/Makefile` (or
+ *     `*.vcxproj`) and `build/Release/obj*`;
  *     sqlite-vec resolves an optional `sqlite-vec-<os>-<arch>` platform
  *     package next to itself; onnxruntime-node bundles every binary under
  *     `bin/napi-v<N>/<platform>/<arch>/`.
@@ -62,12 +65,16 @@ const NODE_ABI_MAJORS = { 108: 18, 111: 19, 115: 20, 120: 21, 127: 22, 131: 23, 
  *
  * Target strings follow prebuild-install: `<platform>[musl]-<arch>`.
  *
- * - better-sqlite3 `^12.11.1`: prebuild-install fetches
- *   `better-sqlite3-v<ver>-node-v<abi>-<target>.tar.gz` from the GitHub
- *   release; every 12.10.0+ release ships node-v127/137/141/147 (Node 22, 24,
- *   25, 26 — 12.10.0 dropped v115/v131 i.e. Node 20/23) for all ten targets.
- *   Anything else falls back to `node-gyp rebuild`, which needs python3 + a
- *   C++ toolchain.
+ * - better-sqlite3 `^13.0.3`: N-API since 13.0.0, so the binaries are
+ *   Node-version independent and ship inside the npm tarball as
+ *   `prebuilds/<platform>[musl]-<arch>.node` for eight targets (13.x dropped
+ *   the 32-bit `linux-arm` / `linuxmusl-arm` prebuilds that 12.x published
+ *   through prebuild-install). Anything else falls back to `node-gyp
+ *   rebuild`, which needs python3 + a C++ toolchain. npm 10 still runs
+ *   `node-gyp rebuild` at install even on a prebuilt target (the lockfile
+ *   does not carry the package's `gypfile: false`): binding.gyp then compiles
+ *   nothing, but `node-gyp configure` needs python3 and the Node headers
+ *   (downloaded from nodejs.org unless cached under ~/.cache/node-gyp).
  * - sqlite-vec `^0.1.7-alpha.2`: a SQLite loadable extension delivered as
  *   optional platform packages `sqlite-vec-<os>-<arch>` (os = darwin | linux |
  *   windows). Node-version independent; no source fallback; the Linux builds
@@ -80,15 +87,13 @@ const NODE_ABI_MAJORS = { 108: 18, 111: 19, 115: 20, 120: 21, 127: 22, 131: 23, 
 const NATIVE_DEPS = [
   {
     name: "better-sqlite3",
-    via: "prebuild-install (GitHub release tarball per Node ABI), node-gyp fallback",
-    abis: [127, 137, 141, 147],
+    via: "N-API binaries bundled in the npm tarball under prebuilds/<platform>[musl]-<arch>.node (Node-version independent), node-gyp fallback",
+    abis: null,
     targets: [
       "darwin-arm64",
       "darwin-x64",
-      "linux-arm",
       "linux-arm64",
       "linux-x64",
-      "linuxmusl-arm",
       "linuxmusl-arm64",
       "linuxmusl-x64",
       "win32-arm64",
@@ -277,8 +282,9 @@ function staticVerdict(spec, target) {
       : `${spec.name} publishes no prebuilt for ${major}; its prebuilts cover Node ${majors}`;
     return verdict(spec, target, "static", spec.compiles ? "will-compile" : "unsupported", reason);
   }
-  return onTarget
-    ? verdict(spec, target, "static", "prebuilt", `${target.key} is in ${spec.name}'s platform list`)
+  if (onTarget) return verdict(spec, target, "static", "prebuilt", `${target.key} is in ${spec.name}'s platform list`);
+  return spec.compiles
+    ? verdict(spec, target, "static", "will-compile", `${spec.name} bundles no prebuilt for ${target.key} (it has: ${spec.targets.join(", ")})`)
     : verdict(spec, target, "static", "unsupported", `${spec.name} ships no build for ${target.key} (it has: ${spec.targets.join(", ")})`);
 }
 
@@ -292,15 +298,16 @@ function inspectBetterSqlite(spec, dir, target) {
   if (!fs.existsSync(path.join(dir, binary))) {
     return verdict(spec, target, "installed", "unknown", `${binary} is missing from ${dir}: the install failed, is still running, or uses a layout this preflight does not know`, { location: dir });
   }
+  // Pre-13 layout (prebuild-install tarball or a node-gyp build under build/Release).
   const gyp = GYP_ARTEFACTS.filter((p) => fs.existsSync(path.join(dir, "build", p)));
   const expectation = staticVerdict(spec, target);
   if (gyp.length > 0) {
     const why = expectation.status === "prebuilt"
-      ? `a prebuilt exists for node-v${target.abi}-${target.key} but prebuild-install did not use it (offline, proxy, or npm_config_build_from_source?)`
-      : `no prebuilt for node-v${target.abi}-${target.key}, so every upgrade needs the toolchain`;
+      ? `a prebuilt exists for ${target.key} but the install did not use it (offline, proxy, npm_config_build_from_source, or a pre-13 better-sqlite3 whose prebuild-install download failed?)`
+      : `no prebuilt for ${target.key}, so every upgrade needs the toolchain`;
     return verdict(spec, target, "installed", "compiled", `node-gyp artefacts build/${gyp.join(", build/")}; ${why}`, { location: dir });
   }
-  return verdict(spec, target, "installed", "prebuilt", `${binary} with no node-gyp artefacts (prebuild-install tarball node-v${target.abi}-${target.key})`, { location: dir });
+  return verdict(spec, target, "installed", "prebuilt", `${binary} with no node-gyp artefacts (prebuild-install tarball node-v${target.abi}-${target.key}, pre-13 layout)`, { location: dir });
 }
 
 function inspectSqliteVec(spec, dir, target) {
