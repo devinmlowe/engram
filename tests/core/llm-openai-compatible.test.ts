@@ -14,6 +14,7 @@ import {
 import { OpenRouterError } from "../../src/_core/llm/providers/openrouter.js";
 import {
   generateStructured, parseProviderOrder, describeProviders, buildIntelligenceConfig, DEFAULT_PROVIDER_ORDER, resetIntelligence,
+  resolveLlmTimeoutMs, LLM_TIMEOUT_ENV,
   type IntelligenceConfig,
 } from "../../src/_core/llm/index.js";
 import { loadConfig } from "../../src/_core/config/index.js";
@@ -57,6 +58,22 @@ const route = (over: Partial<OpenAIRoute> = {}): OpenAIRoute => ({
 });
 
 describe("route configuration", () => {
+  it("ENGRAM_LLM_TIMEOUT_MS raises the per-request timeout; blank or junk keeps the 120 s default", () => {
+    expect(resolveLlmTimeoutMs({})).toBe(120_000);
+    expect(resolveLlmTimeoutMs({ [LLM_TIMEOUT_ENV]: "" })).toBe(120_000);
+    expect(resolveLlmTimeoutMs({ [LLM_TIMEOUT_ENV]: "soon" })).toBe(120_000);
+    expect(resolveLlmTimeoutMs({ [LLM_TIMEOUT_ENV]: "-5" })).toBe(120_000);
+    expect(resolveLlmTimeoutMs({ [LLM_TIMEOUT_ENV]: " 600000 " })).toBe(600_000);
+    const saved = process.env[LLM_TIMEOUT_ENV];
+    process.env[LLM_TIMEOUT_ENV] = "300000";
+    try {
+      expect(buildIntelligenceConfig(loadConfig()).timeoutMs).toBe(300_000);
+    } finally {
+      if (saved === undefined) delete process.env[LLM_TIMEOUT_ENV];
+      else process.env[LLM_TIMEOUT_ENV] = saved;
+    }
+  });
+
   it("normalises the base URL: trailing slashes dropped, /v1 appended to a bare origin, explicit paths kept", () => {
     expect(normalizeBaseUrl("https://api.openai.com/")).toBe("https://api.openai.com/v1");
     expect(normalizeBaseUrl("http://localhost:4000")).toBe("http://localhost:4000/v1");

@@ -23,7 +23,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type Database from "better-sqlite3";
-import { CascadeError, type LlmProvider } from "../../_core/llm/index.js";
+import { CascadeError, resolveLlmTimeoutMs, type LlmProvider } from "../../_core/llm/index.js";
 import type { EngramConfig, MemorySource } from "../../_core/types/index.js";
 import { PACKAGE_ROOT } from "../../_core/version/index.js";
 import type { ConversationExchange, ConversationMetadata } from "../../semantic/extractor.js";
@@ -251,7 +251,9 @@ async function defaultInitEmbeddings(config: EngramConfig): Promise<void> {
 /** Run the smoke. Never throws: every failure is an outcome. */
 export async function runExtractionSmoke(config: EngramConfig, deps: SmokeDeps = {}): Promise<SmokeOutcome> {
   const started = Date.now();
-  const budgetMs = deps.budgetMs ?? SMOKE_BUDGET_MS;
+  // A raised ENGRAM_LLM_TIMEOUT_MS (slow local model) would otherwise make the
+  // smoke time out before the single request it is measuring can finish.
+  const budgetMs = deps.budgetMs ?? Math.max(SMOKE_BUDGET_MS, resolveLlmTimeoutMs());
   const maxExchanges = deps.maxExchanges ?? SMOKE_MAX_EXCHANGES;
   const maxChars = deps.maxChars ?? SMOKE_MAX_CHARS;
   const extract = deps.extract ?? defaultExtract;

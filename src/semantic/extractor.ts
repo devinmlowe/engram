@@ -22,6 +22,7 @@ import {
   isOllamaAvailable,
   isOpenRouterAvailable,
   resetIntelligence,
+  resolveOpenAIRouteConfig,
   setClient as setIntelligenceClient,
   type GenerationResult,
   type IntelligenceConfig,
@@ -168,11 +169,14 @@ export interface ConversationMetadata {
  * SPEC.md INV-3 a reachable local Ollama model is sufficient on its own.
  */
 export async function initExtractor(): Promise<void> {
-  if (isAnthropicAvailable() || isOpenRouterAvailable()) return;
+  // A configured OpenAI-compatible route (#45: ENGRAM_OPENAI_MODEL + key) is a
+  // tier of its own; the cascade decides reachability per call.
+  if (isAnthropicAvailable() || isOpenRouterAvailable() || resolveOpenAIRouteConfig() !== undefined) return;
   if (await isOllamaAvailable(intelligenceConfig())) return;
   throw new Error(
     "No extraction provider configured. " +
-      "Set ANTHROPIC_API_KEY or OPENROUTER_API_KEY, or run Ollama with the configured local model.",
+      "Set ANTHROPIC_API_KEY, OPENROUTER_API_KEY or ENGRAM_OPENAI_MODEL (+ ENGRAM_OPENAI_BASE_URL), " +
+      "or run Ollama with the configured local model.",
   );
 }
 
