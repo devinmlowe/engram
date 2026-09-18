@@ -17,6 +17,7 @@ import { isInsideNodeModules } from "../../_core/embeddings/model-cache.js";
 import { buildIntelligenceConfig, describeProviders, resolveOllamaModel } from "../../_core/llm/index.js";
 import type { EngramConfig } from "../../_core/types/index.js";
 import { modelCacheSourceLabel } from "./data-migration.js";
+import { MIN_NODE_MAJOR, PREBUILT_TARGETS, describePrebuild, loadPreflight, type PrebuildProbe } from "./preflight.js";
 import { parseMcpPort } from "../mcp/port.js";
 
 export type DoctorLevel = "ok" | "warn" | "fail";
@@ -53,21 +54,15 @@ export interface DoctorReport {
   ok: boolean;
 }
 
-export const MIN_NODE_MAJOR = 22;
-
 /**
- * `${process.platform}-${process.arch}` targets for which better-sqlite3,
- * sqlite-vec, and onnxruntime-node all ship prebuilt binaries. Anything else
- * needs a C++ toolchain at `npm install` time, and sqlite-vec has no build at
- * all (notably Windows on ARM and 32-bit ARM Linux).
+ * MIN_NODE_MAJOR and PREBUILT_TARGETS (the `<platform>[musl]-<arch>` targets
+ * for which better-sqlite3, sqlite-vec and onnxruntime-node all ship prebuilt
+ * binaries) come from scripts/preflight.cjs, the single source of truth the
+ * README table is generated from (#63). Anything else needs a C++ toolchain
+ * at `npm install` time, and sqlite-vec has no build at all (notably Windows
+ * on ARM, 32-bit ARM Linux and Alpine/musl).
  */
-export const PREBUILT_TARGETS = [
-  "darwin-arm64",
-  "darwin-x64",
-  "linux-arm64",
-  "linux-x64",
-  "win32-x64",
-] as const;
+export { MIN_NODE_MAJOR, PREBUILT_TARGETS };
 
 const LINE_PREFIX: Record<DoctorLevel, string> = {
   ok: "[ok]  ",
@@ -96,19 +91,49 @@ function checkNode(): DoctorCheck {
 
 function checkPlatform(): DoctorCheck {
   const target = currentTarget();
-  const prebuilt = (PREBUILT_TARGETS as readonly string[]).includes(target);
+  let key = target;
+  let libc = "";
+  try {
+    const resolved = loadPreflight().resolveTarget();
+    key = resolved.key;
+    libc = resolved.libc;
+  } catch {
+    /* the preflight script is missing or broken: judge on platform-arch alone */
+  }
+  const prebuilt = PREBUILT_TARGETS.includes(key);
+  const where = `${target}${libc ? `, ${libc}` : ""} (node-v${process.versions.modules})`;
   return {
     name: "platform/arch",
     level: prebuilt ? "ok" : "warn",
     required: false,
     detail: prebuilt
-      ? `${target} (prebuilt native modules available)`
-      : `${target} (no prebuilt native modules; sqlite-vec has no build for this target — see README "Supported platforms")`,
+      ? `${where}: prebuilt native modules available`
+      : `${where}: not every native module ships a prebuilt for ${key}; sqlite-vec has no build for this target — see README "Supported platforms" and \`engram preflight\``,
   };
 }
 
-/** better-sqlite3 and sqlite-vec share one throwaway in-memory database. */
-async function checkNativeSqlite(): Promise<[DoctorCheck, DoctorCheck]> {
+/**
+ * The prebuild verdict for one native dependency — `prebuilt` vs `compiled
+ * locally` tells an upgrade failure apart from a missing toolchain. Never
+ * throws: a broken preflight script becomes an `unknown` probe.
+ */
+export function probeNativeDep(dep: string, probe: (dep: string) => PrebuildProbe = (d) => loadPreflight().probePrebuild(d)): PrebuildProbe {
+  try {
+    return probe(dep);
+  } catch (err) {
+    return { dep, status: "unknown", label: "unknown", level: "skip", source: "installed", detail: `preflight probe unavailable: ${errMsg(err)}`, fix: [] };
+  }
+}
+
+/**
+ * better-sqlite3 and sqlite-vec share one throwaway in-memory database. Each
+ * line ends with the prebuild verdict (`prebuilt` / `compiled locally` /
+ * `unknown` …) from the same probe `engram preflight` runs (#63).
+ */
+export async function checkNativeSqlite(
+  probe: (dep: string) => PrebuildProbe = (d) => loadPreflight().probePrebuild(d),
+): Promise<[DoctorCheck, DoctorCheck]> {
+  const origin = (dep: string): string => describePrebuild(probeNativeDep(dep, probe));
   let db: Database.Database;
   let betterSqlite: DoctorCheck;
   try {
@@ -119,7 +144,7 @@ async function checkNativeSqlite(): Promise<[DoctorCheck, DoctorCheck]> {
       name: "better-sqlite3",
       level: "ok",
       required: true,
-      detail: `loaded (SQLite ${v})`,
+      detail: `loaded (SQLite ${v}); ${origin("better-sqlite3")}`,
     };
   } catch (err) {
     return [
@@ -127,13 +152,13 @@ async function checkNativeSqlite(): Promise<[DoctorCheck, DoctorCheck]> {
         name: "better-sqlite3",
         level: "fail",
         required: true,
-        detail: `failed to load for ${currentTarget()}: ${errMsg(err)}`,
+        detail: `failed to load for ${currentTarget()}: ${errMsg(err)}; ${origin("better-sqlite3")}`,
       },
       {
         name: "sqlite-vec",
         level: "fail",
         required: true,
-        detail: "skipped (better-sqlite3 unavailable)",
+        detail: `skipped (better-sqlite3 unavailable); ${origin("sqlite-vec")}`,
       },
     ];
   }
@@ -147,14 +172,14 @@ async function checkNativeSqlite(): Promise<[DoctorCheck, DoctorCheck]> {
       name: "sqlite-vec",
       level: "ok",
       required: true,
-      detail: `loaded (${v})`,
+      detail: `loaded (${v}); ${origin("sqlite-vec")}`,
     };
   } catch (err) {
     sqliteVec = {
       name: "sqlite-vec",
       level: "fail",
       required: true,
-      detail: `failed to load for ${currentTarget()}: ${errMsg(err)}`,
+      detail: `failed to load for ${currentTarget()}: ${errMsg(err)}; ${origin("sqlite-vec")}`,
     };
   } finally {
     db.close();
