@@ -514,6 +514,12 @@ program
     closeDatabase();
     console.log(`  Database: ${config.dbPath}`);
 
+    // Adopt a pre-0.4.0 node_modules model cache before the first download (#53).
+    const { env: transformersEnv } = await import("@xenova/transformers");
+    const { applyModelCacheDir } = await import("../../_core/embeddings/model-cache.js");
+    const cacheDir = applyModelCacheDir(transformersEnv, config.modelCacheDir, { log: (l) => console.log(`  ${l}`) });
+    console.log(`  Model cache: ${cacheDir}`);
+
     console.log("Downloading embedding model...");
     await initEmbeddings(config);
     console.log(`  Model: ${getActiveModel()}`);
@@ -608,7 +614,7 @@ program
       process.exit(2);
     }
     const { homedir } = await import("node:os");
-    const { planDataDir, applyDataDirPlan, planModelCache, applyModelCachePlan, reportSchema } = await import("./data-migration.js");
+    const { planDataDir, applyDataDirPlan, planModelCache, applyModelCachePlan, modelCacheSourceLabel, reportSchema } = await import("./data-migration.js");
     const { portFor, realProbe } = await import("./services.js");
     const config = loadConfig();
     const penv = { config, env: process.env, platform: process.platform, home: homedir() };
@@ -638,7 +644,7 @@ program
     }
     if (which === "all" || which === "model-cache") {
       const plan = planModelCache(penv);
-      console.log(`model-cache: ${plan.current}${plan.durable ? " (durable)" : " (inside node_modules: wiped by npm ci)"}`);
+      console.log(`model-cache: ${plan.current} (${plan.durable ? "durable" : "inside node_modules: wiped by npm ci"}; ${modelCacheSourceLabel(plan.source)})`);
       for (const l of applyModelCachePlan(plan, { dryRun })) console.log(`  ${l}`);
     }
     if (which === "all" || which === "schema") {
