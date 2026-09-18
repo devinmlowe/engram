@@ -69,7 +69,7 @@ def test_register_defaults_to_http_transport(tmp_path, monkeypatch):
     module.register(ctx)
     provider = ctx.registered[0]
     assert isinstance(provider, module.EngramMemoryProvider)
-    assert [s["name"] for s in provider.get_tool_schemas()] == ["engram_memory_save"]
+    assert [s["name"] for s in provider.get_tool_schemas()] == ["engram_memory_save", "engram_memory_forget"]
 
 
 def test_register_selects_stdio_transport_from_config(tmp_path, monkeypatch):
@@ -82,7 +82,7 @@ def test_register_selects_stdio_transport_from_config(tmp_path, monkeypatch):
     assert provider.name == "engram"
     assert not isinstance(provider, module.EngramMemoryProvider)
     assert type(provider).__module__ == "provider"
-    assert {s["name"] for s in provider.get_tool_schemas()} >= {"engram_recall", "engram_remember"}
+    assert {s["name"] for s in provider.get_tool_schemas()} >= {"engram_recall", "engram_remember", "engram_forget"}
 
 
 def test_unknown_transport_falls_back_to_http(tmp_path, monkeypatch):

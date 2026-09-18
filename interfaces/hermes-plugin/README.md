@@ -10,8 +10,8 @@ share one config file; pick with `"transport"` in `$HERMES_HOME/engram.json`.
 
 | Transport | Module | When to use |
 |-----------|--------|-------------|
-| `http` (default) | `__init__.py` | The engram HTTP MCP server is already running (LaunchAgent / `engram serve`). Thin and stateless: automatic recall plus one `engram_memory_save` tool. |
-| `stdio` | `provider.py`, `mcp_client.py` | No long-running server; the plugin spawns engram's MCP server as a lazy stdio child per primary agent context, with per-profile scoped writes and `engram_*` recall/explore/reflect/remember tools. |
+| `http` (default) | `__init__.py` | The engram HTTP MCP server is already running (LaunchAgent / `engram serve`). Thin and stateless: automatic recall plus the `engram_memory_save` and `engram_memory_forget` tools. |
+| `stdio` | `provider.py`, `mcp_client.py` | No long-running server; the plugin spawns engram's MCP server as a lazy stdio child per primary agent context, with per-profile scoped writes and `engram_*` recall/explore/reflect/remember/forget tools. |
 
 ## What the http transport does
 
@@ -21,7 +21,7 @@ share one config file; pick with `"transport"` in `$HERMES_HOME/engram.json`.
 | `initialize(session_id, …)` | Loads config, derives the profile scope, applies context gating, probes `GET {base_url}/health` once (feeds `unavailable_reason()` only), then fires one background warm-up `recall` so the daemon's embedder/reranker are hot before the first turn (`limit: 1`, `reinforce: false`; errors ignored). |
 | `prefetch(query)` | Calls the `recall` MCP tool with the user message and `prefetch_token_budget`; injects the XML result as turn context. Any failure returns `""` — a timeout additionally logs a warning (at most once per 10 min) and is shown in the recall indicator (see Troubleshooting). |
 | `recall_status()` | `Engram — recalled N memories` after a hit; a ⚠️ `Engram (recall timed out after Ns; no memory this turn)` after a timeout; nothing otherwise. |
-| `get_tool_schemas()` | Exactly one model tool: `engram_memory_save(content, type?, importance?)` → the `remember` MCP tool with `source: "user"`. Allowed in **every** agent context. |
+| `get_tool_schemas()` | Two model tools: `engram_memory_save(content, type?, importance?)` → the `remember` MCP tool with `source: "user"`, and `engram_memory_forget(memory_id \| query, confirm?)` → the `forget` MCP tool under `scope: hermes:<profile>` (#55: acts on global memories and this profile's own, never another profile's; query mode returns candidates and only acts with `confirm` and a single match). Both allowed in **every** agent context. |
 | `sync_turn()` | Primary context only, `sync_turns: true`: enqueues the completed user/assistant turn for the `ingest_turn` MCP tool (see Turn ingestion). Never touches the network on the caller thread. |
 | `on_memory_write()` | Primary context only, `mirror_memory_writes: true`: mirrors Hermes' built-in MEMORY.md / USER.md `add` / `replace` as `remember` (see Built-in memory mirror). `remove` is a no-op. |
 | `system_prompt_block()` | A static, byte-stable instruction block (no timestamps, no counts) |
@@ -31,9 +31,9 @@ share one config file; pick with `"transport"` in `$HERMES_HOME/engram.json`.
 
 A five-failure circuit breaker (120 s cooldown, then half-open: exactly one
 probe call, which re-opens the breaker if it fails) mirrors the bundled mem0
-provider so a down server never adds latency to every turn. The tool is named
-`engram_memory_save` (not `engram_*`-prefixed like the MCP tools) so it cannot
-collide when the MCP server is also configured.
+provider so a down server never adds latency to every turn. The tools are named
+`engram_memory_save` / `engram_memory_forget` (not `engram_*`-prefixed like the
+MCP tools) so they cannot collide when the MCP server is also configured.
 
 ### Contexts and write gating
 
@@ -44,7 +44,7 @@ Hermes passes `agent_context` (`primary` | `subagent` | `cron` | `flush`) to
 |------|---------|
 | `sync_turn`, `on_memory_write` (per-turn writes) | `primary` only |
 | `prefetch` (automatic recall) | the contexts listed in `prefetch_contexts` (default `["primary"]`; e.g. add `cron` to give scheduled jobs recall) |
-| `engram_memory_save` (explicit model tool) | every context — a cron job deciding to store a fact is a deliberate one-off write; refusing it would silently lose the fact |
+| `engram_memory_save`, `engram_memory_forget` (explicit model tools) | every context — a cron job deciding to store a fact is a deliberate one-off write; refusing it would silently lose the fact |
 | warm-up recall in `initialize` | only when the context prefetches and `/health` was ok |
 
 ### Scoping
@@ -83,7 +83,7 @@ there. Writes share the turn queue and drain thread.
 Spawns `node dist/interfaces/mcp/server.js` from `repo_path` on first use in a
 primary agent context (cron, subagent, and flush contexts never pay the Node
 cost), scopes writes to `hermes:<profile>` via the child's environment, exposes
-`engram_recall` / `engram_explore` / `engram_reflect` / `engram_remember`, mirrors
+`engram_recall` / `engram_explore` / `engram_reflect` / `engram_remember` / `engram_forget`, mirrors
 Hermes's built-in MEMORY.md writes into the graph on a background thread, and
 reaps the idle child after `idle_kill_s`. It also ships a `hermes engram
 {status|recall}` CLI (`cli.py`) and a dashboard config schema
@@ -177,7 +177,7 @@ Rollback: `hermes memory off` (or delete the plugin directory).
 | Log: `engram circuit breaker tripped after 5 consecutive failures; pausing calls for 120s` | Five failed calls in a row (any tool). Recall returns nothing and queued turns/writes wait in the bounded queue until the cooldown ends; then one probe call is allowed: on success everything posts, on failure the log says `engram circuit breaker probe failed; staying open for another 120s` and the queue keeps waiting. Only queue overflow (16 items) drops them, counted in `unavailable_reason()`. |
 | Memories land under `hermes:default` instead of the profile | The gateway did not pass `agent_identity` and `hermes_home` was not `<root>/profiles/<name>`. Run the profile's own gateway (its `HERMES_HOME`) or check the `agent_identity` it reports. |
 | Turns are not ingested | Non-primary context (`subagent`/`cron`/`flush` never ingest), `sync_turns: false`, an empty session id, or the breaker is open. Debug-level log lines say which. |
-| Two engram tool sets appear to the model | The MCP server is also wired as `mcp_servers.engram`. That is fine: this plugin's only tool is `engram_memory_save`, chosen not to collide. |
+| Two engram tool sets appear to the model | The MCP server is also wired as `mcp_servers.engram`. That is fine: this plugin's tools are `engram_memory_save` / `engram_memory_forget`, named not to collide. |
 
 ## Tests
 

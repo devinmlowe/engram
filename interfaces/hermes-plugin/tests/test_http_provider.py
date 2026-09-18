@@ -96,6 +96,7 @@ class FakeServer:
         self.health = health if health is not None else {"status": "ok"}
         self.recall_text = recall_text
         self.remember_text = remember_text
+        self.forget_text = '<forgotten id="x" />'
         self.ingest_text = json.dumps({"conversationId": "c1", "created": True})
         self.fail = fail or {}          # {"health"|"initialize"|"recall"|"remember"|"ingest_turn": Exception|int|str}
                                         # str = the server answers with an isError result carrying that text
@@ -158,7 +159,8 @@ class FakeServer:
                                                    "isError": True}}),
                              {"content-type": "text/event-stream"})
             _maybe_fail(name)
-            text = {"recall": self.recall_text, "ingest_turn": self.ingest_text}.get(name, self.remember_text)
+            text = {"recall": self.recall_text, "ingest_turn": self.ingest_text,
+                    "forget": self.forget_text}.get(name, self.remember_text)
             return _Resp(200, _sse({"jsonrpc": "2.0", "id": rpc["id"],
                                     "result": {"content": [{"type": "text", "text": text}]}}),
                          {"content-type": "text/event-stream"})
@@ -464,12 +466,56 @@ def test_tool_call_unknown_tool(provider, server):
 
 
 # ---------------------------------------------------------------------------
+# engram_memory_forget (#55)
+# ---------------------------------------------------------------------------
+
+def test_forget_by_memory_id_calls_forget_under_the_profile_scope(provider, server):
+    server.forget_text = '<forgotten id="abc-123" scope="hermes:default" hard="false" />'
+    res = json.loads(provider.handle_tool_call("engram_memory_forget", {"memory_id": " abc-123 "}))
+    assert res == {"result": server.forget_text}
+    _, _, rpc, _, args = server.calls[-1]
+    assert rpc == "tools/call"
+    assert args == {"memory_id": "abc-123", "scope": provider._write_scope()}
+
+
+def test_forget_by_query_forwards_confirm(provider, server):
+    server.forget_text = '<forget_candidates query="old fact" count="2" forgotten="none" />'
+    res = json.loads(provider.handle_tool_call("engram_memory_forget", {"query": "old fact"}))
+    assert res == {"result": server.forget_text}
+    assert server.calls[-1][4] == {"query": "old fact", "confirm": False, "scope": provider._write_scope()}
+    provider.handle_tool_call("engram_memory_forget", {"query": "old fact", "confirm": True})
+    assert server.calls[-1][4] == {"query": "old fact", "confirm": True, "scope": provider._write_scope()}
+
+
+def test_forget_requires_exactly_one_of_id_or_query_before_any_http(provider, server):
+    n = len(server.calls)
+    assert "exactly one" in json.loads(provider.handle_tool_call("engram_memory_forget", {}))["error"]
+    assert "exactly one" in json.loads(
+        provider.handle_tool_call("engram_memory_forget", {"memory_id": "abc-123", "query": "x"}))["error"]
+    assert "exactly one" in json.loads(provider.handle_tool_call("engram_memory_forget", {"memory_id": "  "}))["error"]
+    assert len(server.calls) == n
+
+
+def test_forget_backend_error_and_breaker(provider, server, plugin):
+    server.fail["forget"] = urllib.error.URLError("connection refused")
+    res = json.loads(provider.handle_tool_call("engram_memory_forget", {"memory_id": "abc-123"}))
+    assert res["error"].startswith("engram forget failed")
+    server.fail["recall"] = urllib.error.URLError("down")
+    for _ in range(plugin._BREAKER_THRESHOLD):
+        provider.prefetch("q")
+    n = len(server.calls)
+    assert "temporarily unavailable" in json.loads(
+        provider.handle_tool_call("engram_memory_forget", {"memory_id": "abc-123"}))["error"]
+    assert len(server.calls) == n
+
+
+# ---------------------------------------------------------------------------
 # Schemas, prompt block, config, misc contract
 # ---------------------------------------------------------------------------
 
 def test_tool_schema_shape(provider):
     schemas = provider.get_tool_schemas()
-    assert len(schemas) == 1
+    assert [s["name"] for s in schemas] == ["engram_memory_save", "engram_memory_forget"]
     s = schemas[0]
     assert s["name"] == "engram_memory_save"
     assert s["parameters"]["required"] == ["content"]

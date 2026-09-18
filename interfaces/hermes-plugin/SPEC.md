@@ -18,8 +18,10 @@ consolidated the former `integrations/hermes-plugin/` stdio provider into it).
 - **R3** `http` transport (default; `__init__.py`): talk to the running engram
   streamable-HTTP MCP server (`base_url`, default `http://127.0.0.1:9907`).
   `is_available()` is `GET /health`; `prefetch()` calls `recall` with
-  `prefetch_token_budget`; exactly one model tool, `engram_memory_save`,
-  proxies to `remember`. A five-failure circuit breaker (120 s cooldown, then a
+  `prefetch_token_budget`; two model tools: `engram_memory_save` proxies to
+  `remember`, and `engram_memory_forget` proxies to `forget` under the profile
+  scope (#55; `memory_id`, or `query` + `confirm` with a single match — the
+  server never deletes on an ambiguous query). A five-failure circuit breaker (120 s cooldown, then a
   single half-open probe whose failure re-opens it without resetting the
   count) keeps a down server from taxing every turn; queued turns survive
   transport failures and are dropped only when the live server rejects them. Ingestion hooks are no-ops (engram's
@@ -29,7 +31,9 @@ consolidated the former `integrations/hermes-plugin/` stdio provider into it).
   `agent_context == "primary"`; stdlib-only JSON-RPC client. Child env carries
   `ENGRAM_SCOPE=hermes:<profile>` and `ENGRAM_READ_SCOPES=global,hermes:<profile>`
   so no tool argument can widen the write scope. Tools are namespaced
-  `engram_*`; `on_memory_write` mirrors are drained on a background thread;
+  `engram_*` (`engram_recall`, `engram_explore`, `engram_reflect`,
+  `engram_remember`, `engram_forget` — the last proxies to `forget`, whose
+  read scopes come from that child env); `on_memory_write` mirrors are drained on a background thread;
   the idle child is reaped after `idle_kill_s`.
 - **R5** `prefetch()` never raises; failures return `""` within Hermes's 8 s
   external-prefetch ceiling.
