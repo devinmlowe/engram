@@ -13,6 +13,12 @@ import Database from "better-sqlite3";
 import { loadConfig } from "../../../src/_core/config/index.js";
 import { initDatabase } from "../../../src/_core/db/index.js";
 import { ENGRAM_VERSION, PACKAGE_NAME, PACKAGE_ROOT } from "../../../src/_core/version/index.js";
+
+/** The next minor after the version under test, so "current -> available" assertions survive releases. */
+const NEXT_VERSION = ((): string => {
+  const [major, minor] = ENGRAM_VERSION.split(".").map((n) => Number.parseInt(n, 10));
+  return `${major}.${minor + 1}.0`;
+})();
 import { snapshotCounts, snapshotRegressions, SNAPSHOT_KEYS } from "../../../src/interfaces/cli/snapshot.js";
 import { compareSemver, detectInstall, latestAvailable, formatCheck } from "../../../src/interfaces/cli/install-kind.js";
 import {
@@ -415,14 +421,14 @@ describe("update --plan", () => {
       [/remote get-url/, () => ({ stdout: "origin\n" })],
       [/status --porcelain/, () => ({ stdout: "" })],
       [/rev-parse --short/, () => ({ stdout: "abc1234\n" })],
-      [/ls-remote --tags/, () => ({ stdout: "x\trefs/tags/v0.4.0\n" })],
+      [/ls-remote --tags/, () => ({ stdout: `x\trefs/tags/v${NEXT_VERSION}\n` })],
       [/launchctl list/, () => ({ status: 113 })],
     ]);
     // nothing supervised, but something answers on 9907 => unsupervised blocker
     const d = updateDeps("darwin", home, cfg, exec, async (port) => port === 9907, []);
     const plan = await buildUpdatePlan(d);
     expect(plan.install.kind).toBe("git");
-    expect(plan.target).toBe("0.4.0");
+    expect(plan.target).toBe(NEXT_VERSION);
     expect(plan.dataDir.action).toMatchObject({ kind: "move", from: legacy });
     // #53: durable by default, no ENGRAM_MODEL_CACHE_DIR needed
     expect(plan.modelCache).toMatchObject({ durable: true, source: "default", current: join(xdg, "engram", "models") });
@@ -434,7 +440,7 @@ describe("update --plan", () => {
     const text = formatPlan(plan).join("\n");
     expect(text).toContain("[db]  " + legacy);
     expect(text).toContain("will move engram.db");
-    expect(text).toContain("0.3.0 -> 0.4.0");
+    expect(text).toContain(`${ENGRAM_VERSION} -> ${NEXT_VERSION}`);
     expect(text).toContain("UNSUPERVISED");
     expect(text).toContain("BLOCKED");
     expect(text).toContain("Hermes plugin: 2 deploy target(s) (profiles: work)");
