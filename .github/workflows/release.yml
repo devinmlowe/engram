@@ -35,7 +35,7 @@ jobs:
     env:
       ENGRAM_MODEL_CACHE_DIR: ${{ github.workspace }}/.engram-model-cache
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v4
         with:
@@ -96,7 +96,7 @@ jobs:
       contents: read
       id-token: write # mcp-publisher login github-oidc
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install mcp-publisher
         run: |
