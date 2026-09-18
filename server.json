@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.devinmlowe/engram",
   "title": "Engram",
-  "description": "Cognitive memory for coding agents: hybrid recall (vector + FTS + graph), remember/forget, knowledge-graph explore and reflect, nightly dream consolidation. Local SQLite, local embeddings.",
+  "description": "Cognitive memory for coding agents: hybrid recall, remember/forget, knowledge graph, nightly dreams.",
   "repository": {
     "url": "https://github.com/devinmlowe/engram",
     "source": "github"

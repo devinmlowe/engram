@@ -123,6 +123,8 @@ function analyze(docs) {
   if (typeof server.name !== "string" || !/^io\.github\.[^/]+\/[^/]+$/.test(server.name)) problem(FILES.server, `name ${JSON.stringify(server.name)} must be io.github.<user>/<server> (GitHub-authenticated namespace)`);
   if (pkg.mcpName !== server.name) problem(FILES.pkg, `mcpName ${JSON.stringify(pkg.mcpName)} must equal server.json name ${JSON.stringify(server.name)} (registry npm ownership check)`);
   if (typeof server.description !== "string" || !server.description) problem(FILES.server, "description is required");
+  // registry.modelcontextprotocol.io rejects the entry with 422 "expected length <= 100" (seen on v0.4.0).
+  else if (server.description.length > 100) problem(FILES.server, `description is ${server.description.length} chars; the registry allows at most 100`);
   if (server.version !== version) {
     problem(FILES.server, `version ${JSON.stringify(server.version)} != ${version}`);
     fixed.server.version = version;

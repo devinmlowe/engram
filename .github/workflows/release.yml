@@ -24,10 +24,14 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  # Re-run only the registry half (e.g. after a server.json fix) without a new tag:
+  # the npm package for server.json's version must already exist.
+  workflow_dispatch:
 
 jobs:
   npm:
     name: verify + npm publish
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -91,6 +95,8 @@ jobs:
   registry:
     name: publish server.json to registry.modelcontextprotocol.io
     needs: npm
+    # needs + a skipped npm job would skip this one too; run when npm succeeded or was skipped by a manual dispatch.
+    if: always() && (needs.npm.result == 'success' || (github.event_name == 'workflow_dispatch' && needs.npm.result == 'skipped'))
     runs-on: ubuntu-latest
     permissions:
       contents: read

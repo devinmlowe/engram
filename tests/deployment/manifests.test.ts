@@ -78,6 +78,13 @@ describe("sync-manifests --check on the committed files", () => {
     expect(problems).toMatch(/mcpName .* must equal server\.json name/);
     expect(problems).toMatch(/files\[\] must include "commands"/);
   });
+
+  it("caps server.json description at the registry's 100 characters (v0.4.0 was rejected with 422)", () => {
+    expect(read("server.json").description.length).toBeLessThanOrEqual(100);
+    const d = docs();
+    d.server.description = "x".repeat(101);
+    expect(sync.analyze(d).problems.join("\n")).toMatch(/description is 101 chars; the registry allows at most 100/);
+  });
 });
 
 describe(".claude-plugin/plugin.json (Claude Code plugin manifest)", () => {
