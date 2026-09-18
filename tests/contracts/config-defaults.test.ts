@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { loadConfig, resolveDefaultDataDir } from "../../src/_core/config/index.js";
+import { describeModelCacheDir, loadConfig, resolveDefaultDataDir, resolveModelCacheLocation } from "../../src/_core/config/index.js";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -20,8 +20,9 @@ describe("Config Defaults Contract", () => {
   const envBackup: Record<string, string | undefined> = {};
 
   // Platform data-dir vars also steer the default (LOCALAPPDATA is always set
-  // on Windows CI), so they are cleared alongside ENGRAM_* to pin the fallback.
-  const PLATFORM_DIR_VARS = ["XDG_DATA_HOME", "LOCALAPPDATA"];
+  // on Windows CI), and HF_HOME steers the model cache, so they are cleared
+  // alongside ENGRAM_* to pin the fallbacks.
+  const PLATFORM_DIR_VARS = ["XDG_DATA_HOME", "LOCALAPPDATA", "HF_HOME"];
   const isManaged = (key: string) =>
     key.startsWith("ENGRAM_") || PLATFORM_DIR_VARS.includes(key);
 
@@ -207,8 +208,19 @@ describe("Config Defaults Contract", () => {
     expect(c.dbPath).toBe("/other/path.db"); // explicit wins over cascade
   });
 
-  it("ENGRAM_MODEL_CACHE_DIR is unset by default (transformers.js default applies)", () => {
-    expect(loadConfig().modelCacheDir).toBeUndefined();
+  // Issue #53: the model cache is durable by default. The library default
+  // (node_modules/@xenova/transformers/.cache) is never resolved to, because
+  // every npm install / npm ci wipes it.
+  it("modelCacheDir defaults to <data dir>/models, never node_modules", () => {
+    const c = loadConfig();
+    expect(c.modelCacheDir).toBe(join(c.dataDir, "models"));
+    expect(c.modelCacheDir).toBe(join(HOME, ".local", "share", "engram", "models"));
+    expect(c.modelCacheDir).not.toContain("node_modules");
+  });
+
+  it("modelCacheDir follows ENGRAM_DATA_DIR", () => {
+    process.env.ENGRAM_DATA_DIR = "/tmp/engram-custom";
+    expect(loadConfig().modelCacheDir).toBe(join("/tmp/engram-custom", "models"));
   });
 
   it("ENGRAM_MODEL_CACHE_DIR overrides modelCacheDir", () => {
@@ -216,10 +228,45 @@ describe("Config Defaults Contract", () => {
     expect(loadConfig().modelCacheDir).toBe("/tmp/engram-models");
   });
 
-  it("blank ENGRAM_MODEL_CACHE_DIR is treated as unset", () => {
-    process.env.ENGRAM_MODEL_CACHE_DIR = "   ";
-    expect(loadConfig().modelCacheDir).toBeUndefined();
+  it("HF_HOME resolves to $HF_HOME/hub, above the default and below ENGRAM_MODEL_CACHE_DIR", () => {
+    process.env.HF_HOME = "/hf";
+    expect(loadConfig().modelCacheDir).toBe(join("/hf", "hub"));
+    process.env.ENGRAM_MODEL_CACHE_DIR = "/tmp/engram-models";
+    expect(loadConfig().modelCacheDir).toBe("/tmp/engram-models");
+  });
+
+  it("a programmatic override sits between ENGRAM_MODEL_CACHE_DIR and HF_HOME", () => {
+    process.env.HF_HOME = "/hf";
     expect(loadConfig({ modelCacheDir: "/from/overrides" }).modelCacheDir).toBe("/from/overrides");
+    process.env.ENGRAM_MODEL_CACHE_DIR = "/tmp/engram-models";
+    expect(loadConfig({ modelCacheDir: "/from/overrides" }).modelCacheDir).toBe("/tmp/engram-models");
+  });
+
+  it("blank ENGRAM_MODEL_CACHE_DIR and HF_HOME are treated as unset", () => {
+    process.env.ENGRAM_MODEL_CACHE_DIR = "   ";
+    process.env.HF_HOME = "";
+    const c = loadConfig();
+    expect(c.modelCacheDir).toBe(join(c.dataDir, "models"));
+    expect(loadConfig({ modelCacheDir: "/from/overrides" }).modelCacheDir).toBe("/from/overrides");
+  });
+
+  it("resolveModelCacheLocation names the winning tier in precedence order", () => {
+    const data = "/data";
+    expect(resolveModelCacheLocation(data, {})).toEqual({ dir: join(data, "models"), source: "default" });
+    expect(resolveModelCacheLocation(data, { HF_HOME: "/hf" })).toEqual({ dir: join("/hf", "hub"), source: "HF_HOME" });
+    expect(resolveModelCacheLocation(data, { HF_HOME: "/hf" }, "/ovr")).toEqual({ dir: "/ovr", source: "override" });
+    expect(resolveModelCacheLocation(data, { HF_HOME: "/hf", ENGRAM_MODEL_CACHE_DIR: "/explicit" }, "/ovr"))
+      .toEqual({ dir: "/explicit", source: "ENGRAM_MODEL_CACHE_DIR" });
+    expect(resolveModelCacheLocation(data, { ENGRAM_MODEL_CACHE_DIR: " " }, "  ")).toEqual({ dir: join(data, "models"), source: "default" });
+  });
+
+  it("describeModelCacheDir recovers the tier from a loaded config", () => {
+    expect(describeModelCacheDir(loadConfig(), {}).source).toBe("default");
+    process.env.HF_HOME = "/hf";
+    expect(describeModelCacheDir(loadConfig(), process.env)).toEqual({ dir: join("/hf", "hub"), source: "HF_HOME" });
+    expect(describeModelCacheDir(loadConfig({ modelCacheDir: "/ovr" }), process.env).source).toBe("override");
+    process.env.ENGRAM_MODEL_CACHE_DIR = "/explicit";
+    expect(describeModelCacheDir(loadConfig(), process.env)).toEqual({ dir: "/explicit", source: "ENGRAM_MODEL_CACHE_DIR" });
   });
 
   it("ENGRAM_EMBEDDING_DIMS overrides dimensions", () => {

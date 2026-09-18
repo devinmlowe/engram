@@ -19,6 +19,9 @@ jobs:
           - os: windows-latest
             experimental: true
     continue-on-error: ${{ matrix.experimental == true }}
+    env:
+      # Where the tests' model downloads land; see "Cache transformer model downloads".
+      ENGRAM_MODEL_CACHE_DIR: ${{ runner.temp }}/engram-model-cache
     steps:
       - uses: actions/checkout@v4
 
@@ -32,14 +35,14 @@ jobs:
       - run: npm ci
 
       # Cache the ONNX model weights that @xenova/transformers downloads on
-      # first use (all-MiniLM-L6-v2, bge-reranker-base, ...). The library's
-      # default cacheDir is <package dir>/.cache, i.e. inside node_modules, so
-      # this step must run AFTER `npm ci` (which wipes node_modules) and
-      # before the tests that trigger the downloads.
+      # first use (all-MiniLM-L6-v2, bge-reranker-base, ...). Engram resolves
+      # the cache dir itself (#53: ENGRAM_MODEL_CACHE_DIR, else $HF_HOME/hub,
+      # else <data dir>/models — never node_modules), so the job pins one
+      # location for every OS via ENGRAM_MODEL_CACHE_DIR above and caches that.
       - name: Cache transformer model downloads
         uses: actions/cache@v4
         with:
-          path: node_modules/@xenova/transformers/.cache
+          path: ${{ runner.temp }}/engram-model-cache
           key: ${{ runner.os }}-transformers-${{ hashFiles('package-lock.json') }}
           restore-keys: |
             ${{ runner.os }}-transformers-

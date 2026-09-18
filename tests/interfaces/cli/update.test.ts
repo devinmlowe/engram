@@ -22,9 +22,9 @@ import {
 import {
   planDataDir, applyDataDirPlan, planModelCache, applyModelCachePlan, reportSchema, isSqliteFile, DATA_DIR_ITEMS,
 } from "../../../src/interfaces/cli/data-migration.js";
-import { buildUpdatePlan, formatPlan, runUpdate, backupDirFor, pluginDeployTargets, type UpdateDeps } from "../../../src/interfaces/cli/update.js";
+import { buildUpdatePlan, formatPlan, runUpdate, backupDirFor, backupDataDir, pluginDeployTargets, MODEL_CACHE_BACKUP_NOTE, type UpdateDeps } from "../../../src/interfaces/cli/update.js";
 
-const ENV_KEYS = ["ENGRAM_DATA_DIR", "ENGRAM_DB_PATH", "ENGRAM_MODEL_CACHE_DIR", "ENGRAM_MCP_PORT", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "LOCALAPPDATA", "ENGRAM_ENV_FILE", "PORT"];
+const ENV_KEYS = ["ENGRAM_DATA_DIR", "ENGRAM_DB_PATH", "ENGRAM_MODEL_CACHE_DIR", "HF_HOME", "ENGRAM_MCP_PORT", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "LOCALAPPDATA", "ENGRAM_ENV_FILE", "PORT"];
 let saved: Record<string, string | undefined>;
 let root: string;
 
@@ -280,33 +280,93 @@ describe("migrate data-dir", () => {
 });
 
 describe("migrate model-cache and schema", () => {
-  it("proposes <dataDir>/models, copies downloaded models, appends the env line to an existing env file", () => {
+  /** A fake pre-0.4.0 cache inside a package's node_modules, with a couple of model files. */
+  function legacyCache(pkg: string): string {
+    const legacy = join(pkg, "node_modules", "@xenova", "transformers", ".cache");
+    mkdirSync(join(legacy, "Xenova", "m", "onnx"), { recursive: true });
+    writeFileSync(join(legacy, "Xenova", "m", "config.json"), "{}");
+    writeFileSync(join(legacy, "Xenova", "m", "onnx", "model.onnx"), "weights");
+    return legacy;
+  }
+
+  it("default tier (#53): moves a legacy node_modules cache into <dataDir>/models once, then is a no-op", () => {
     const pkg = join(root, "pkg");
-    const lib = join(pkg, "node_modules", "@xenova", "transformers", ".cache", "Xenova", "m");
-    mkdirSync(lib, { recursive: true });
-    writeFileSync(join(lib, "model.onnx"), "weights");
+    const legacy = legacyCache(pkg);
     const home = join(root, "home");
     const envFile = join(home, ".config", "engram", "env");
     mkdirSync(join(home, ".config", "engram"), { recursive: true });
     writeFileSync(envFile, "#ANTHROPIC_API_KEY=\n");
     const cfg = loadConfig({ dataDir: join(root, "data") });
     const plan = planModelCache({ config: cfg, env: {}, platform: "linux", home }, pkg);
-    expect(plan).toMatchObject({ durable: false, proposed: join(root, "data", "models"), hasModels: true, envFile });
+    expect(plan).toMatchObject({
+      durable: true, source: "default", current: join(root, "data", "models"), proposed: join(root, "data", "models"), legacy, hasModels: true, envFile,
+    });
     const dry = applyModelCachePlan(plan, { dryRun: true });
-    expect(dry.join("\n")).toContain("would create");
+    expect(dry.join("\n")).toContain("would move the downloaded models");
+    expect(existsSync(plan.proposed)).toBe(false);
+    expect(existsSync(join(legacy, "Xenova", "m", "onnx", "model.onnx"))).toBe(true);
+
+    const lines = applyModelCachePlan(plan, { dryRun: false });
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/^moved the model cache from .* \(2 files; npm no longer wipes it\)$/);
+    expect(readFileSync(join(plan.proposed, "Xenova", "m", "onnx", "model.onnx"), "utf-8")).toBe("weights");
+    expect(existsSync(legacy)).toBe(false); // du of the legacy dir is 0
+    // the default needs no env var: the service env file is left alone
+    expect(readFileSync(envFile, "utf-8")).not.toContain("ENGRAM_MODEL_CACHE_DIR");
+
+    // second run: nothing legacy left, the default already applies
+    const again = planModelCache({ config: cfg, env: {}, platform: "linux", home }, pkg);
+    expect(again.hasModels).toBe(false);
+    const noop = applyModelCachePlan(again, { dryRun: false });
+    expect(noop).toHaveLength(1);
+    expect(noop[0]).toContain("nothing to do: the durable default");
+    expect(noop[0]).toContain(again.current);
+  });
+
+  it("explicit durable dirs: already-durable message, legacy models still adopted when the target is empty", () => {
+    const pkg = join(root, "pkg");
+    const home = join(root, "home");
+    const explicit = join(root, "m");
+    const durable = planModelCache({ config: loadConfig({ dataDir: join(root, "data"), modelCacheDir: explicit }), env: {}, platform: "win32", home }, pkg);
+    expect(durable).toMatchObject({ durable: true, source: "override", current: explicit, proposed: explicit, hasModels: false });
+    expect(applyModelCachePlan(durable, { dryRun: false })[0]).toContain("already durable");
+    expect(durable.envLine).toMatch(/^setx ENGRAM_MODEL_CACHE_DIR/);
+    expect(durable.envFile).toBeNull();
+
+    // ENGRAM_MODEL_CACHE_DIR set + a legacy cache: the weights move rather than re-download
+    legacyCache(pkg);
+    const env = { ENGRAM_MODEL_CACHE_DIR: explicit };
+    const withLegacy = planModelCache({ config: loadConfig({ dataDir: join(root, "data"), modelCacheDir: explicit }), env, platform: "linux", home }, pkg);
+    expect(withLegacy).toMatchObject({ durable: true, source: "ENGRAM_MODEL_CACHE_DIR", hasModels: true });
+    applyModelCachePlan(withLegacy, { dryRun: false });
+    expect(existsSync(join(explicit, "Xenova", "m", "config.json"))).toBe(true);
+    expect(existsSync(withLegacy.legacy)).toBe(false);
+  });
+
+  it("explicit relocation: an ENGRAM_MODEL_CACHE_DIR inside node_modules is not durable and moves to <dataDir>/models with the env line", () => {
+    const pkg = join(root, "pkg");
+    const legacy = legacyCache(pkg);
+    const home = join(root, "home");
+    const envFile = join(home, ".config", "engram", "env");
+    mkdirSync(join(home, ".config", "engram"), { recursive: true });
+    writeFileSync(envFile, "#ANTHROPIC_API_KEY=\n");
+    const env = { ENGRAM_MODEL_CACHE_DIR: legacy };
+    const cfg = loadConfig({ dataDir: join(root, "data"), modelCacheDir: legacy });
+    const plan = planModelCache({ config: cfg, env, platform: "linux", home }, pkg);
+    expect(plan).toMatchObject({ durable: false, source: "ENGRAM_MODEL_CACHE_DIR", current: legacy, proposed: join(root, "data", "models"), hasModels: true, envFile });
+    const dry = applyModelCachePlan(plan, { dryRun: true }).join("\n");
+    expect(dry).toContain("would create");
+    expect(dry).toContain("would move the downloaded models");
     expect(existsSync(plan.proposed)).toBe(false);
     applyModelCachePlan(plan, { dryRun: false });
-    expect(existsSync(join(plan.proposed, "Xenova", "m", "model.onnx"))).toBe(true);
+    expect(existsSync(join(plan.proposed, "Xenova", "m", "onnx", "model.onnx"))).toBe(true);
+    expect(existsSync(legacy)).toBe(false);
     expect(readFileSync(envFile, "utf-8")).toContain(`ENGRAM_MODEL_CACHE_DIR='${plan.proposed}'`);
-    // second run: env line not duplicated, cache already copied
-    applyModelCachePlan(plan, { dryRun: false });
+    // second run: env line not duplicated, nothing left to move
+    const again = planModelCache({ config: cfg, env, platform: "linux", home }, pkg);
+    expect(again.hasModels).toBe(false);
+    applyModelCachePlan(again, { dryRun: false });
     expect(readFileSync(envFile, "utf-8").match(/ENGRAM_MODEL_CACHE_DIR=/g)).toHaveLength(1);
-    const durable = planModelCache({ config: loadConfig({ dataDir: join(root, "data"), modelCacheDir: join(root, "m") }), env: {}, platform: "win32", home }, pkg);
-    expect(durable.durable).toBe(true);
-    expect(applyModelCachePlan(durable, { dryRun: false })[0]).toContain("already durable");
-    const win = planModelCache({ config: cfg, env: {}, platform: "win32", home }, pkg);
-    expect(win.envLine).toMatch(/^setx ENGRAM_MODEL_CACHE_DIR/);
-    expect(win.envFile).toBeNull();
   });
 
   it("schema: opening once runs the migrations and lists the checkpoints", async () => {
@@ -359,7 +419,8 @@ describe("update --plan", () => {
     expect(plan.install.kind).toBe("git");
     expect(plan.target).toBe("0.4.0");
     expect(plan.dataDir.action).toMatchObject({ kind: "move", from: legacy });
-    expect(plan.modelCache.durable).toBe(false);
+    // #53: durable by default, no ENGRAM_MODEL_CACHE_DIR needed
+    expect(plan.modelCache).toMatchObject({ durable: true, source: "default", current: join(xdg, "engram", "models") });
     expect(plan.pluginTargets).toHaveLength(2);
     expect(plan.pluginProfiles).toEqual(["work"]);
     expect(plan.backupDir).toBe(backupDirFor(legacy, d.now()));
@@ -372,6 +433,9 @@ describe("update --plan", () => {
     expect(text).toContain("UNSUPERVISED");
     expect(text).toContain("BLOCKED");
     expect(text).toContain("Hermes plugin: 2 deploy target(s) (profiles: work)");
+    expect(text).toContain(`Model cache: ${join(xdg, "engram", "models")} (durable; default`);
+    expect(text).toContain(MODEL_CACHE_BACKUP_NOTE); // decision #54, printed once
+    expect(text.split(MODEL_CACHE_BACKUP_NOTE)).toHaveLength(2);
     expect(existsSync(join(legacy, "engram.db"))).toBe(true); // untouched
     expect(existsSync(plan.backupDir!)).toBe(false);
     // dry run prints the plan and does nothing either
@@ -405,6 +469,27 @@ describe("update --plan", () => {
 
   it("pluginDeployTargets ignores a missing hermes home", () => {
     expect(pluginDeployTargets(join(root, "nope"))).toEqual({ targets: [], profiles: [] });
+  });
+});
+
+describe("backup allowlist (decision #54)", () => {
+  it("copies engram.db + wal/shm + archive/ only; models/, logs/ and tmp/ never enter the backup", () => {
+    const data = join(root, "data");
+    seedDb(data);
+    writeFileSync(join(data, "engram.db-wal"), "wal");
+    mkdirSync(join(data, "archive", "p"), { recursive: true });
+    writeFileSync(join(data, "archive", "p", "c.jsonl"), "{}");
+    mkdirSync(join(data, "models", "Xenova", "m"), { recursive: true });
+    writeFileSync(join(data, "models", "Xenova", "m", "model.onnx"), "weights");
+    mkdirSync(join(data, "logs"), { recursive: true });
+    writeFileSync(join(data, "logs", "dream.txt"), "x");
+    mkdirSync(join(data, "tmp"), { recursive: true });
+    const to = join(root, "data.backup-x");
+    const lines = backupDataDir(data, to);
+    expect(readdirSync(to).sort()).toEqual(["archive", "engram.db", "engram.db-wal"]);
+    expect(existsSync(join(to, "models"))).toBe(false);
+    expect(lines.join("\n")).not.toContain("models");
+    expect(MODEL_CACHE_BACKUP_NOTE).toBe("models/ is not backed up (re-downloadable); rollback re-downloads if the cache is missing");
   });
 });
 
@@ -460,11 +545,13 @@ describe("update run (git install, macOS, legacy data dir)", () => {
     expect(idx(/npm ci/)).toBeLessThan(idx(/migrate schema/));
     expect(idx(/migrate schema/)).toBeLessThan(idx(/launchctl load/));
     expect(idx(/launchctl load/)).toBeLessThan(idx(/doctor --json/));
-    // backup holds the db; data moved; model cache made durable before npm ci ran
+    // backup holds the db (and never models/); data moved; the model cache is durable by default so npm ci ran without ENGRAM_MODEL_CACHE_DIR
     expect(isSqliteFile(join(plan.backupDir!, "engram.db"))).toBe(true);
+    expect(existsSync(join(plan.backupDir!, "models"))).toBe(false);
     expect(isSqliteFile(newDb)).toBe(true);
     expect(existsSync(join(legacy, "engram.db"))).toBe(false);
-    expect(existsSync(plan.modelCache.proposed)).toBe(true);
+    expect(plan.modelCache.durable).toBe(true);
+    expect(res.lines.some((l) => l.startsWith("model-cache:"))).toBe(false);
     const text = res.lines.join("\n");
     expect(text).toContain("snapshot: exchanges=0 conversations=1");
     expect(text).toContain("counts:   exchanges=0 conversations=1");
@@ -497,6 +584,7 @@ describe("update run (git install, macOS, legacy data dir)", () => {
     expect(text).toContain("counts DROPPED after the update: conversations: 1 -> 0; entities: 1 -> 0");
     expect(text).toContain("UPDATE FAILED.");
     expect(text).toContain("Rollback steps, in order");
+    expect(text).toContain(MODEL_CACHE_BACKUP_NOTE); // #54: rollback re-downloads, never restores, models/
     expect(text).toContain("restarted mcp"); // services come back even when verification fails
     expect(text).toContain("stop mcp: launchctl unload");
     expect(text).toContain("git -C " + root + " checkout abc1234 && npm ci");

@@ -99,8 +99,8 @@ export interface EngramConfig {
   archiveDir: string; // {dataDir}/archive
   logsDir: string; // {dataDir}/logs
   claudeProjectsDir: string; // ~/.claude/projects
-  /** ENGRAM_MODEL_CACHE_DIR; unset = @xenova/transformers default (<package>/.cache, wiped on reinstall) */
-  modelCacheDir?: string;
+  /** resolved by loadConfig(): ENGRAM_MODEL_CACHE_DIR, else $HF_HOME/hub, else {dataDir}/models (#53) */
+  modelCacheDir: string;
 
   embedding: {
     model: string; // nomic-embed-text-v1.5

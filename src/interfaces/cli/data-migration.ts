@@ -8,8 +8,10 @@
  *                An upgraded install silently opens a NEW EMPTY database at
  *                the new path. Detect the split, move the data into the
  *                resolved dir, refuse when two dirs both hold a database.
- *   model-cache  `npm ci` wipes node_modules/@xenova/transformers/.cache;
- *                give the embedding model a durable home and print the env var.
+ *   model-cache  Since 0.4.0 the cache defaults to `<data dir>/models` (#53);
+ *                move a pre-0.4.0 node_modules/@xenova/transformers/.cache into
+ *                the resolved dir, and relocate an explicit ENGRAM_MODEL_CACHE_DIR
+ *                that still points inside node_modules.
  *   schema       Open the database once so schema migrations run, and report
  *                the `schema_migrations` checkpoints.
  *
@@ -19,9 +21,14 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, appendFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
-import { resolveDefaultDataDir } from "../../_core/config/index.js";
+import { defaultModelCacheDir, describeModelCacheDir, resolveDefaultDataDir, type ModelCacheSource } from "../../_core/config/index.js";
+import {
+  countModelFiles, describeLegacyCacheMigration, isInsideNodeModules, libraryModelCacheDir, migrateLegacyModelCache,
+} from "../../_core/embeddings/model-cache.js";
 import { PACKAGE_ROOT } from "../../_core/version/index.js";
 import type { EngramConfig } from "../../_core/types/index.js";
+
+export { libraryModelCacheDir };
 
 // ─── data dir ────────────────────────────────────────────────────────
 
@@ -179,20 +186,30 @@ export function applyDataDirPlan(plan: DataDirPlan, opts: { dryRun: boolean }): 
 // ─── model cache ─────────────────────────────────────────────────────
 
 export interface ModelCachePlan {
+  /** False only when the resolved dir sits inside node_modules, where npm wipes it. */
   durable: boolean;
-  /** Where models are cached today. */
+  /** The resolved cache dir: ENGRAM_MODEL_CACHE_DIR → $HF_HOME/hub → <data dir>/models (#53). */
   current: string;
-  /** Where they should live. Equal to `current` when already durable. */
+  source: ModelCacheSource;
+  /** Where the models should live. Equal to `current` when durable, else `<data dir>/models`. */
   proposed: string;
-  /** True when `current` holds downloaded models that would be copied. */
+  /** The pre-0.4.0 default for this install: node_modules/@xenova/transformers/.cache. */
+  legacy: string;
+  /** True when the legacy (or non-durable current) dir holds downloaded models and `proposed` holds none: they get moved, not re-downloaded. */
   hasModels: boolean;
   envLine: string;
   /** Service env file to append the setting to, when it exists. */
   envFile: string | null;
 }
 
-export function libraryModelCacheDir(packageRoot: string = PACKAGE_ROOT): string {
-  return join(packageRoot, "node_modules", "@xenova", "transformers", ".cache");
+/** Human label for how the cache dir was chosen. */
+export function modelCacheSourceLabel(source: ModelCacheSource): string {
+  switch (source) {
+    case "ENGRAM_MODEL_CACHE_DIR": return "from ENGRAM_MODEL_CACHE_DIR";
+    case "HF_HOME": return "from HF_HOME";
+    case "override": return "from config override";
+    default: return "default; set ENGRAM_MODEL_CACHE_DIR to relocate";
+  }
 }
 
 export function serviceEnvFile(env: NodeJS.ProcessEnv, home: string): string {
@@ -202,35 +219,57 @@ export function serviceEnvFile(env: NodeJS.ProcessEnv, home: string): string {
   return join(xdg || join(home, ".config"), "engram", "env");
 }
 
+/** The directory whose models a plan moves into `proposed`. */
+function modelCacheMoveSource(plan: Pick<ModelCachePlan, "durable" | "current" | "legacy">): string {
+  return plan.durable ? plan.legacy : plan.current;
+}
+
 export function planModelCache({ config, env, platform, home }: PlanEnv, packageRoot: string = PACKAGE_ROOT): ModelCachePlan {
-  const current = config.modelCacheDir?.trim() || libraryModelCacheDir(packageRoot);
-  const durable = Boolean(config.modelCacheDir?.trim());
-  const proposed = durable ? current : join(config.dataDir, "models");
-  const hasModels = !durable && existsSync(current) && statSync(current).isDirectory();
+  const { dir: current, source } = describeModelCacheDir(config, env);
+  const durable = !isInsideNodeModules(current);
+  const proposed = durable ? current : defaultModelCacheDir(config.dataDir);
+  const legacy = libraryModelCacheDir(packageRoot);
+  const from = modelCacheMoveSource({ durable, current, legacy });
+  const hasModels = resolve(from) !== resolve(proposed)
+    && countModelFiles(from).files > 0
+    && countModelFiles(proposed).files === 0;
   const envLine = platform === "win32"
     ? `setx ENGRAM_MODEL_CACHE_DIR "${proposed}"`
     : `ENGRAM_MODEL_CACHE_DIR='${proposed}'`;
   const envFile = platform === "win32" ? null : serviceEnvFile(env, home);
-  return { durable, current, proposed, hasModels, envLine, envFile };
+  return { durable, current, source, proposed, legacy, hasModels, envLine, envFile };
 }
 
 export function applyModelCachePlan(plan: ModelCachePlan, opts: { dryRun: boolean }): string[] {
   const lines: string[] = [];
-  if (plan.durable) {
-    lines.push(`model-cache: already durable at ${plan.current}`);
-    return lines;
+  if (!plan.durable) {
+    // Explicit relocation: the configured dir sits inside node_modules, so npm
+    // ci wipes it. Point the setting at the durable default instead.
+    lines.push(opts.dryRun ? `would create ${plan.proposed}` : `created ${plan.proposed}`);
+    if (!opts.dryRun) mkdirSync(plan.proposed, { recursive: true });
   }
-  lines.push(opts.dryRun ? `would create ${plan.proposed}` : `created ${plan.proposed}`);
-  if (!opts.dryRun) mkdirSync(plan.proposed, { recursive: true });
   if (plan.hasModels) {
-    lines.push(opts.dryRun ? `would copy downloaded models from ${plan.current}` : `copied downloaded models from ${plan.current}`);
-    if (!opts.dryRun) cpSync(plan.current, plan.proposed, { recursive: true, force: false, errorOnExist: false });
+    const from = modelCacheMoveSource(plan);
+    if (opts.dryRun) {
+      lines.push(`would move the downloaded models from ${from} to ${plan.proposed}`);
+    } else {
+      const r = migrateLegacyModelCache(from, plan.proposed);
+      lines.push(describeLegacyCacheMigration(r) ?? `nothing moved: ${r.reason}`);
+    }
+  }
+  if (plan.durable) {
+    if (!plan.hasModels) {
+      lines.push(plan.source === "default"
+        ? `nothing to do: the durable default ${plan.current} already applies and there is no legacy cache to move`
+        : `nothing to do: already durable at ${plan.current} (${modelCacheSourceLabel(plan.source)})`);
+    }
+    return lines;
   }
   if (plan.envFile && existsSync(plan.envFile) && !readFileSync(plan.envFile, "utf-8").match(/^ENGRAM_MODEL_CACHE_DIR=/m)) {
     lines.push(opts.dryRun ? `would append ${plan.envLine} to ${plan.envFile}` : `appended ${plan.envLine} to ${plan.envFile}`);
     if (!opts.dryRun) appendFileSync(plan.envFile, `\n# added by 'engram migrate model-cache'\n${plan.envLine}\n`);
   }
-  lines.push(`set in your shell too, so 'npm ci' never wipes the models again: ${plan.envLine}`);
+  lines.push(`${plan.current} is inside node_modules (wiped by npm ci): unset ENGRAM_MODEL_CACHE_DIR to use ${plan.proposed}, or set ${plan.envLine}`);
   return lines;
 }
 
