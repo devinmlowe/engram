@@ -32,6 +32,60 @@ export function resolveDefaultDataDir(
   return base ? join(base, "engram") : join(home, ".local", "share", "engram");
 }
 
+/** How `modelCacheDir` was chosen, in precedence order (#53). */
+export type ModelCacheSource = "ENGRAM_MODEL_CACHE_DIR" | "override" | "HF_HOME" | "default";
+
+export interface ModelCacheResolution {
+  dir: string;
+  source: ModelCacheSource;
+}
+
+/** The durable default: `<data dir>/models`, so it lives with the database and survives `npm ci`. */
+export function defaultModelCacheDir(dataDir: string): string {
+  return join(dataDir, "models");
+}
+
+/**
+ * Where transformers.js downloads model weights (#53). Precedence:
+ *
+ *   1. `ENGRAM_MODEL_CACHE_DIR`                (explicit, any path)
+ *   2. a programmatic `loadConfig({ modelCacheDir })` override
+ *   3. `$HF_HOME/hub`                          (Hugging Face hub-cache semantics)
+ *   4. `<data dir>/models`                     (durable default)
+ *
+ * The library's own default (`node_modules/@xenova/transformers/.cache/`) is
+ * never used: every `npm install` / `npm ci` / global upgrade wipes it. Pure.
+ */
+export function resolveModelCacheDir(
+  dataDir: string,
+  env: Record<string, string | undefined> = process.env,
+  override?: string,
+): ModelCacheResolution {
+  const explicit = envDir(env.ENGRAM_MODEL_CACHE_DIR);
+  if (explicit) return { dir: explicit, source: "ENGRAM_MODEL_CACHE_DIR" };
+  const fromOverride = envDir(override);
+  if (fromOverride) return { dir: fromOverride, source: "override" };
+  const hfHome = envDir(env.HF_HOME);
+  if (hfHome) return { dir: join(hfHome, "hub"), source: "HF_HOME" };
+  return { dir: defaultModelCacheDir(dataDir), source: "default" };
+}
+
+/**
+ * Recover how an already-loaded config's `modelCacheDir` was chosen, for
+ * `engram doctor` / `engram migrate` output. Mirrors resolveModelCacheDir().
+ */
+export function describeModelCacheDir(
+  config: Pick<EngramConfig, "dataDir" | "modelCacheDir">,
+  env: Record<string, string | undefined> = process.env,
+): ModelCacheResolution {
+  const dir = config.modelCacheDir;
+  if (envDir(env.ENGRAM_MODEL_CACHE_DIR) === dir) return { dir, source: "ENGRAM_MODEL_CACHE_DIR" };
+  if (dir === defaultModelCacheDir(config.dataDir)) return { dir, source: "default" };
+  const hfHome = envDir(env.HF_HOME);
+  if (hfHome && dir === join(hfHome, "hub")) return { dir, source: "HF_HOME" };
+  return { dir, source: "override" };
+}
+
 // Snapshot of the platform default at import time. The path fields below are
 // placeholders only: loadConfig() always recomputes them from ENGRAM_DATA_DIR /
 // resolveDefaultDataDir(env) so environment changes after import still apply.
@@ -42,6 +96,7 @@ const defaults: EngramConfig = {
   dbPath: join(IMPORT_TIME_DATA_DIR, "engram.db"),
   archiveDir: join(IMPORT_TIME_DATA_DIR, "archive"),
   logsDir: join(IMPORT_TIME_DATA_DIR, "logs"),
+  modelCacheDir: defaultModelCacheDir(IMPORT_TIME_DATA_DIR),
   claudeProjectsDir: join(HOME, ".claude", "projects"),
 
   embedding: {
@@ -102,10 +157,7 @@ export function loadConfig(overrides?: Partial<EngramConfig>): EngramConfig {
       env.ENGRAM_CLAUDE_PROJECTS_DIR ??
       overrides?.claudeProjectsDir ??
       defaults.claudeProjectsDir,
-    modelCacheDir:
-      (env.ENGRAM_MODEL_CACHE_DIR?.trim() || undefined) ??
-      overrides?.modelCacheDir ??
-      undefined,
+    modelCacheDir: resolveModelCacheDir(dataDir, env, overrides?.modelCacheDir).dir,
 
     embedding: {
       ...defaults.embedding,
