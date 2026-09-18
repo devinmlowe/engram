@@ -37,7 +37,9 @@ describe("install path (#65)", () => {
     const i = DOCTOR_CHECK_NAMES.indexOf("install path");
     expect(i).toBeGreaterThan(DOCTOR_CHECK_NAMES.indexOf("data dir"));
     expect(i).toBeLessThan(DOCTOR_CHECK_NAMES.indexOf("mcp daemon"));
-    expect(DOCTOR_CHECK_NAMES.at(-1)).toBe("hosts");
+    // #61: `env file` sits between data dir and install path; `extraction smoke` closes the list
+    expect(i).toBe(DOCTOR_CHECK_NAMES.indexOf("env file") + 1);
+    expect(DOCTOR_CHECK_NAMES.at(-1)).toBe("extraction smoke");
   });
 
   it("two global trees on PATH → [--] listing both, the running one first, with the uninstall / PATH fix", () => {
