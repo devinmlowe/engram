@@ -46,11 +46,27 @@ const LINE_RE = /^\[(ok|--|FAIL)\]\s+(.+?): (.+)$/;
 let tmpRoot: string;
 let report: DoctorReport;
 
+// CI pins ENGRAM_MODEL_CACHE_DIR for the whole job; that tier outranks the
+// programmatic override this suite passes (#53), so hide it while resolving.
+const CACHE_ENV = ["ENGRAM_MODEL_CACHE_DIR", "HF_HOME"] as const;
+const savedCacheEnv: Partial<Record<(typeof CACHE_ENV)[number], string | undefined>> = {};
+
 beforeAll(async () => {
   tmpRoot = mkdtempSync(join(tmpdir(), "engram-doctor-"));
+  for (const key of CACHE_ENV) {
+    savedCacheEnv[key] = process.env[key];
+    delete process.env[key];
+  }
   report = await runDoctor(
     loadConfig({ modelCacheDir: join(tmpRoot, "models") }),
   );
+});
+
+afterAll(() => {
+  for (const key of CACHE_ENV) {
+    if (savedCacheEnv[key] === undefined) delete process.env[key];
+    else process.env[key] = savedCacheEnv[key];
+  }
 });
 
 afterAll(() => {

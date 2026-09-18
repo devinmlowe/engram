@@ -79,10 +79,12 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/engram-model-cache
-          key: ${{ runner.os }}-${{ runner.arch }}-node${{ matrix.node }}-transformers-${{ hashFiles('package-lock.json') }}
+          # Weights are Node-version independent: one cache per os/arch, so the
+          # node 24 jobs restore what node 22 downloaded instead of all eight
+          # jobs pulling from Hugging Face at once (429s on a cold matrix).
+          key: ${{ runner.os }}-${{ runner.arch }}-transformers-${{ hashFiles('package-lock.json') }}
           restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-node${{ matrix.node }}-transformers-
-            ${{ runner.os }}-${{ runner.arch }}-
+            ${{ runner.os }}-${{ runner.arch }}-transformers-
 
       - run: npm run lint
 

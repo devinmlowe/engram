@@ -107,7 +107,9 @@ function render() {
   return lines.join("\n");
 }
 
-function readBlock(text) {
+function readBlock(rawText) {
+  // A Windows checkout with core.autocrlf=true hands us CRLF; compare on LF.
+  const text = rawText.replace(/\r\n/g, "\n");
   const start = text.indexOf(START);
   const end = text.indexOf(END);
   if (start === -1 || end === -1 || end < start) return null;

@@ -107,7 +107,7 @@ describe("prebuild probe: installed packages", () => {
     expect(p.level).toBe("ok");
     expect(p.source).toBe("installed");
     expect(p.label).toBe("prebuilt");
-    expect(p.detail).toContain("build/Release/better_sqlite3.node");
+    expect(p.detail).toContain(join("build", "Release", "better_sqlite3.node"));
     expect(p.detail).toContain("node-v127-darwin-arm64");
     expect(p.fix).toEqual([]);
   });
@@ -134,7 +134,7 @@ describe("prebuild probe: installed packages", () => {
   it("recognises the 13.x bundled prebuilds/ layout", () => {
     const p = probe("better-sqlite3", tree("bs3-bundled", { betterSqlite: "bundled" }));
     expect(p.status).toBe("prebuilt");
-    expect(p.detail).toContain("prebuilds/darwin-arm64.node");
+    expect(p.detail).toContain(join("prebuilds", "darwin-arm64.node"));
   });
 
   it("is unknown (never a false verdict) when the binary is missing", () => {
