@@ -398,8 +398,13 @@ lockfile does not carry its `gypfile: false`, so npm 10 (Node 22's bundled npm) 
 `node-gyp rebuild` at install anyway. `binding.gyp` compiles nothing when a bundled prebuild
 matches, yet `node-gyp configure` still needs Python 3 and the Node headers — downloaded from
 nodejs.org once per Node version (cached under `~/.cache/node-gyp`), so an offline or proxied
-install can fail on a prebuilt target. npm 11 (Node 24) skips the script instead. The preflight
-reports `[ok] better-sqlite3: prebuilt — prebuilds/<target>.node is bundled in the package` either way.
+install can fail on a prebuilt target. **On Windows this makes Node 22 installs need a
+node-gyp-recognised Visual Studio (2019/2022 Build Tools with the C++ workload) plus Python 3**,
+because `node-gyp configure` fails with `could not find a version of Visual Studio 2017 or newer`
+before it ever reads binding.gyp — CI's `windows-latest, node 22` job shows exactly that. npm 11
+(Node 24, or `npm install -g npm@11` on Node 22) skips the script instead, so that is the simplest
+workaround. The preflight reports `[ok] better-sqlite3: prebuilt — prebuilds/<target>.node is
+bundled in the package` either way.
 
 **Toolchain needed elsewhere.** On a target `better-sqlite3` bundles no prebuild for (a platform
 not in the table, such as armv7 or FreeBSD), `npm install` compiles it from source with node-gyp,
