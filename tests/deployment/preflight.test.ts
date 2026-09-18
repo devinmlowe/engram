@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,8 +18,11 @@ const pkg = JSON.parse(
 ) as { scripts: Record<string, string>; files: string[]; os?: string[]; cpu?: string[] };
 const requireCjs = createRequire(import.meta.url);
 
+/** Node flags (e.g. --require) go before the script; script flags (--json, --expect) after it. */
 function run(args: string[] = [], extraEnv: Record<string, string> = {}) {
-  return spawnSync(process.execPath, [...args, script], {
+  const nodeFlags = args.filter((a) => a === "--require" || args[args.indexOf(a) - 1] === "--require");
+  const scriptArgs = args.filter((a) => !nodeFlags.includes(a));
+  return spawnSync(process.execPath, [...nodeFlags, script, ...scriptArgs], {
     encoding: "utf8",
     env: { ...process.env, ENGRAM_SKIP_PREFLIGHT: "", ...extraEnv },
   });
@@ -78,12 +81,79 @@ describe("install preflight verdict", () => {
     expect(r.stdout).toMatch(/^engram preflight: (OK|\d+ check\(s\) FAILED)/m);
   });
 
+  it("prints one prebuild verdict line per native dependency, with fix lines under warn/fail (#63)", () => {
+    const r = run();
+    const verdict = /^\s+\[(ok|warn|FAIL|--)\]\s+(better-sqlite3|sqlite-vec|onnxruntime-node): (prebuilt|compiled locally|will compile \(needs python3 \+ C\+\+ toolchain\)|unsupported|unknown) — .+$/gm;
+    const deps = [...r.stdout.matchAll(verdict)].map((m) => m[2]);
+    expect(deps).toEqual(["better-sqlite3", "sqlite-vec", "onnxruntime-node"]);
+    const lines = r.stdout.split("\n");
+    lines.forEach((line, i) => {
+      if (/^\s+\[(warn|FAIL)\]\s+(better-sqlite3|sqlite-vec|onnxruntime-node): /.test(line)) {
+        expect(lines[i + 1], `fix line after: ${line}`).toMatch(/^\s{9}(fix|or): {1,2}\S/);
+      }
+    });
+  });
+
+  it("--json prints the structured result: target, one probe per dep, load results, counts", () => {
+    const r = run(["--json"]);
+    expect(r.status).toBe(0);
+    const parsed = JSON.parse(r.stdout) as {
+      node: string;
+      target: { platform: string; arch: string; libc: string; abi: number; key: string };
+      deps: Array<{ dep: string; status: string; level: string; source: string; label: string; detail: string; fix: string[] }>;
+      loads: Array<{ dep: string; ok: boolean }>;
+      failed: number;
+      warned: number;
+      ok: boolean;
+      lines?: unknown;
+    };
+    expect(parsed.node).toBe(process.version);
+    expect(parsed.target.platform).toBe(process.platform);
+    expect(parsed.target.arch).toBe(process.arch);
+    expect(parsed.target.abi).toBe(Number(process.versions.modules));
+    expect(parsed.deps.map((d) => d.dep)).toEqual(["better-sqlite3", "sqlite-vec", "onnxruntime-node"]);
+    for (const d of parsed.deps) {
+      expect(["prebuilt", "compiled", "will-compile", "unsupported", "unknown"]).toContain(d.status);
+      expect(["ok", "warn", "fail", "skip"]).toContain(d.level);
+      expect(d.source).toBe("installed"); // this checkout has node_modules
+      expect(Array.isArray(d.fix)).toBe(true);
+    }
+    expect(parsed.loads.map((l) => l.dep)).toEqual(["better-sqlite3", "sqlite-vec"]);
+    expect(parsed.ok).toBe(parsed.failed === 0);
+    expect(parsed.lines).toBeUndefined();
+  });
+
+  it("installed verdicts agree with the static table for this target (what CI asserts per matrix entry)", () => {
+    const cjs = requireCjs(script) as { preflight(o?: object): { deps: Array<{ dep: string; status: string; source: string }> } };
+    const installed = cjs.preflight().deps;
+    const absent = mkdtempSync(join(tmpdir(), "engram-preflight-absent-"));
+    try {
+      const fromTable = cjs.preflight({ root: absent }).deps;
+      for (const d of fromTable) expect(d.source).toBe("static");
+      expect(installed.map((d) => [d.dep, d.status])).toEqual(fromTable.map((d) => [d.dep, d.status]));
+    } finally {
+      rmSync(absent, { recursive: true, force: true });
+    }
+  });
+
+  it("--expect exits 1 with a message when a verdict differs, 0 when it matches", () => {
+    const wrong = run(["--expect", "better-sqlite3=will-compile,sqlite-vec=unknown"]);
+    expect(wrong.status).toBe(1);
+    expect(wrong.stderr).toMatch(/engram preflight: expected (better-sqlite3|sqlite-vec) to be/);
+    const json = JSON.parse(run(["--json"]).stdout) as { deps: Array<{ dep: string; status: string }> };
+    const right = run(["--expect", json.deps.map((d) => `${d.dep}=${d.status}`).join(",")]);
+    expect(right.status).toBe(0);
+  });
+
   it("never fails the install even when a native module cannot load", () => {
     const r = run(["--require", breakBetterSqlite]);
     expect(r.status).toBe(0);
     expect(r.stdout).toMatch(/\[FAIL\]\s+better-sqlite3 failed to load/);
     expect(r.stdout).toMatch(/\[FAIL\]\s+sqlite-vec failed to load/);
-    expect(r.stdout).toMatch(/^engram preflight: 2 check\(s\) FAILED/m);
+    // At least the two load failures; a documented-unsupported CI target
+    // (windows-11-arm, musl) adds its [FAIL] prebuild lines on top.
+    const failed = Number(/^engram preflight: (\d+) check\(s\) FAILED/m.exec(r.stdout)?.[1]);
+    expect(failed).toBeGreaterThanOrEqual(2);
     expect(r.stdout).toMatch(/engram doctor/);
   });
 
@@ -100,5 +170,47 @@ describe("install preflight verdict", () => {
     const r = run([], { ENGRAM_SKIP_PREFLIGHT: "1" });
     expect(r.status).toBe(0);
     expect(r.stdout).toBe("");
+  });
+});
+
+describe("engram preflight CLI (#63)", () => {
+  const cli = fileURLToPath(new URL("../../dist/interfaces/cli/index.js", import.meta.url));
+  const built = existsSync(cli);
+
+  function cliRun(...args: string[]) {
+    return spawnSync(process.execPath, [cli, "preflight", ...args], {
+      encoding: "utf8",
+      // A data dir that must NOT be created: preflight needs no database or models.
+      env: { ...process.env, ENGRAM_SKIP_PREFLIGHT: "1", ENGRAM_DATA_DIR: join(tmp, "never-created") },
+    });
+  }
+
+  it.skipIf(!built)("reuses scripts/preflight.cjs and runs without a data dir, ignoring ENGRAM_SKIP_PREFLIGHT", () => {
+    const r = cliRun();
+    expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(/^engram preflight: node v\d+/m);
+    expect(r.stdout).toMatch(/^\s+\[(ok|warn|FAIL|--)\]\s+onnxruntime-node: /m);
+    expect(existsSync(join(tmp, "never-created"))).toBe(false);
+  });
+
+  it.skipIf(!built)("--json matches the script's shape", () => {
+    const parsed = JSON.parse(cliRun("--json").stdout) as { deps: Array<{ dep: string }>; target: { key: string } };
+    expect(parsed.deps.map((d) => d.dep)).toEqual(["better-sqlite3", "sqlite-vec", "onnxruntime-node"]);
+    expect(parsed.target.key).toMatch(/^[a-z0-9]+-[a-z0-9]+$/);
+  });
+
+  it.skipIf(!built)("--expect and --strict drive the exit code", () => {
+    expect(cliRun("--expect", "onnxruntime-node=will-compile").status).toBe(1);
+    const json = JSON.parse(cliRun("--json").stdout) as { deps: Array<{ dep: string; status: string }>; failed: number };
+    const matching = json.deps.map((d) => `${d.dep}=${d.status}`).join(",");
+    expect(cliRun("--expect", matching).status).toBe(0);
+    expect(cliRun("--strict").status).toBe(json.failed > 0 ? 1 : 0);
+  });
+
+  it("is listed in the package's CLI docs and CLAUDE.md", () => {
+    const docs = ["../../CLAUDE.md", "../../src/interfaces/cli/README.md", "../../src/interfaces/README.md", "../../docs/api-reference.md"];
+    for (const doc of docs) {
+      expect(readFileSync(new URL(doc, import.meta.url), "utf8"), doc).toMatch(/`preflight`|engram preflight/);
+    }
   });
 });

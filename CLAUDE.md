@@ -55,9 +55,11 @@ For large file analysis, combine tools in this order:
 3. `scan_file` → exhaustive regex search for enumeration tasks (breadth)
 4. `fetch_snippets` → read specific line ranges for detail extraction (depth)
 
-## CLI Commands (24)
+## CLI Commands (25)
 
-`init`, `sync`, `search`, `remember`, `extract`, `dream`, `reflect`, `explore`, `entities`, `relationships`, `stats`, `health`, `migrate`, `import-legacy`, `validate`, `backfill-event-ts`, `mcp`, `commitments`, `commitment-done`, `commitments-extract`, `doctor`, `update`, `export`, `import`
+`init`, `sync`, `search`, `remember`, `extract`, `dream`, `reflect`, `explore`, `entities`, `relationships`, `stats`, `health`, `migrate`, `import-legacy`, `validate`, `backfill-event-ts`, `mcp`, `commitments`, `commitment-done`, `commitments-extract`, `doctor`, `preflight`, `update`, `export`, `import`
+
+`engram preflight [--strict] [--json] [--expect <spec>]` runs `scripts/preflight.cjs` (also the npm `postinstall` hook) without a database or models: per native dependency (`better-sqlite3`, `sqlite-vec`, `onnxruntime-node`) it reports `prebuilt` / `compiled locally` / `will compile` / `unsupported` / `unknown` for the Node ABI + platform + arch + libc, with the fix per OS. The script's `NATIVE_DEPS` table is the single source of truth: `engram doctor` appends the same verdict to its native-module lines, and the README "Supported platform/arch set" table is generated from it (`node scripts/supported-platforms.cjs --write`, checked by `tests/deployment/supported-platforms.test.ts`). CI runs `preflight --strict --expect prebuilt` on every supported matrix entry (Node 22/24 × ubuntu, ubuntu-24.04-arm, macos, windows) and asserts the documented `unsupported` verdict on `windows-11-arm` and in a `node:22-alpine` container (#63).
 
 `engram update` (`--check` / `--plan` / run) is the controlled self-update: backup, stop services via the per-platform supervisor adapter (`src/interfaces/cli/services.ts`), pull or `npm install -g`, `engram migrate`, restart (MCP before the plugin redeploy), verify doctor + `/health` + `stats --json` counts. `engram migrate [data-dir|model-cache|schema]` is the idempotent install/data migration (`src/interfaces/cli/data-migration.ts`); the legacy conversation-index importer is `engram import-legacy`. Post-swap steps run the *new* build in a child process. The version string comes from `package.json` via `src/_core/version/index.ts`.
 

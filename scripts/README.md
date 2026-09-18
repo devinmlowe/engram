@@ -28,6 +28,8 @@ Installation, maintenance, and operational scripts. Bash remains the macOS/Linux
 - [compact-dream.sh](./compact-dream.sh) — Claude Code post-compaction hook: background ingest + extract for the compacted session (needs only `node`; honours `ENGRAM_DATA_DIR` / `ENGRAM_LOGS_DIR`)
 - [commitments-surface.sh](./commitments-surface.sh) — Heartbeat digest of the commitments ledger via the HTTP MCP `commitments` tool (count, overdue, due within 7 days; prints nothing when empty). Self-contained node program inside a bash wrapper (no python3). Deployed copy: `~/.hermes/scripts/fleet/commitments-surface.sh`
 - [check-deps.sh](./check-deps.sh) — Verify system dependencies are available
+- [preflight.cjs](./preflight.cjs) — Dependency-free native-module preflight, run by the npm `postinstall` hook and by `engram preflight`: per dependency (`better-sqlite3`, `sqlite-vec`, `onnxruntime-node`) decides `prebuilt` / `compiled locally` / `will compile` / `unsupported` / `unknown` for the Node ABI + platform + arch + libc (musl via `process.report` / `/etc/alpine-release`), inspecting `node_modules` when present and its `NATIVE_DEPS` table otherwise, and prints the fix per OS. `--strict` exits 1 on `[FAIL]`, `--json` prints the structure, `--expect <status|dep=status,…>` fails on a verdict mismatch (CI). Ships in the npm package; `src/interfaces/cli/preflight.ts` is the typed bridge (#63)
+- [supported-platforms.cjs](./supported-platforms.cjs) — Renders the README "Supported platform/arch set" table from `preflight.cjs` (`--check` in tests, `--write` to update) so docs and probe never disagree
 
 ## Data directory
 
