@@ -164,7 +164,13 @@ describe("server.json (registry.modelcontextprotocol.io)", () => {
 
 describe("npm tarball carries the plugin and registry files", () => {
   it("npm pack --dry-run lists .claude-plugin/*, commands/*.md, server.json and the sync script", () => {
-    const out = execFileSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], { cwd: ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    // npm is npm.cmd on Windows; a shell resolves either.
+    const out = execFileSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
+      cwd: ROOT,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      shell: process.platform === "win32",
+    });
     const [{ files }] = JSON.parse(out) as Array<{ files: Array<{ path: string }> }>;
     const paths = files.map((f) => f.path);
     for (const required of [

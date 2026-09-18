@@ -21,6 +21,11 @@ const BUNDLED = ["recall", "remember", "explore-graph", "reflect", "engram-conne
 const PERSONAL_ONLY = ["engram-show-graphs", "rlm-recall"];
 const PLUGIN_PREFIX = "mcp__plugin_engram_engram__";
 
+/** A Windows checkout with core.autocrlf=true yields CRLF; every assertion below is written for LF. */
+function readCommand(file: string): string {
+  return readFileSync(join(COMMANDS_DIR, file), "utf8").replace(/\r\n/g, "\n");
+}
+
 function frontmatter(md: string): Record<string, string> {
   const m = md.match(/^---\n([\s\S]*?)\n---\n/);
   expect(m, "frontmatter block present").toBeTruthy();
@@ -41,7 +46,7 @@ describe("bundled plugin commands (#59)", () => {
   });
 
   for (const file of files) {
-    const md = readFileSync(join(COMMANDS_DIR, file), "utf8");
+    const md = readCommand(file);
     const fm = frontmatter(md);
 
     it(`${file}: frontmatter has description, argument-hint and allowed-tools`, () => {
@@ -70,7 +75,7 @@ describe("bundled plugin commands (#59)", () => {
 
   it("no command assumes this machine (tmux, carbonyl, the visualizer port, absolute home paths)", () => {
     for (const file of files) {
-      const md = readFileSync(join(COMMANDS_DIR, file), "utf8");
+      const md = readCommand(file);
       expect(md, file).not.toMatch(/tmux|carbonyl|localhost:3001|\/Users\/[A-Za-z]|~\/\.claude/);
     }
   });
