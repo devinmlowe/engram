@@ -1,0 +1,131 @@
+# Release (#58): a `v<version>` tag publishes the npm package (the artifact the
+# Claude Code plugin and the MCP registry both point at) and then the registry
+# entry. The marketplace needs no publish step — Claude Code reads
+# .claude-plugin/marketplace.json straight from this repo, so pushing the tag
+# (and the version bump on main) is the marketplace release.
+#
+# Cutting a release:
+#   npm version minor            # bumps package.json and, via the "version" hook,
+#                                # rewrites plugin.json / marketplace.json / server.json
+#   git push origin main --follow-tags
+#
+# Secrets / permissions:
+#   NPM_TOKEN      npm automation token with publish rights on @devinmlowe/engram
+#                  (Settings → Secrets → Actions). `--provenance` additionally needs
+#                  the job's `id-token: write` (below) and package.json repository.url
+#                  matching this GitHub repo.
+#   MCP registry   no secret: `mcp-publisher login github-oidc` uses the same
+#                  `id-token: write` to prove this repo belongs to github.com/devinmlowe,
+#                  which is what the io.github.devinmlowe/* namespace requires.
+#                  Manual equivalent from a laptop: `mcp-publisher login github`
+#                  (device flow) then `mcp-publisher publish`.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  npm:
+    name: verify + npm publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm --provenance
+    env:
+      ENGRAM_MODEL_CACHE_DIR: ${{ github.workspace }}/.engram-model-cache
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      # `prepare` builds dist/ during npm ci.
+      - run: npm ci
+
+      - name: Tag matches package.json
+        run: |
+          expected="v$(node -p "require('./package.json').version")"
+          if [ "$GITHUB_REF_NAME" != "$expected" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match package.json version ($expected) — run npm version, then push --follow-tags"
+            exit 1
+          fi
+
+      - name: Manifests agree with package.json (plugin.json, marketplace.json, server.json, mcpName)
+        run: node scripts/sync-manifests.cjs --check
+
+      - name: Native-dependency preflight (prebuilt on the publish runner)
+        run: node scripts/preflight.cjs --strict --expect prebuilt
+
+      - name: Cache transformer model downloads
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.engram-model-cache
+          key: ${{ runner.os }}-${{ runner.arch }}-transformers-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-transformers-
+
+      - run: npm run lint
+      - run: npm run test:run
+
+      # lint + tests already ran above; --ignore-scripts skips prepublishOnly's
+      # second full build+test pass (dist/ is fresh from npm ci's prepare).
+      - name: npm publish
+        run: npm publish --provenance --access public --ignore-scripts
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Published package resolves
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          for i in 1 2 3 4 5 6; do
+            if npm view "@devinmlowe/engram@$version" version >/dev/null 2>&1; then echo "npm has $version"; exit 0; fi
+            sleep 10
+          done
+          echo "::warning::npm view did not see @devinmlowe/engram@$version yet (registry propagation); the registry job will retry"
+
+  # Separate job so a registry hiccup can be re-run on its own after npm succeeded.
+  registry:
+    name: publish server.json to registry.modelcontextprotocol.io
+    needs: npm
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # mcp-publisher login github-oidc
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install mcp-publisher
+        run: |
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
+          ./mcp-publisher --help | head -3
+
+      - name: Validate server.json
+        run: ./mcp-publisher validate
+
+      # The registry checks that the npm package at packages[0].version exists and
+      # that its package.json mcpName equals server.json name, so npm must be
+      # visible first.
+      - name: Wait for npm to serve the version
+        run: |
+          version="$(node -p "require('./server.json').version")"
+          for i in $(seq 1 18); do
+            if npm view "@devinmlowe/engram@$version" version >/dev/null 2>&1; then echo "npm has $version"; exit 0; fi
+            sleep 10
+          done
+          echo "::error::@devinmlowe/engram@$version is not on npm; the registry would reject the entry"
+          exit 1
+
+      - name: Authenticate (GitHub OIDC → io.github.devinmlowe namespace)
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish
+        run: ./mcp-publisher publish
+
+      - name: Entry resolves
+        run: |
+          sleep 5
+          curl -fsS "https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.devinmlowe/engram" | head -c 2000; echo
