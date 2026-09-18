@@ -40,6 +40,9 @@ interface MemoryRow {
   scope: string | null;
   stability: number | null;
   event_ts?: number | null;
+  extraction_basis?: string | null;
+  deleted_at?: string | null;
+  deleted_by?: string | null;
 }
 
 interface ConflictRow {
@@ -73,6 +76,9 @@ function rowToMemory(row: MemoryRow): Memory {
     scope: row.scope ?? "global",
     stability: row.stability ?? undefined,
     eventTs: row.event_ts ?? undefined,
+    extractionBasis: (row.extraction_basis as Memory["extractionBasis"]) ?? undefined,
+    deletedAt: row.deleted_at ?? undefined,
+    deletedBy: row.deleted_by ?? undefined,
   };
 }
 
@@ -183,13 +189,15 @@ export function updateMemory(
   const run = db.transaction(() => {
     // Fetch current state for FTS sync
     const existing = db
-      .prepare("SELECT rowid, content, context FROM memories WHERE id = ?")
-      .get(id) as { rowid: number; content: string; context: string | null } | undefined;
+      .prepare("SELECT rowid, content, context, deleted_at FROM memories WHERE id = ?")
+      .get(id) as { rowid: number; content: string; context: string | null; deleted_at: string | null } | undefined;
 
     if (!existing) return;
 
+    // A forgotten memory (#55) has no FTS row to delete or replace; a second
+    // FTS5 'delete' for the same rowid corrupts the index.
     const needsFtsSync =
-      updates.content !== undefined || updates.context !== undefined;
+      (updates.content !== undefined || updates.context !== undefined) && existing.deleted_at === null;
 
     // If content or context changed, delete old FTS entry
     if (needsFtsSync) {
@@ -350,7 +358,9 @@ export function recordAccess(
     const row = db.prepare("SELECT * FROM memories WHERE id = ?").get(id) as
       | MemoryRow
       | undefined;
-    if (!row) return;
+    // #55: a forgotten (or otherwise inactive) memory is never reinforced —
+    // a recall session may still hold a result that was forgotten since.
+    if (!row || !row.is_active) return;
 
     const { stability, importance } = onSuccessfulAccess(rowToMemory(row));
     db.prepare(
@@ -373,7 +383,7 @@ export function applyContradiction(
     const row = db.prepare("SELECT * FROM memories WHERE id = ?").get(id) as
       | MemoryRow
       | undefined;
-    if (!row) return;
+    if (!row || !row.is_active) return;
 
     const { stability } = onContradiction(rowToMemory(row));
     db.prepare("UPDATE memories SET stability = ? WHERE id = ?").run(stability, id);

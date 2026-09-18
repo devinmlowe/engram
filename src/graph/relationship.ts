@@ -201,8 +201,9 @@ export function findOrCreateRelationship(
 
         if (!memories.includes(memoryId)) {
           memories.push(memoryId);
+          // Fresh evidence clears a stale_since flag left by a forget (#57)
           db.prepare(
-            "UPDATE relationships SET source_memories = ?, updated_at = unixepoch() WHERE id = ?",
+            "UPDATE relationships SET source_memories = ?, updated_at = unixepoch(), stale_since = NULL WHERE id = ?",
           ).run(JSON.stringify(memories), existing.id);
         }
       } else {

@@ -114,7 +114,7 @@ vi.mock("../../src/graph/reflection.js", () => ({
     generatedAt: Math.floor(Date.now() / 1000),
   }),
   mergeRedundantEntities: vi.fn().mockReturnValue({ merged: 0 }),
-  pruneOrphanEntities: vi.fn().mockReturnValue({ pruned: 0 }),
+  pruneOrphanEntities: vi.fn().mockReturnValue({ pruned: 0, staleRelationshipsPruned: 0, staleEntitiesPruned: 0 }),
   pruneStaleGenerations: vi.fn().mockReturnValue({ pruned: 0 }),
 }));
 
@@ -137,7 +137,8 @@ import { syncConversations } from "../../src/episodic/sync.js";
 import { extractFromConversation } from "../../src/semantic/extractor.js";
 import { consolidateFacts } from "../../src/semantic/consolidator.js";
 import { analyzeGraph, persistAnalysis } from "../../src/graph/analyzer.js";
-import { runReflection } from "../../src/graph/reflection.js";
+import { runReflection, pruneOrphanEntities } from "../../src/graph/reflection.js";
+import { contentHash } from "../../src/semantic/forget.js";
 import { isPruneEligible } from "../../src/semantic/decay.js";
 import { extractEntities } from "../../src/graph/extractor.js";
 import { resolveEntities } from "../../src/graph/resolver.js";
@@ -887,6 +888,69 @@ describe("Phase runners", () => {
       const report = await runDream(t.db, t.config, { phases: ["prune"] });
       expect(report.memoriesPruned).toBe(3);
     });
+  });
+});
+
+// ─── Forget tool integration (#55) ───────────────────────────────
+
+describe("Forget suppression + retention purge (#55)", () => {
+  it("extract drops facts whose content hash is suppressed and counts them in the summary", async () => {
+    seedConversation("conv-001");
+    // A previously forgotten memory left its content hash behind
+    t.db
+      .prepare("INSERT INTO memory_suppressions (content_hash, memory_id, scope, created_at) VALUES (?, 'mem-gone', 'global', '2026-09-17T00:00:00Z')")
+      .run(contentHash("We deploy on Fridays."));
+    vi.mocked(extractFromConversation).mockResolvedValue({
+      facts: [
+        { type: "fact", content: "we deploy on fridays", importance: 0.7, sourceExchangeIds: ["e1"] },
+        { type: "fact", content: "Deploys are announced in #ops", importance: 0.7, sourceExchangeIds: ["e2"] },
+      ],
+      model: "test-model",
+      tier: "haiku",
+      confidence: 8,
+      durationMs: 1,
+    });
+
+    const report = await runDream(t.db, t.config, { phases: ["extract", "consolidate"] });
+
+    expect(report.suppressedFacts).toBe(1);
+    const batches = vi.mocked(consolidateFacts).mock.calls.map((c) => c[1].map((f) => f.content));
+    expect(batches).toEqual([["Deploys are announced in #ops"]]);
+    expect(formatDreamSummary(report)).toContain("  Suppressed:        1 (forgotten facts not re-extracted)");
+  });
+
+  it("prune hard-deletes forgotten memories past ENGRAM_FORGET_RETENTION_DAYS and reports the stale fast path", async () => {
+    insertActiveMemory("mem-live");
+    t.db
+      .prepare(
+        `INSERT INTO memories (id, type, content, confidence, importance, access_count, is_active, source_exchanges, deleted_at, deleted_by)
+         VALUES ('mem-old', 'fact', 'forgotten long ago', 0.5, 0.5, 0, 0, '[]', '2026-01-01T00:00:00.000Z', 'cli'),
+                ('mem-new', 'fact', 'forgotten just now', 0.5, 0.5, 0, 0, '[]', ?, 'cli')`,
+      )
+      .run(new Date().toISOString());
+    vi.mocked(pruneOrphanEntities).mockReturnValueOnce({ pruned: 3, staleRelationshipsPruned: 2, staleEntitiesPruned: 1 });
+
+    const report = await runDream(t.db, { ...t.config, forget: { retentionDays: 30 } }, { phases: ["prune"] });
+
+    expect(report.forgottenPurged).toBe(1);
+    expect(report.staleEntitiesPruned).toBe(1);
+    expect(report.staleRelationshipsPruned).toBe(2);
+    const ids = (t.db.prepare("SELECT id FROM memories ORDER BY id").all() as Array<{ id: string }>).map((r) => r.id);
+    expect(ids).toEqual(["mem-live", "mem-new"]);
+    expect(t.db.prepare("SELECT op, actor FROM memory_changes WHERE memory_id = 'mem-old'").all()).toEqual([{ op: "purge", actor: "dream" }]);
+    expect(formatDreamSummary(report)).toContain("  Forgotten purged:  1 (stale graph rows: 1 entities, 2 relationships)");
+  });
+
+  it("retention 0 purges every forgotten memory on the next prune", async () => {
+    t.db
+      .prepare(
+        `INSERT INTO memories (id, type, content, confidence, importance, access_count, is_active, source_exchanges, deleted_at, deleted_by)
+         VALUES ('mem-new', 'fact', 'forgotten just now', 0.5, 0.5, 0, 0, '[]', ?, 'cli')`,
+      )
+      .run(new Date().toISOString());
+    const report = await runDream(t.db, { ...t.config, forget: { retentionDays: 0 } }, { phases: ["prune"] });
+    expect(report.forgottenPurged).toBe(1);
+    expect(t.db.prepare("SELECT COUNT(*) AS n FROM memories").get()).toEqual({ n: 0 });
   });
 });
 
