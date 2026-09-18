@@ -24,33 +24,9 @@ program
   .option("-f, --force", "Force re-index all conversations")
   .option("-n, --dry-run", "Show what would be synced without indexing")
   .action(async (opts) => {
-    const { syncConversations } = await import("../../episodic/sync.js");
-    const config = loadConfig();
-    const db = getDatabase(config);
-
-    try {
-      console.log("Syncing conversations...");
-      const result = await syncConversations(db, config, {
-        project: opts.project,
-        force: opts.force,
-        dryRun: opts.dryRun,
-      });
-
-      console.log(`\nSync complete:`);
-      console.log(`  Discovered: ${result.discovered}`);
-      console.log(`  Copied:     ${result.copied}`);
-      console.log(`  Indexed:    ${result.indexed}`);
-      console.log(`  Skipped:    ${result.skipped}`);
-
-      if (result.errors.length > 0) {
-        console.log(`  Errors:     ${result.errors.length}`);
-        for (const err of result.errors) {
-          console.error(`    ${err.file}: ${err.error}`);
-        }
-      }
-    } finally {
-      closeDatabase();
-    }
+    // The body lives in first-run.ts so `engram setup` runs the same step (#61).
+    const { runSync } = await import("./first-run.js");
+    await runSync(loadConfig(), { project: opts.project, force: opts.force, dryRun: opts.dryRun });
   });
 
 // ─── search ────────────────────────────────────────────────────
@@ -512,27 +488,9 @@ program
   .command("init")
   .description("Initialize database and pre-download embedding model")
   .action(async () => {
-    const { initEmbeddings, getActiveModel } = await import(
-      "../../_core/embeddings/index.js"
-    );
-    const config = loadConfig();
-
-    console.log("Initializing database...");
-    const db = getDatabase(config);
-    closeDatabase();
-    console.log(`  Database: ${config.dbPath}`);
-
-    // Adopt a pre-0.4.0 node_modules model cache before the first download (#53).
-    const { env: transformersEnv } = await import("@xenova/transformers");
-    const { applyModelCacheDir } = await import("../../_core/embeddings/model-cache.js");
-    const cacheDir = applyModelCacheDir(transformersEnv, config.modelCacheDir, { log: (l) => console.log(`  ${l}`) });
-    console.log(`  Model cache: ${cacheDir}`);
-
-    console.log("Downloading embedding model...");
-    await initEmbeddings(config);
-    console.log(`  Model: ${getActiveModel()}`);
-
-    console.log("Done. Engram is ready.");
+    // The body lives in first-run.ts so `engram setup` runs the same step (#61).
+    const { runInit } = await import("./first-run.js");
+    await runInit(loadConfig());
   });
 
 // ─── migrate ────────────────────────────────────────────────────
@@ -1406,6 +1364,53 @@ program
 
     if (!report.ok) process.exit(1);
     if (opts.strict && report.checks.some((c) => c.level !== "ok")) process.exit(1);
+  });
+
+// ─── setup (#61, decision #62) ───────────────────────────────────
+
+program
+  .command("setup")
+  .description(
+    "First run in one command: doctor → init → sync (asked) → mcp install for every host present → install the MCP daemon, dream timer and visualizer (all three by default) → doctor --fix → extraction smoke → summary with next steps. Every step prints its manual equivalent",
+  )
+  .option("-y, --yes", "Answer yes to every question (sync, Hermes deploy, confirm-gated fixes); the Linux linger prompt is never implied")
+  .option("--sync", "Index ~/.claude/projects without asking")
+  .option("--no-sync", "Skip indexing")
+  .option("--no-daemons", "Install no service")
+  .option("--daemons <ids>", "Only these services, comma-separated: mcp, dream, visualizer (default: all three)")
+  .option("--host <id...>", "Only register these hosts (claude, codex, cursor, hermes); default: every host whose config dir exists")
+  .option("--no-smoke", "Skip the extraction smoke (no LLM call, nothing written)")
+  .option("--json", "Print the result as JSON (steps, doctor report, fixes, smoke, hosts, daemons) instead of the walkthrough")
+  .action(async (opts: { yes?: boolean; sync?: boolean; daemons?: string | boolean; host?: string[]; smoke?: boolean; json?: boolean }) => {
+    const { runSetup, defaultSetupDeps, parseDaemonList } = await import("./setup.js");
+    const { parseHostId } = await import("./hosts.js");
+    let daemons: import("./services.js").ServiceId[] | null | undefined;
+    try {
+      // commander: --no-daemons → false; --daemons <ids> → the string; neither → true (all three).
+      // --sync / --no-sync → true / false; neither → undefined (ask on a terminal).
+      daemons = opts.daemons === false ? null : typeof opts.daemons === "string" ? parseDaemonList(opts.daemons) : undefined;
+      const lines: string[] = [];
+      const deps = defaultSetupDeps({
+        log: opts.json ? (l) => lines.push(l) : (l) => console.log(l),
+        confirm: process.stdin.isTTY ? askYesNo : undefined,
+      });
+      const result = await runSetup(
+        {
+          yes: Boolean(opts.yes),
+          sync: opts.sync,
+          daemons,
+          hosts: opts.host?.map(parseHostId),
+          noSmoke: opts.smoke === false,
+          json: Boolean(opts.json),
+        },
+        deps,
+      );
+      if (opts.json) console.log(JSON.stringify({ ...result, log: lines }, null, 2));
+      if (result.exitCode !== 0) process.exit(result.exitCode);
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(2);
+    }
   });
 
 // ─── preflight ──────────────────────────────────────────────────

@@ -192,11 +192,25 @@ render() {   # render SRC DST
     fi
 }
 
+# A source checkout is rebuilt so the service runs the code on disk. An
+# installed package (`npm i -g`: dist/ but no src/, and no tsc) ships built,
+# so `engram setup` can install the services from it (#61).
+build_engram() {
+    if [ -d "$ENGRAM_DIR/src" ]; then
+        echo "Building engram..."
+        (cd "$ENGRAM_DIR" && npm run build)
+    elif [ -f "$ENGRAM_DIR/dist/interfaces/cli/index.js" ]; then
+        echo "Installed package at $ENGRAM_DIR: already built, skipping npm run build"
+    else
+        echo "Error: neither src/ nor dist/interfaces/cli/index.js found in $ENGRAM_DIR — run 'npm run build' in a checkout or reinstall the package" >&2
+        exit 1
+    fi
+}
+
 build_and_resolve() {
     ensure_dirs
     ensure_env_file
-    echo "Building engram..."
-    (cd "$ENGRAM_DIR" && npm run build)
+    build_engram
     NODE_BIN="$(resolve_node)"
     echo "Using node: $NODE_BIN ($($NODE_BIN --version))"
 }

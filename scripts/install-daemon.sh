@@ -58,6 +58,21 @@ ensure_dirs() {
     mkdir -p "$DATA_DIR"
 }
 
+# A source checkout is rebuilt so the service runs the code on disk. An
+# installed package (`npm i -g`: dist/ but no src/, and no tsc) ships built,
+# so `engram setup` can install the services from it (#61).
+build_engram() {
+    if [ -d "$ENGRAM_DIR/src" ]; then
+        echo "Building engram..."
+        (cd "$ENGRAM_DIR" && npm run build)
+    elif [ -f "$ENGRAM_DIR/dist/interfaces/cli/index.js" ]; then
+        echo "Installed package at $ENGRAM_DIR: already built, skipping npm run build"
+    else
+        echo "Error: neither src/ nor dist/interfaces/cli/index.js found in $ENGRAM_DIR — run 'npm run build' in a checkout or reinstall the package" >&2
+        exit 1
+    fi
+}
+
 resolve_node() {
     local fnm_default="${HOME}/.local/share/fnm/aliases/default/bin/node"
     local homebrew="/opt/homebrew/bin/node"
@@ -145,9 +160,8 @@ install_daemon() {
         exit 1
     fi
 
-    # Build the project first
-    echo "Building engram..."
-    (cd "$ENGRAM_DIR" && npm run build)
+    # Build the project first (a checkout); an installed package is already built
+    build_engram
 
     # Resolve a stable node binary path (avoid fnm multishell ephemeral paths)
     NODE_BIN="$(resolve_node)"
@@ -252,9 +266,8 @@ install_systemd() {
         exit 1
     fi
 
-    # Build the project first
-    echo "Building engram..."
-    (cd "$ENGRAM_DIR" && npm run build)
+    # Build the project first (a checkout); an installed package is already built
+    build_engram
 
     # Resolve a stable node binary path (avoid fnm multishell ephemeral paths)
     NODE_BIN="$(resolve_node)"

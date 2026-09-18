@@ -18,6 +18,17 @@
     "server.json",
     "scripts/preflight.cjs",
     "scripts/sync-manifests.cjs",
+    "scripts/install-mcp-daemon.sh",
+    "scripts/install-mcp-daemon.ps1",
+    "scripts/install-daemon.sh",
+    "scripts/install-daemon.ps1",
+    "scripts/install-visualizer.sh",
+    "scripts/install-visualizer.ps1",
+    "scripts/run-mcp-daemon.sh",
+    "scripts/run-mcp-daemon.ps1",
+    "scripts/run-dream.sh",
+    "scripts/run-visualizer.ps1",
+    "systemd",
     "CHANGELOG.md"
   ],
   "scripts": {
