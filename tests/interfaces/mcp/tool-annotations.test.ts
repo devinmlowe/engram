@@ -40,7 +40,11 @@ const EXPECTED_READ_ONLY: Record<(typeof MCP_TOOL_NAMES)[number], boolean> = {
   index_file_structure: false,
   commitments_update: false,
   ingest_turn: false,
+  forget: false,
 };
+
+/** Tools that delete data: the only ones allowed to carry destructiveHint: true. */
+const DESTRUCTIVE = ["forget"] as const;
 
 /** Tools whose handler reinforces returned memories (accept `reinforce`). */
 const REINFORCING = ["recall", "recall_session", "recall_drill"] as const;
@@ -71,6 +75,13 @@ describe("MCP tool annotations (#22)", () => {
     expect(props.reinforce).toMatchObject({ type: "boolean", default: true });
     expect(tool.description).toMatch(/access_count, last_accessed, stability/);
     expect(tool.description).toMatch(/reinforce: false/);
+  });
+
+  it("destructiveHint is true exactly for the tools that delete (#55)", () => {
+    for (const tool of tools) {
+      const expected = (DESTRUCTIVE as readonly string[]).includes(tool.name);
+      expect(tool.annotations?.destructiveHint, tool.name).toBe(expected);
+    }
   });
 
   it("tools that do not reinforce do not claim to", () => {

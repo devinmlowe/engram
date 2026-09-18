@@ -20,4 +20,5 @@ export const MCP_TOOL_NAMES = [
   "commitments",
   "commitments_update",
   "ingest_turn",
+  "forget",
 ] as const;
