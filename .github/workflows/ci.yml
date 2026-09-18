@@ -34,11 +34,15 @@ jobs:
             experimental: true
             verdict: unsupported
     continue-on-error: ${{ matrix.experimental == true }}
-    env:
-      # Where the tests' model downloads land; see "Cache transformer model downloads".
-      ENGRAM_MODEL_CACHE_DIR: ${{ runner.temp }}/engram-model-cache
     steps:
       - uses: actions/checkout@v4
+
+      # Where the tests' model downloads land; see "Cache transformer model
+      # downloads". Set from a step because the `runner` context is not
+      # available in job-level `env` (GitHub rejects the whole workflow).
+      - name: Pin the model cache dir
+        shell: bash
+        run: echo "ENGRAM_MODEL_CACHE_DIR=$RUNNER_TEMP/engram-model-cache" >> "$GITHUB_ENV"
 
       - uses: actions/setup-node@v4
         with:

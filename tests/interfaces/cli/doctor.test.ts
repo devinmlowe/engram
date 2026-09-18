@@ -292,19 +292,23 @@ describe("engram doctor CLI", () => {
     });
   }
 
+  // Spawning the built CLI cold (ESM import + native modules + network probes
+  // that must time out) takes well over vitest's 5 s default on CI runners.
+  const CLI_TIMEOUT_MS = 60_000;
+
   it.skipIf(!built)("prints every check and a verdict, exiting 0 on a supported platform", () => {
     const out = run();
     for (const name of DOCTOR_CHECK_NAMES) {
       expect(out).toMatch(new RegExp(`^\\[(ok|--|FAIL)\\]\\s+${name.replace("/", "\\/")}: `, "m"));
     }
     expect(out).toMatch(/^Doctor: /m);
-  });
+  }, CLI_TIMEOUT_MS);
 
   it.skipIf(!built)("--json emits a parseable report with the same checks", () => {
     const parsed = JSON.parse(run("--json")) as DoctorReport;
     expect(parsed.checks.map((c) => c.name)).toEqual([...DOCTOR_CHECK_NAMES]);
     expect(parsed.platform).toBe(`${process.platform}-${process.arch}`);
-  });
+  }, CLI_TIMEOUT_MS);
 });
 
 describe("data dir check (issues #13, #44)", () => {
