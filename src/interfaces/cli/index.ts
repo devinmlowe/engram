@@ -1379,20 +1379,33 @@ program
 program
   .command("doctor")
   .description(
-    "Diagnose the runtime: node version, platform/arch, native modules, model cache, data dir, install path (every engram on PATH vs this install), MCP daemon, hosts",
+    "Diagnose the runtime: node version, platform/arch, native modules, model cache, ollama tier, llm providers, data dir, service env file, install path (every engram on PATH vs this install), MCP daemon, hosts, and one real extraction (extraction smoke). --fix applies the known remediations",
   )
-  .option("--json", "Print the report as JSON instead of text")
-  .action(async (opts) => {
-    const { runDoctor, formatDoctorReport } = await import("./doctor.js");
-    const report = await runDoctor(loadConfig());
+  .option("--json", "Print the report as JSON instead of text (with --fix: plus what was fixed)")
+  .option("--fix", "Apply the known remediation for every non-ok check (create the env file, durable model cache, pull the Ollama model with confirmation, start a stopped MCP daemon, register a host) and re-run it; prints the manual equivalent of each")
+  .option("-y, --yes", "With --fix: apply confirm-gated fixes (large downloads) without asking")
+  .option("--strict", "Exit 1 when any check is not [ok] (after --fix, when given)")
+  .option("--no-smoke", "Skip the extraction smoke (no LLM call, nothing written)")
+  .action(async (opts: { json?: boolean; fix?: boolean; yes?: boolean; strict?: boolean; smoke?: boolean }) => {
+    const { runDoctor, formatDoctorReport, applyDoctorFixes, formatFixResults } = await import("./doctor.js");
+    let report = await runDoctor(loadConfig(), { noSmoke: opts.smoke === false });
+
+    if (opts.fix) {
+      report = await applyDoctorFixes(report, { yes: Boolean(opts.yes), confirm: process.stdin.isTTY ? askYesNo : undefined });
+    }
 
     if (opts.json) {
       console.log(JSON.stringify(report, null, 2));
     } else {
       for (const line of formatDoctorReport(report)) console.log(line);
+      if (report.fixes) {
+        console.log("");
+        for (const line of formatFixResults(report.fixes)) console.log(line);
+      }
     }
 
     if (!report.ok) process.exit(1);
+    if (opts.strict && report.checks.some((c) => c.level !== "ok")) process.exit(1);
   });
 
 // ─── preflight ──────────────────────────────────────────────────

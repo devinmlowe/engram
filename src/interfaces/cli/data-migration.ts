@@ -18,7 +18,7 @@
  * Pure planning functions take the config/env/platform explicitly so tests can
  * stage every layout in a temp dir.
  */
-import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, appendFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, appendFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { defaultModelCacheDir, describeModelCacheDir, resolveDefaultDataDir, type ModelCacheSource } from "../../_core/config/index.js";
@@ -217,6 +217,68 @@ export function serviceEnvFile(env: NodeJS.ProcessEnv, home: string): string {
   if (explicit) return explicit;
   const xdg = env.XDG_CONFIG_HOME?.trim();
   return join(xdg || join(home, ".config"), "engram", "env");
+}
+
+/**
+ * The commented template `engram doctor --fix` / `engram setup` write into a
+ * missing service env file (#61) — the same variables the shell installers
+ * seed (`scripts/install-mcp-daemon.sh`, `scripts/install-daemon.sh`), every
+ * line commented out so creating the file changes nothing until a value is
+ * filled in. The daemons source it (`scripts/run-mcp-daemon.sh`,
+ * `scripts/run-dream.sh`); the CLI reads the same variables from the shell.
+ */
+export function serviceEnvTemplate(dataDir: string): string {
+  return [
+    "# engram service environment — sourced by scripts/run-mcp-daemon.sh and scripts/run-dream.sh (the daemons);",
+    "# the CLI and MCP hosts read the same variables from your shell. Created by `engram doctor --fix`.",
+    "# One NAME=value per line (shell syntax, quote values with spaces). Keep this file mode 600: API keys live here.",
+    "# MCP daemon settings (all optional):",
+    `#ENGRAM_DATA_DIR=          # where engram.db lives (currently ${dataDir})`,
+    "#ENGRAM_MODEL_CACHE_DIR=   # model weights; default <data dir>/models (or $HF_HOME/hub), already durable",
+    "#ENGRAM_HTTP_WORKERS=2     # tool-call worker threads (0 = inline)",
+    "#ENGRAM_MCP_PORT=9907      # loopback port for /mcp and /health",
+    "#ENGRAM_MCP_TOKEN=         # bearer token for /mcp; hosts reference the variable, never the value (engram mcp status)",
+    "#ENGRAM_WEB_TOKEN=         # visualizer token (falls back to ENGRAM_MCP_TOKEN); required before ENGRAM_BIND leaves loopback",
+    "# LLM tiers for extraction and the nightly dream (see scripts/install-daemon.sh); order: ENGRAM_LLM_PROVIDERS",
+    "#OLLAMA_HOST=http://localhost:11434",
+    "#ENGRAM_LOCAL_MODEL=qwen2.5:7b",
+    "#ENGRAM_LOCAL_MODEL_FALLBACKS=",
+    "#OPENROUTER_API_KEY=",
+    "#ENGRAM_OPENROUTER_MODEL=",
+    "#ANTHROPIC_API_KEY=",
+    "#ENGRAM_OPENAI_BASE_URL=   # generic OpenAI-compatible route; key read from the env var named by ENGRAM_OPENAI_API_KEY_ENV",
+    "#ENGRAM_OPENAI_MODEL=",
+    "#ENGRAM_OPENAI_API_KEY_ENV=OPENAI_API_KEY",
+    "#ENGRAM_LLM_PROVIDERS=ollama,openai,openrouter,anthropic",
+    "#ENGRAM_FORGET_RETENTION_DAYS=30",
+    "",
+  ].join("\n");
+}
+
+/** The permission bits of `file` (e.g. 0o600), or null when it does not exist. */
+export function fileMode(file: string): number | null {
+  try {
+    return statSync(file).mode & 0o777;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Create the service env file with the template, mode 600, its directory
+ * mode 700 — never rewriting an existing file (only tightening its mode).
+ * Returns what happened, for the doctor `[fixed]` line.
+ */
+export function ensureServiceEnvFile(file: string, dataDir: string, platform: NodeJS.Platform = process.platform): "created" | "chmod" | "unchanged" {
+  if (existsSync(file)) {
+    if (platform !== "win32" && fileMode(file) !== 0o600) { chmodSync(file, 0o600); return "chmod"; }
+    return "unchanged";
+  }
+  const dir = dirname(file);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  writeFileSync(file, serviceEnvTemplate(dataDir), { mode: 0o600, flag: "wx" });
+  if (platform !== "win32") chmodSync(file, 0o600); // `mode` is masked by umask; make 600 unconditional
+  return "created";
 }
 
 /** The directory whose models a plan moves into `proposed`. */

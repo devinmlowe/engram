@@ -1188,15 +1188,15 @@ export function formatStatus(report: StatusReport, ctx: HostContext): string[] {
 // ─── doctor `hosts` check ────────────────────────────────────────────
 
 /** One line for `engram doctor`: registered hosts pointing at this install; never a failure. */
-export async function summariseHostsForDoctor(ctx: HostContext = defaultHostContext()): Promise<{ ok: boolean; detail: string }> {
+export async function summariseHostsForDoctor(ctx: HostContext = defaultHostContext()): Promise<{ ok: boolean; detail: string; registered: number }> {
   const report = await runMcpStatus({ ctx, probe: false });
   const registered = report.hosts.filter((h) => h.registered);
   const current = registered.filter((h) => h.current === true || (h.host === "claude" && h.target === "Claude Code plugin"));
   const describe = (h: HostStatus) => `${h.host} (${h.target === "Claude Code plugin" ? "plugin" : h.host === "hermes" ? "plugin" : h.transport ?? "?"}${h.current === false ? ", not this install" : ""})`;
   if (registered.length === 0) {
-    return { ok: false, detail: `no host registered — engram mcp install claude|codex|cursor|hermes (or --all)` };
+    return { ok: false, detail: `no host registered — engram mcp install claude|codex|cursor|hermes (or --all)`, registered: 0 };
   }
   const detail = registered.map(describe).join(", ");
-  if (current.length === 0) return { ok: false, detail: `${detail} — none points at this install; re-run engram mcp install <host>` };
-  return { ok: true, detail: `${detail}${registered.length < HOST_IDS.length ? ` — engram mcp status for the rest` : ""}` };
+  if (current.length === 0) return { ok: false, detail: `${detail} — none points at this install; re-run engram mcp install <host>`, registered: registered.length };
+  return { ok: true, detail: `${detail}${registered.length < HOST_IDS.length ? ` — engram mcp status for the rest` : ""}`, registered: registered.length };
 }

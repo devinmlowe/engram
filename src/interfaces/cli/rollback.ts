@@ -273,7 +273,8 @@ export async function verifyBuild(
 ): Promise<VerifyResult> {
   const { services: sdeps } = deps;
   const exec = sdeps.exec;
-  const doc = await exec(deps.node, [args.cli, "doctor", "--json"], { env: args.env });
+  // --no-smoke: verification checks the build, not the LLM tiers (no extraction, nothing written, no 60 s budget).
+  const doc = await exec(deps.node, [args.cli, "doctor", "--json", "--no-smoke"], { env: args.env });
   let doctorOk = doc.status === 0;
   try { doctorOk = doctorOk && JSON.parse(doc.stdout).ok === true; } catch { doctorOk = false; }
   say(`doctor: ${doctorOk ? "ok" : "FAILED"}`);

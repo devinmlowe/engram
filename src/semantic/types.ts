@@ -7,6 +7,7 @@
  */
 
 import type { MemoryType, MemorySource } from "../_core/types/index.js";
+import type { LlmProvider } from "../_core/llm/types.js";
 
 // Re-export MemoryType and MemorySource so semantic consumers can import from here
 export type { MemoryType, MemorySource } from "../_core/types/index.js";
@@ -84,6 +85,8 @@ export interface ExtractionResult {
   facts: ExtractedFact[];
   model: string;
   tier: "local" | "openrouter" | "haiku" | "sonnet";
+  /** Cascade tier that served the last chunk (`ollama` | `openai` | `openrouter` | `anthropic`); absent from hand-built mocks. */
+  provider?: LlmProvider;
   confidence: number; // model self-reported confidence 1-10
   durationMs: number;
   /** Chunk boundaries produced during extraction (Phase 7C.2). */

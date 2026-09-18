@@ -302,6 +302,37 @@ export async function startService(svc: ServiceStatus, deps: ServiceDeps): Promi
   if (r.status !== 0) fail("start", svc, r);
 }
 
+/**
+ * How `engram setup` installs a service (#61, decision #62): the shipped
+ * installer for this platform — `bash scripts/install-*.sh install` on macOS
+ * and Linux, the `.ps1` twin through PowerShell on Windows. Null when no
+ * installer exists (the visualizer on Linux: no unit is shipped; the hint says
+ * to run it under your own supervisor). `display` is the manual equivalent.
+ */
+export function installCommand(id: ServiceId, deps: ServiceDeps): { cmd: string; args: string[]; display: string } | null {
+  if (deps.platform === "win32") {
+    const [cmd, args] = ps1(deps, id, "install");
+    return { cmd, args, display: `${cmd} ${args.join(" ")}` };
+  }
+  if (deps.platform === "linux" && id === "visualizer") return null;
+  const script = join(deps.engramDir, "scripts", SH_INSTALLER[id]);
+  return { cmd: "bash", args: [script, "install"], display: `${script} install` };
+}
+
+/** Default wall-clock budget for one installer run (build + render + wait for /health). */
+export const INSTALL_TIMEOUT_MS = 10 * 60_000;
+
+/**
+ * Run the installer for `id` in the checkout/package dir with the caller's
+ * environment. Throws when no installer exists for this platform; the
+ * `ExecResult` carries the installer's exit status and output otherwise.
+ */
+export async function installService(id: ServiceId, deps: ServiceDeps, opts: { timeoutMs?: number } = {}): Promise<ExecResult> {
+  const c = installCommand(id, deps);
+  if (!c) throw new Error(`no installer for ${id} on ${deps.platform}: ${(await serviceStatus(id, deps)).installHint}`);
+  return deps.exec(c.cmd, c.args, { cwd: deps.engramDir, env: deps.env, timeoutMs: opts.timeoutMs ?? INSTALL_TIMEOUT_MS });
+}
+
 /** Wait until the service's port answers (or, with `up=false`, stops answering). */
 export async function waitForPort(svc: ServiceStatus, deps: ServiceDeps, up: boolean, timeoutMs = 30_000, stepMs = 500): Promise<boolean> {
   const port = portFor(svc.id, deps.env);

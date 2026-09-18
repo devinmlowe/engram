@@ -14,7 +14,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type Anthropic from "@anthropic-ai/sdk";
 import type Database from "better-sqlite3";
-import type { Memory, MemoryType } from "./types.js";
+import type { Memory, MemorySource, MemoryType } from "./types.js";
 import {
   buildIntelligenceConfig,
   generateStructured,
@@ -149,6 +149,12 @@ export interface ConsolidateOptions {
    * it. Defaults to 'global' (Claude Code transcripts).
    */
   scope?: string;
+  /**
+   * Provenance stamped on every memory this batch inserts (novel rows and
+   * conflict outcomes alike). Defaults to 'dream'; the doctor `extraction
+   * smoke` check passes 'smoke' so its rows stay identifiable (#61).
+   */
+  source?: MemorySource;
 }
 
 /**
@@ -256,6 +262,7 @@ async function deduplicateEmbeddedFact(
   options: ConsolidateOptions,
 ): Promise<DeduplicationResult> {
   const scope = options.scope ?? "global";
+  const source = options.source ?? "dream";
 
   // 2. Find nearest neighbors — within the conversation's own scope only:
   // a memory in one tenant scope must never absorb, reinforce, or be
@@ -309,6 +316,7 @@ async function deduplicateEmbeddedFact(
           embedding,
           conversationId,
           scope,
+          source,
         );
       }
 
@@ -317,7 +325,7 @@ async function deduplicateEmbeddedFact(
   }
 
   // 4. No match found — insert as novel memory
-  return insertNovelMemory(db, fact, embedding, conversationId, scope);
+  return insertNovelMemory(db, fact, embedding, conversationId, scope, source);
 }
 
 // ─── Novel Memory Insertion ─────────────────────────────────────
@@ -343,6 +351,7 @@ function memoryFromFact(
   content: string,
   scope: string,
   now: number,
+  source: MemorySource = "dream",
 ): Memory {
   const policy = applyTransientPolicy({ content, importance: fact.importance });
   const memory: Memory = {
@@ -356,7 +365,7 @@ function memoryFromFact(
     createdAt: now,
     sourceExchanges: fact.sourceExchangeIds,
     isActive: true,
-    source: "dream",
+    source,
     scope,
     extractionBasis: fact.extractionBasis,
   };
@@ -373,11 +382,12 @@ function insertNovelMemory(
   embedding: number[],
   conversationId: string,
   scope: string,
+  source: MemorySource = "dream",
 ): DeduplicationResult {
   const newId = crypto.randomUUID();
   const now = Math.floor(Date.now() / 1000);
 
-  const memory = memoryFromFact(newId, fact, fact.content, scope, now);
+  const memory = memoryFromFact(newId, fact, fact.content, scope, now, source);
 
   insertMemory(db, memory, embedding);
 
@@ -402,6 +412,7 @@ async function resolveMemoryConflict(
   newEmbedding: number[],
   conversationId: string,
   scope: string,
+  source: MemorySource = "dream",
 ): Promise<DeduplicationResult> {
   const now = Math.floor(Date.now() / 1000);
 
@@ -437,6 +448,7 @@ async function resolveMemoryConflict(
         resolution.updatedContent ?? newFact.content,
         scope,
         now,
+        source,
       );
 
       applyContradiction(db, existingMemory.id);
@@ -463,7 +475,7 @@ async function resolveMemoryConflict(
 
     case "keep_both": {
       // Insert new alongside existing
-      const newMemory = memoryFromFact(newId, newFact, newFact.content, scope, now);
+      const newMemory = memoryFromFact(newId, newFact, newFact.content, scope, now, source);
 
       // Both stay active, but the existing memory was contradicted: persist
       // the FSRS penalty so its retrievability decays faster

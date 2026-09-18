@@ -16,7 +16,12 @@ export type MemoryType =
   | "solution"
   | "convention";
 
-export type MemorySource = "user" | "dream" | "rlm" | "import" | "hermes-mirror";
+/**
+ * How a memory entered the store. `smoke` marks the rows the `extraction
+ * smoke` doctor check writes from the user's most recent conversation (#61):
+ * real memories, but easy to find (`engram memories list`) and `forget`.
+ */
+export type MemorySource = "user" | "dream" | "rlm" | "import" | "hermes-mirror" | "smoke";
 
 // ─── Search & Retrieval ─────────────────────────────────────────
 
