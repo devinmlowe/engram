@@ -107,7 +107,7 @@ ensure_env_file() {
             echo "# One NAME=value per line (shell syntax, quote values with spaces). Keep this file mode 600."
             echo "# MCP daemon settings (all optional):"
             echo "#ENGRAM_DATA_DIR=          # where engram.db lives; the installer rendered '${DATA_DIR}' into the service"
-            echo "#ENGRAM_MODEL_CACHE_DIR=   # durable embedding-model cache (npm ci wipes node_modules/.cache)"
+            echo "#ENGRAM_MODEL_CACHE_DIR=   # model weights; default <data dir>/models (or \$HF_HOME/hub), already durable"
             echo "#ENGRAM_HTTP_WORKERS=2     # tool-call worker threads (0 = inline)"
             echo "#ENGRAM_MCP_PORT=9907      # loopback port for /mcp and /health"
             echo "# Dream daemon providers (see scripts/install-daemon.sh):"

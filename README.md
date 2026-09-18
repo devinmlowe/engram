@@ -47,13 +47,9 @@ engram sync          # index conversations from ~/.claude/projects (optional)
 engram search "what did I decide about caching"
 ```
 
-> **Heads up: first run downloads models.** `engram init`, the first search, and the test
-> suite pull `nomic-ai/nomic-embed-text-v1.5` (embeddings) and `Xenova/bge-reranker-base`
-> (reranker) from Hugging Face — several hundred MB in total — into the model cache. By default
-> that cache is `node_modules/@xenova/transformers/.cache/` (inside the global package directory for
-> an `npm install -g`), which every `npm install` / `npm ci` / global upgrade wipes; set
-> `ENGRAM_MODEL_CACHE_DIR` to keep the models somewhere durable (see
-> [Model cache](#model-cache)). Downloads happen once; later runs are offline.
+> **First run downloads models once.** `engram init` (or the first search) pulls several hundred
+> MB of model weights into `~/.local/share/engram/models` (or `$ENGRAM_MODEL_CACHE_DIR` /
+> `$HF_HOME/hub`), where they survive reinstalls and upgrades; see [Model cache](#model-cache).
 > Set `ENGRAM_RERANK_ENABLED=false` to skip the reranker model.
 
 **Use it from Claude Code (MCP)**
@@ -404,9 +400,11 @@ paths filled in):
    Task Scheduler). A daemon that answers on its port with no supervisor is a
    blocker: stop it by hand or install the supervisor first.
 3. **Snapshot** the row counts (`engram stats --json`).
-4. **Model cache**: if `ENGRAM_MODEL_CACHE_DIR` is unset, copy the downloaded
-   embedding model to `<data dir>/models` *before* npm touches `node_modules`,
-   and tell you the env var to set so it never happens again.
+4. **Model cache**: if a pre-0.4.0 cache still sits in
+   `node_modules/@xenova/transformers/.cache`, move it into the resolved cache
+   dir (`<data dir>/models` by default) *before* npm touches `node_modules`.
+   `models/` is not backed up (re-downloadable); rollback re-downloads if the
+   cache is missing.
 5. **Code**: `git pull --ff-only` + `npm ci` for a checkout (a dirty tree is a
    blocker), or `npm install -g @devinmlowe/engram@<version>` for an npm install.
 6. **Migrate**: move a pre-0.2.0 data dir into the resolved one if that is where
@@ -422,7 +420,8 @@ paths filled in):
    npm version, start services).
 
 `engram migrate [data-dir|model-cache|schema] [--dry-run]` runs step 4 and 6
-on their own, idempotently, for installs you update by hand. (The legacy
+on their own, idempotently, for installs you update by hand (`model-cache` is a
+no-op once the default applies and nothing legacy is left to move). (The legacy
 conversation-index importer that used to be `engram migrate --source` is now
 `engram import-legacy --source <path>`; the old spelling still forwards with a
 deprecation notice for one release.)
@@ -491,8 +490,8 @@ engram stats                  # write these counts down; they must match after t
   Task Scheduler tasks inherit it, not the shell you install from.
 - Back up the active data directory before anything else
   (`Copy-Item -Recurse $dataDir "$dataDir.backup-$(Get-Date -Format yyyyMMdd-HHmm)"`).
-- Set `setx ENGRAM_MODEL_CACHE_DIR "$env:LOCALAPPDATA\engram\models"` once, or
-  every `npm ci` deletes the downloaded embedding model.
+- Model weights live in `%LOCALAPPDATA%\engram\models` by default (or wherever
+  `ENGRAM_MODEL_CACHE_DIR` points), so `npm ci` never deletes them.
 
 **Install vs restart.** `restart` on each installer assumes its task exists;
 an older install may have a visualizer task but no MCP task, or still run a
@@ -696,22 +695,22 @@ npm run lint         # Type-check without emit
 
 `@xenova/transformers` downloads ONNX model weights on first use (embeddings
 `nomic-ai/nomic-embed-text-v1.5`, reranker `Xenova/bge-reranker-base`, and the NLI model used by
-consolidation). Its default cache directory is **inside the package**,
-`node_modules/@xenova/transformers/.cache/`, so every `npm install`, `npm ci`, or `rm -rf
-node_modules` throws the models away and the next run re-downloads several hundred MB.
+consolidation). Engram keeps them in a durable directory that resolves, in order, to:
 
-Set `ENGRAM_MODEL_CACHE_DIR` to relocate the cache; engram applies it to every model loader
-(embeddings, reranker, NLI) before the first download:
+1. `ENGRAM_MODEL_CACHE_DIR` — any absolute path (a shared network volume is fine; a read-only
+   one works for already downloaded models but new downloads fail)
+2. `$HF_HOME/hub` — when `HF_HOME` is set, the Hugging Face hub-cache location
+3. `<data dir>/models` — the default: `~/.local/share/engram/models`
+   (`%LOCALAPPDATA%\engram\models` on Windows), next to `engram.db`
 
-```bash
-export ENGRAM_MODEL_CACHE_DIR="$HOME/.local/share/engram/models"   # survives reinstalls
-engram doctor                                                       # shows the effective location + writability
-```
-
-Any absolute path works (a shared network volume is fine; a read-only one works for already
-downloaded models but new downloads fail). `engram doctor` prints the directory in use, whether it
-is writable, and whether it came from `ENGRAM_MODEL_CACHE_DIR` or the library default. CI keeps
-the default location and caches `node_modules/@xenova/transformers/.cache` between runs.
+The library's own default, `node_modules/@xenova/transformers/.cache/`, is never used: every
+`npm install`, `npm ci`, or global upgrade wipes it. An install upgraded from a build that cached
+there moves the weights into the resolved directory on its first model load (or on `engram init` /
+`engram migrate model-cache`) and logs one line — no re-download. `engram doctor` prints the
+directory in use, whether it is writable, `durable: yes|no` (`no` only for an explicit path inside
+`node_modules`), and which tier chose it. `engram update` never backs up `models/`; a rollback
+re-downloads if the cache is missing. CI pins `ENGRAM_MODEL_CACHE_DIR` to a runner temp dir and
+caches that between runs.
 
 ## Configuration
 
@@ -739,7 +738,7 @@ The one exception is the launchd dream daemon, whose launcher (`scripts/run-drea
 | `ENGRAM_CLAUDE_PROJECTS_DIR` | `~/.claude/projects` | Where `engram sync` looks for Claude Code conversations |
 | `ENGRAM_EMBEDDING_DIMS` | `256` | Matryoshka embedding dimensions (must match the existing DB) |
 | `ENGRAM_RERANK_ENABLED` | `true` | Set to `false` or `0` to disable the cross-encoder reranker |
-| `ENGRAM_MODEL_CACHE_DIR` | `node_modules/@xenova/transformers/.cache/` | Where model weights are downloaded/cached (see [Model cache](#model-cache)) |
+| `ENGRAM_MODEL_CACHE_DIR` | `$ENGRAM_DATA_DIR/models` (`$HF_HOME/hub` when `HF_HOME` is set) | Where model weights are downloaded/cached; never inside `node_modules` (see [Model cache](#model-cache)) |
 | `ENGRAM_SKIP_PREFLIGHT` | — | Set to `1` to silence the `npm install` platform preflight |
 | `ENGRAM_CHUNKING_STRATEGY` | `fixed` | `fixed` or `adaptive` (content-aware boundaries) |
 | `ENGRAM_BIND` | `127.0.0.1` | Web visualizer bind address (`0.0.0.0` to expose on the network; requires `ENGRAM_WEB_TOKEN`) |

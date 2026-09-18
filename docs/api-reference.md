@@ -234,7 +234,9 @@ Initialize the database and download the embedding model.
 engram init
 ```
 
-Creates `~/.local/share/engram/engram.db` and downloads `nomic-ai/nomic-embed-text-v1.5`.
+Creates `~/.local/share/engram/engram.db` and downloads `nomic-ai/nomic-embed-text-v1.5` into
+the model cache (`~/.local/share/engram/models` by default; `ENGRAM_MODEL_CACHE_DIR` or
+`$HF_HOME/hub` when set), moving a pre-0.4.0 `node_modules` cache there first if one exists.
 
 ---
 
@@ -449,7 +451,7 @@ engram migrate [all|data-dir|model-cache|schema] [--dry-run]
 | Topic | What it does |
 |-------|--------------|
 | `data-dir` | Lists every candidate data directory (effective, pre-0.2.0 `~/.local/share/engram`, platform default `%LOCALAPPDATA%\engram` / `$XDG_DATA_HOME/engram`) and whether it holds a database. Moves `engram.db` (+ `-wal`/`-shm`), `archive/`, `logs/`, `tmp/` into the effective dir when only a legacy dir is populated; refuses when two dirs both hold a database; leaves `ENGRAM_DB_PATH` installs alone. Refuses to move while the MCP daemon answers on its port |
-| `model-cache` | If `ENGRAM_MODEL_CACHE_DIR` is unset, creates `<data dir>/models`, copies any downloaded models out of `node_modules/@xenova/transformers/.cache`, appends the setting to `~/.config/engram/env` when that file exists, and prints the env line to set |
+| `model-cache` | Moves a pre-0.4.0 cache out of `node_modules/@xenova/transformers/.cache` into the resolved cache dir (`ENGRAM_MODEL_CACHE_DIR` → `$HF_HOME/hub` → `<data dir>/models`); a no-op with a message once the default applies and nothing legacy is left. An explicit `ENGRAM_MODEL_CACHE_DIR` inside `node_modules` is relocated to `<data dir>/models`, with the env line appended to `~/.config/engram/env` when that file exists |
 | `schema` | Opens the database once so schema migrations run, then lists the `schema_migrations` checkpoints |
 
 `--dry-run` lists every action without changing anything. `engram migrate --source <path>` is the deprecated spelling of `engram import-legacy` and forwards with a notice.

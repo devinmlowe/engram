@@ -19,9 +19,9 @@ Command-line interface for direct human interaction with engram. Built on Comman
 - `update.ts` — `engram update`: plan (install kind, data-dir candidates, model cache, services, plugin targets, blockers) and run (backup → stop → snapshot → code → migrate → restart → verify, rollback steps on failure). Post-swap steps run the new build in a child process (#44)
 - `install-kind.ts` — git checkout vs global npm install detection, latest available version (git tags / npm dist-tag), `--check` output
 - `services.ts` — Supervisor adapters (launchd, systemd user units, Windows Task Scheduler) behind one `ServiceStatus` shape with injectable `exec`/`probe`; never kills an unsupervised process
-- `data-migration.ts` — `engram migrate`: data-dir split detection and move (refuses when two dirs hold a database), durable model cache, schema checkpoint report
+- `data-migration.ts` — `engram migrate`: data-dir split detection and move (refuses when two dirs hold a database), model cache (moves a pre-0.4.0 `node_modules` cache into the resolved dir; relocates an explicit dir that sits inside `node_modules`; no-op once the durable default applies, #53), schema checkpoint report
 - `snapshot.ts` — Row counts for `engram stats --json` and the before/after comparison in `engram update`
-- `doctor.ts` — Runtime diagnostics behind `engram doctor` (node, platform/arch, native modules, model cache, effective data dir + legacy-split warning, MCP daemon /health)
+- `doctor.ts` — Runtime diagnostics behind `engram doctor` (node, platform/arch, native modules, model cache with `durable: yes|no` + the tier that chose it, effective data dir + legacy-split warning, MCP daemon /health)
 - `transfer.ts` — `engram export` / `engram import`: JSONL v1 transfer of memories, entities, relationships, and commitments
 
 ## Export / Import
