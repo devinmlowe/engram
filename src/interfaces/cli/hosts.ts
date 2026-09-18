@@ -437,11 +437,12 @@ export function upsertTomlTable(text: string | null, table: string, body: string
     let cursor = 0;
     let inserted = false;
     for (const r of regions) {
+      const replacing = !inserted && body !== null;
       let start = r.start;
-      // removing: also take one preceding blank line when the region sat between blank lines (or before EOF)
-      if (body === null && start > cursor && kept[start - 1].trim() === "" && (r.end >= kept.length || kept[r.end].trim() === "")) start--;
+      // removing (not replacing): also take one preceding blank line when the region sat between blank lines (or before EOF)
+      if (!replacing && start > cursor && kept[start - 1].trim() === "" && (r.end >= kept.length || kept[r.end].trim() === "")) start--;
       out.push(...kept.slice(cursor, start));
-      if (!inserted && body !== null) { out.push(...block); inserted = true; }
+      if (replacing) { out.push(...block); inserted = true; }
       cursor = r.end;
     }
     out.push(...kept.slice(cursor));
@@ -850,16 +851,21 @@ export async function runMcpInstall(opts: InstallOptions, deps: InstallDeps): Pr
   return results;
 }
 
+/** The restart half of `RESTART_HINT` (an uninstall has nothing to look for afterwards). */
+function restartOnly(id: HostId): string {
+  return RESTART_HINT[id].split(";")[0].replace(/ so they load the plugin$/, "");
+}
+
 export async function runMcpUninstall(id: HostId, scope: HostScope, deps: InstallDeps, dryRun = false): Promise<InstallResult> {
   const { ctx } = deps;
   const label = HOST_LABELS[id];
   if (id === "hermes") {
-    const targets = pluginDeployTargets(ctx.hermesHome).targets;
+    const targets = pluginDeployTargets(ctx.hermesHome).targets.filter((t) => existsSync(join(t, "plugin.yaml")));
     const base: InstallResult = { host: id, label, scope: "user", path: hostConfigPath("hermes", ctx, "user"), transport: null, reason: "", auth: null, action: "unchanged", backup: null, diff: "", notes: [] };
     if (!targets.length) return { ...base, notes: [`nothing deployed under ${tildify(ctx.hermesHome, ctx.home)}`] };
     if (dryRun) return { ...base, action: "dry-run", notes: targets.map((t) => `would remove ${tildify(t, ctx.home)}`) };
     const removed = removeHermesPlugin(ctx);
-    return { ...base, action: "written", notes: [...removed.map((t) => `removed ${tildify(t, ctx.home)}`), RESTART_HINT.hermes] };
+    return { ...base, action: "written", notes: [...removed.map((t) => `removed ${tildify(t, ctx.home)}`), restartOnly("hermes")] };
   }
   const path = hostConfigPath(id, ctx, scope);
   const base: InstallResult = { host: id, label, scope, path, transport: null, reason: "", auth: null, action: "unchanged", backup: null, diff: "", notes: [] };
@@ -868,7 +874,7 @@ export async function runMcpUninstall(id: HostId, scope: HostScope, deps: Instal
   if (!plan.changed) return { ...base, notes: [`${tildify(path, ctx.home)} has no ${SERVER_NAME} entry`] };
   if (dryRun) return { ...base, action: "dry-run", diff: plan.diff, notes: [`would edit ${tildify(path, ctx.home)}`] };
   const r = applyFilePlan(plan);
-  return { ...base, action: "written", backup: r.backup, diff: plan.diff, notes: [`removed ${SERVER_NAME} from ${tildify(path, ctx.home)} (previous content: ${tildify(r.backup!, ctx.home)})`, RESTART_HINT[id]] };
+  return { ...base, action: "written", backup: r.backup, diff: plan.diff, notes: [`removed ${SERVER_NAME} from ${tildify(path, ctx.home)} (previous content: ${tildify(r.backup!, ctx.home)})`, restartOnly(id)] };
 }
 
 export function formatInstallResults(results: InstallResult[]): string[] {

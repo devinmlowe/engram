@@ -16,6 +16,7 @@ import {
   MIN_NODE_MAJOR,
   PREBUILT_TARGETS,
   checkDataDir,
+  checkHosts,
   checkMcpDaemon,
   checkModelCache,
   checkNativeSqlite,
@@ -27,6 +28,7 @@ import {
   type DoctorReport,
 } from "../../../src/interfaces/cli/doctor.js";
 import { loadPreflight, type PrebuildProbe } from "../../../src/interfaces/cli/preflight.js";
+import { defaultHostContext } from "../../../src/interfaces/cli/hosts.js";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { loadConfig } from "../../../src/_core/config/index.js";
@@ -430,5 +432,24 @@ describe("mcp daemon check (issue #28)", () => {
     await expect(probeMcpHealth(port, 500)).rejects.toThrow();
     const dead = await checkMcpDaemon(port);
     expect(dead.level).toBe("warn");
+  });
+});
+
+describe("hosts check (issue #50)", () => {
+  it("is the last documented check, never required, and warns with the install hint on an empty home", async () => {
+    expect(DOCTOR_CHECK_NAMES.at(-1)).toBe("hosts");
+    const home = mkdtempSync(join(tmpdir(), "engram-doctor-hosts-"));
+    try {
+      const c = await checkHosts(defaultHostContext({ home, env: { HOME: home }, packageRoot: join(home, "pkg"), hermesHome: join(home, ".hermes") }));
+      expect(c.name).toBe("hosts");
+      expect(c.level).toBe("warn");
+      expect(c.required).toBe(false);
+      expect(c.detail).toContain("engram mcp install");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+    const live = report.checks.find((c) => c.name === "hosts")!;
+    expect(["ok", "warn"]).toContain(live.level);
+    expect(live.required).toBe(false);
   });
 });
