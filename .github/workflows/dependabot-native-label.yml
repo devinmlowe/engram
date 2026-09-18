@@ -1,0 +1,44 @@
+name: Label native-dependency bumps
+
+# Dependabot cannot label per group (labels apply to a whole update entry), so
+# this adds `native-dep` to any Dependabot PR that bumps a native module —
+# better-sqlite3, sqlite-vec, @xenova/transformers or onnxruntime-node — for
+# manual prebuild review (#63). CI's `preflight --strict --expect prebuilt`
+# is the automated gate; the label is the reminder to check the upstream
+# release assets before merging.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  label:
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - id: metadata
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Add native-dep when a native module is in the bump
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEPS: ${{ steps.metadata.outputs.dependency-names }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          # fetch-metadata joins names with ", "; normalise before matching.
+          DEPS=$(printf '%s' "$DEPS" | tr -d ' ')
+          case ",$DEPS," in
+            *,better-sqlite3,*|*,sqlite-vec,*|*,@xenova/transformers,*|*,onnxruntime-node,*)
+              echo "native module in [$DEPS] — labelling #$PR native-dep"
+              gh pr edit "$PR" --repo "$GITHUB_REPOSITORY" --add-label native-dep
+              ;;
+            *)
+              echo "no native module in [$DEPS]"
+              ;;
+          esac
