@@ -233,6 +233,8 @@ export async function runUpdate(plan: UpdatePlan, deps: UpdateDeps, opts: RunOpt
   // 0. persist the rollback plan before anything changes (#65). Everything
   //    the rollback needs is known now except the snapshot, filled in at step 3.
   const now = deps.now();
+  let applied: string[] = [];
+  try { applied = readDbSchemaVersion(srcDb).applied; } catch (err) { say(`  !! could not read the schema version of ${srcDb}: ${err instanceof Error ? err.message : String(err)}`); }
   const rb: RollbackPlan = {
     v: 1,
     stamp: planStamp(now),
@@ -246,7 +248,7 @@ export async function runUpdate(plan: UpdatePlan, deps: UpdateDeps, opts: RunOpt
     services: running,
     pluginTargets: plan.pluginTargets,
     pluginProfiles: plan.pluginProfiles,
-    schema: { version: SCHEMA_VERSION, applied: readDbSchemaVersion(srcDb).applied },
+    schema: { version: SCHEMA_VERSION, applied },
     snapshot: null,
     progress: "planned",
   };
