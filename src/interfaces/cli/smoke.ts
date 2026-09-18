@@ -113,7 +113,7 @@ interface FixtureFile {
 
 class SmokeTimeout extends Error {
   constructor(budgetMs: number) {
-    super(`timed out after ${Math.round(budgetMs / 1000)}s`);
+    super(`timed out after ${budgetMs >= 1000 ? `${Math.round(budgetMs / 1000)}s` : `${budgetMs}ms`}`);
     this.name = "SmokeTimeout";
   }
 }
@@ -209,13 +209,19 @@ export function tallyWritten(results: DeduplicationResult[]): SmokeWritten {
   return w;
 }
 
-function withBudget<T>(work: Promise<T>, budgetMs: number): Promise<T> {
+/**
+ * Race `work` against the budget. The losing extraction keeps running (the
+ * providers take no abort signal) but `expired` flips first, and the work
+ * checks it before it would write anything.
+ */
+function withBudget<T>(work: (budget: { expired: boolean }) => Promise<T>, budgetMs: number): Promise<T> {
+  const budget = { expired: false };
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new SmokeTimeout(budgetMs)), budgetMs);
+    timer = setTimeout(() => { budget.expired = true; reject(new SmokeTimeout(budgetMs)); }, budgetMs);
     timer.unref?.();
   });
-  return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
+  return Promise.race([work(budget), timeout]).finally(() => clearTimeout(timer));
 }
 
 async function defaultExtract(id: string, exchanges: ConversationExchange[], metadata: ConversationMetadata): Promise<ExtractionResult> {
@@ -231,8 +237,9 @@ async function defaultExtract(id: string, exchanges: ConversationExchange[], met
 }
 
 async function defaultConsolidate(db: Database.Database, facts: ExtractedFact[], id: string, options: ConsolidateOptions): Promise<DeduplicationResult[]> {
-  const { consolidateFacts, initConsolidator } = await import("../../semantic/consolidator.js");
-  await initConsolidator();
+  // No initConsolidator(): the tier that just extracted is reachable, and a
+  // conflict-resolution failure is reported per fact (#36), never thrown.
+  const { consolidateFacts } = await import("../../semantic/consolidator.js");
   return consolidateFacts(db, facts, id, options);
 }
 
@@ -279,9 +286,11 @@ export async function runExtractionSmoke(config: EngramConfig, deps: SmokeDeps =
   const where = src.kind === "conversation" ? `conversation ${src.id} (${src.exchanges.length} exchange${src.exchanges.length === 1 ? "" : "s"})` : "bundled fixture";
   try {
     const { result, written } = await withBudget(
-      (async () => {
+      async (budget) => {
         const result = await extract(src.id, src.exchanges, src.metadata);
         let written: SmokeWritten | null = null;
+        // Past the budget the verdict is already "timeout": never write late.
+        if (budget.expired) throw new SmokeTimeout(budgetMs);
         if (src.kind === "conversation" && db) {
           if (result.facts.length > 0) {
             await initEmbeddings(config);
@@ -291,7 +300,7 @@ export async function runExtractionSmoke(config: EngramConfig, deps: SmokeDeps =
           }
         }
         return { result, written };
-      })(),
+      },
       budgetMs,
     );
     const provider = providerOf(result);

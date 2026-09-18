@@ -98,6 +98,8 @@ export interface DoctorContext {
   packageRoot: string;
   /** Shell for `ollama pull`. */
   exec: Exec;
+  /** The Ollama `/api/tags` probe (default: the real one). */
+  ollamaProbe?: typeof resolveOllamaModel;
   /** Supervisor adapters for the `mcp daemon` fix (start an installed, stopped daemon). */
   services: ServiceDeps;
   /** Host configs for the `hosts` check and its `engram mcp install` fix. */
@@ -126,6 +128,7 @@ export function defaultDoctorContext(overrides: Partial<DoctorContext> = {}): Do
     platform,
     packageRoot,
     exec,
+    ollamaProbe: overrides.ollamaProbe,
     services: overrides.services ?? defaultServiceDeps({ platform: platform as ServicePlatform, exec, home, engramDir: packageRoot, env }),
     hosts: overrides.hosts ?? defaultHostContext({ home, env, platform, packageRoot }),
     hostProbe: overrides.hostProbe,
@@ -661,7 +664,7 @@ export async function runDoctor(
   const [betterSqlite, sqliteVec] = await checkNativeSqlite();
   const transformers = await checkTransformers();
   const modelCache = checkModelCache(describeModelCacheDir(config, ctx.env), { config, env: ctx.env, home: ctx.home, platform: ctx.platform, packageRoot: ctx.packageRoot });
-  const ollama = await checkOllama(config, { exec: ctx.exec });
+  const ollama = await checkOllama(config, { exec: ctx.exec, probe: ctx.ollamaProbe });
   const mcpDaemon = await checkMcpDaemon(ctx.mcpPort, ctx.mcpProbe, { services: ctx.services, startWaitMs: ctx.mcpStartWaitMs });
   const hosts = await checkHosts(ctx.hosts, { probe: ctx.hostProbe, exec: ctx.exec });
   const smoke = await checkSmoke(config, ctx.smoke, Boolean(opts.noSmoke));

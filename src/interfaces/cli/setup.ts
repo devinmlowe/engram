@@ -82,6 +82,8 @@ export interface SetupDeps {
   serviceStatus: (id: ServiceId) => Promise<ServiceStatus>;
   installService: (id: ServiceId) => Promise<ExecResult>;
   enableLinger: () => Promise<ExecResult>;
+  /** The doctor run (steps 1 and 6); a test seam for forcing a required failure. */
+  runDoctor: typeof runDoctor;
 }
 
 export type StepStatus = "ok" | "warn" | "skipped" | "fail";
@@ -139,6 +141,7 @@ export function defaultSetupDeps(overrides: Partial<SetupDeps> = {}): SetupDeps 
     serviceStatus: overrides.serviceStatus ?? ((id) => serviceStatus(id, services)),
     installService: overrides.installService ?? ((id) => installService(id, services)),
     enableLinger: overrides.enableLinger ?? (() => services.exec("loginctl", ["enable-linger", user])),
+    runDoctor: overrides.runDoctor ?? runDoctor,
     ...overrides,
   };
 }
@@ -192,7 +195,7 @@ export async function runSetup(opts: SetupOptions, deps: SetupDeps): Promise<Set
 
   // 1. doctor ────────────────────────────────────────────────────────
   header(1, "doctor", "engram doctor");
-  let report = await runDoctor(config, { noSmoke: true, ctx: dctx });
+  let report = await deps.runDoctor(config, { noSmoke: true, ctx: dctx });
   for (const l of formatDoctorReport(report)) log(`   ${l}`);
   const okCount = report.checks.filter((c) => c.level === "ok").length;
   if (!report.ok) {
@@ -343,7 +346,7 @@ export async function runSetup(opts: SetupOptions, deps: SetupDeps): Promise<Set
   // 6. doctor --fix ──────────────────────────────────────────────────
   header(6, "doctor --fix", "engram doctor --fix");
   try {
-    report = await runDoctor(config, { noSmoke: true, ctx: dctx });
+    report = await deps.runDoctor(config, { noSmoke: true, ctx: dctx });
     report = await applyDoctorFixes(report, { yes: opts.yes, confirm: deps.confirm });
     fixes = report.fixes ?? [];
     for (const l of formatFixResults(fixes)) log(`   ${l}`);
