@@ -73,7 +73,8 @@ export interface ProbeOptions {
 export interface PreflightModule {
   preflight(opts?: ProbeOptions): PreflightResult;
   toJson(result: PreflightResult): Omit<PreflightResult, "lines">;
-  probePrebuild(dep: string, opts?: ProbeOptions): PrebuildProbe;
+  /** `dep` is a NATIVE_DEPS name or an ad-hoc spec (tests exercise ABI-bound layouts that way). */
+  probePrebuild(dep: string | NativeDepSpec, opts?: ProbeOptions): PrebuildProbe;
   resolveTarget(opts?: ProbeOptions): PreflightTarget;
   describeStatus(status: PrebuildStatus): string;
   checkExpectations(result: PreflightResult, spec: string): string[];

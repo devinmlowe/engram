@@ -336,27 +336,26 @@ or `python3`.
 
 Engram depends on three native/prebuilt chains: `better-sqlite3`, `sqlite-vec` (alpha; ships
 platform packages only), and `onnxruntime-node` (pulled in by `@xenova/transformers`). Engram
-works where all three have prebuilt binaries for your `process.platform`, `process.arch`, libc
-(glibc vs musl on Linux) and — for `better-sqlite3` only — Node ABI (`process.versions.modules`).
+works where all three have prebuilt binaries for your `process.platform`, `process.arch` and libc
+(glibc vs musl on Linux); since `better-sqlite3` 13 every chain is N-API, so the Node major no
+longer matters as long as it is ≥ 22.
 The table is generated from `scripts/preflight.cjs`, the same table the preflight and `engram
 doctor` consult, and a test fails when the two drift:
 
 <!-- supported-platforms:start -->
-| Target | Machines | better-sqlite3 (Node 22 · 24 · 26) | sqlite-vec | onnxruntime-node | Engram |
+| Target | Machines | better-sqlite3 | sqlite-vec | onnxruntime-node | Engram |
 |---|---|---|---|---|---|
-| `darwin-arm64` | Apple silicon Macs | prebuilt · prebuilt · prebuilt | prebuilt | prebuilt | **supported** (CI: macos-latest) |
-| `darwin-x64` | Intel Macs | prebuilt · prebuilt · prebuilt | prebuilt | prebuilt | **supported** |
-| `linux-arm` | 32-bit ARM Linux (armv7: Raspberry Pi OS 32-bit, older SBCs) | prebuilt · prebuilt · prebuilt | — | — | **not supported** |
-| `linux-arm64` | 64-bit ARM Linux (glibc): Graviton, Raspberry Pi OS 64-bit, Apple-silicon VMs | prebuilt · prebuilt · prebuilt | prebuilt | prebuilt | **supported** (CI: ubuntu-24.04-arm) |
-| `linux-x64` | x86-64 Linux (glibc: Debian, Ubuntu, Fedora, …) | prebuilt · prebuilt · prebuilt | prebuilt | prebuilt | **supported** (CI: ubuntu-latest) |
-| `linuxmusl-arm` | 32-bit ARM Alpine / musl | prebuilt · prebuilt · prebuilt | — | — | **not supported** |
-| `linuxmusl-arm64` | 64-bit ARM Alpine / musl | prebuilt · prebuilt · prebuilt | — | — | **not supported** |
-| `linuxmusl-x64` | x86-64 Alpine / musl (`node:*-alpine` images) | prebuilt · prebuilt · prebuilt | — | — | **not supported** (CI: node:22-alpine container asserts this verdict) |
-| `win32-arm64` | Windows on ARM (Snapdragon, Apple-silicon VMs running Windows 11 ARM) | prebuilt · prebuilt · prebuilt | — | prebuilt | **not supported** (CI: windows-11-arm asserts this verdict) |
-| `win32-x64` | x86-64 Windows 10/11 | prebuilt · prebuilt · prebuilt | prebuilt | prebuilt | **supported** (CI: windows-latest, experimental) |
-| any other target | FreeBSD, 32-bit x86, … | compiles · compiles · compiles | — | — | **not supported** |
+| `darwin-arm64` | Apple silicon Macs | prebuilt | prebuilt | prebuilt | **supported** (CI: macos-latest) |
+| `darwin-x64` | Intel Macs | prebuilt | prebuilt | prebuilt | **supported** |
+| `linux-arm64` | 64-bit ARM Linux (glibc): Graviton, Raspberry Pi OS 64-bit, Apple-silicon VMs | prebuilt | prebuilt | prebuilt | **supported** (CI: ubuntu-24.04-arm) |
+| `linux-x64` | x86-64 Linux (glibc: Debian, Ubuntu, Fedora, …) | prebuilt | prebuilt | prebuilt | **supported** (CI: ubuntu-latest) |
+| `linuxmusl-arm64` | 64-bit ARM Alpine / musl | prebuilt | — | — | **not supported** |
+| `linuxmusl-x64` | x86-64 Alpine / musl (`node:*-alpine` images) | prebuilt | — | — | **not supported** (CI: node:22-alpine container asserts this verdict) |
+| `win32-arm64` | Windows on ARM (Snapdragon, Apple-silicon VMs running Windows 11 ARM) | prebuilt | — | prebuilt | **not supported** (CI: windows-11-arm asserts this verdict) |
+| `win32-x64` | x86-64 Windows 10/11 | prebuilt | prebuilt | prebuilt | **supported** (CI: windows-latest, experimental) |
+| any other target | FreeBSD, 32-bit x86, … | compiles | — | — | **not supported** |
 
-Node ABIs with prebuilts: better-sqlite3 node-v127/137/141/147 (Node 22, 24, 25, 26). Odd (non-LTS) majors — Node 23: better-sqlite3 compiles; Node 25: better-sqlite3 prebuilt. sqlite-vec and onnxruntime-node are Node-version independent. Generated from `scripts/preflight.cjs` by `node scripts/supported-platforms.cjs --write`; `--check` runs in the test suite.
+Every native dependency (better-sqlite3, sqlite-vec, onnxruntime-node) is N-API / Node-version independent: the same binaries serve every Node major ≥ 22, odd (non-LTS) majors included. Generated from `scripts/preflight.cjs` by `node scripts/supported-platforms.cjs --write`; `--check` runs in the test suite.
 <!-- supported-platforms:end -->
 
 Three things tell you where you stand:
@@ -387,15 +386,29 @@ Three things tell you where you stand:
 **Caveats: Windows on ARM, armv7 and Alpine/musl.** `sqlite-vec` publishes no binary for
 `win32-arm64` or `linux-arm` (armv7), and its Linux builds — like `onnxruntime-node`'s — are
 glibc-only (they need `ld-linux` and do not load on musl even with `gcompat`). `better-sqlite3`
-itself ships prebuilds for all of those, so `npm install` *succeeds* there and `engram init` then
-fails on the sqlite-vec load; the preflight reports `[FAIL] sqlite-vec: unsupported` up front. On
-Windows on ARM the practical workaround is to install the **x64** Node.js build: Windows 11 runs
-it under emulation and the `win32-x64` prebuilts load (slower, not covered by CI). On armv7 boards,
-use a 64-bit OS image (`linux-arm64`). On Alpine, use a glibc image (`node:22-bookworm-slim`).
+itself ships prebuilds for `win32-arm64` and musl (13.x dropped its 32-bit `linux-arm` ones, so
+armv7 compiles it from source), so `npm install` *succeeds* there and `engram init` then fails on
+the sqlite-vec load; the preflight reports `[FAIL] sqlite-vec: unsupported` up front. On Windows
+on ARM the practical workaround is to install the **x64** Node.js build: Windows 11 runs it under
+emulation and the `win32-x64` prebuilts load (slower, not covered by CI). On armv7 boards, use a
+64-bit OS image (`linux-arm64`). On Alpine, use a glibc image (`node:22-bookworm-slim`).
 
-**Toolchain needed elsewhere.** On a target `better-sqlite3` has no prebuild for (a Node major
-outside 22/24/25/26 with the pinned `^12.11.1`, or a platform not in the table), `npm install`
-compiles it from source with node-gyp, which needs a C++ toolchain and Python 3:
+**npm 10 still runs node-gyp for `better-sqlite3` 13.** The package bundles its binaries, but the
+lockfile does not carry its `gypfile: false`, so npm 10 (Node 22's bundled npm) runs the implicit
+`node-gyp rebuild` at install anyway. `binding.gyp` compiles nothing when a bundled prebuild
+matches, yet `node-gyp configure` still needs Python 3 and the Node headers — downloaded from
+nodejs.org once per Node version (cached under `~/.cache/node-gyp`), so an offline or proxied
+install can fail on a prebuilt target. **On Windows this makes Node 22 installs need a
+node-gyp-recognised Visual Studio (2019/2022 Build Tools with the C++ workload) plus Python 3**,
+because `node-gyp configure` fails with `could not find a version of Visual Studio 2017 or newer`
+before it ever reads binding.gyp — CI's `windows-latest, node 22` job shows exactly that. npm 11
+(Node 24, or `npm install -g npm@11` on Node 22) skips the script instead, so that is the simplest
+workaround. The preflight reports `[ok] better-sqlite3: prebuilt — prebuilds/<target>.node is
+bundled in the package` either way.
+
+**Toolchain needed elsewhere.** On a target `better-sqlite3` bundles no prebuild for (a platform
+not in the table, such as armv7 or FreeBSD), `npm install` compiles it from source with node-gyp,
+which needs a C++ toolchain and Python 3:
 
 - Windows: Visual Studio 2022 **Build Tools** with the "Desktop development with C++" workload
   (MSVC compiler + Windows SDK) and Python 3. node-gyp finds them automatically; if it picks the

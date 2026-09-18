@@ -97,11 +97,15 @@ function render() {
     .sort((a, b) => a - b)
     .map((m) => `Node ${m}: ${NATIVE_DEPS.filter((d) => d.abis).map((d) => `${d.name} ${d.abis.includes(abiOf(m)) ? "prebuilt" : "compiles"}`).join(", ")}`);
   const abiDeps = NATIVE_DEPS.filter((d) => d.abis);
+  const independent = NATIVE_DEPS.filter((d) => !d.abis).map((d) => d.name);
+  const nodeNote = abiDeps.length
+    ? `Node ABIs with prebuilts: ${abiDeps.map((d) => `${d.name} node-v${d.abis.join("/")} (Node ${d.abis.map((a) => NODE_ABI_MAJORS[a]).join(", ")})`).join("; ")}. ` +
+      `Odd (non-LTS) majors — ${odd.join("; ")}. ` +
+      `${independent.join(" and ")} are Node-version independent. `
+    : `Every native dependency (${independent.join(", ")}) is N-API / Node-version independent: the same binaries serve every Node major ≥ ${MIN_NODE_MAJOR}, odd (non-LTS) majors included. `;
   lines.push("");
   lines.push(
-    `Node ABIs with prebuilts: ${abiDeps.map((d) => `${d.name} node-v${d.abis.join("/")} (Node ${d.abis.map((a) => NODE_ABI_MAJORS[a]).join(", ")})`).join("; ")}. ` +
-      `Odd (non-LTS) majors — ${odd.join("; ")}. ` +
-      `${NATIVE_DEPS.filter((d) => !d.abis).map((d) => d.name).join(" and ")} are Node-version independent. ` +
+    nodeNote +
       "Generated from `scripts/preflight.cjs` by `node scripts/supported-platforms.cjs --write`; `--check` runs in the test suite.",
   );
   return lines.join("\n");

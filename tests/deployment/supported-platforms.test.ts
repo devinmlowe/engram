@@ -29,13 +29,18 @@ describe("README supported-platforms table", () => {
     const majors = gen.documentedMajors();
     expect(majors).toContain(22);
     expect(majors).toContain(24);
-    expect(table).toContain(`better-sqlite3 (Node ${majors.join(" · ")})`);
-    for (const target of ["darwin-arm64", "linux-x64", "linuxmusl-x64", "win32-arm64", "linux-arm"]) {
+    // better-sqlite3 13 is N-API: no per-Node-major columns for any dependency any more.
+    expect(table).toMatch(/^\| Target \| Machines \| better-sqlite3 \| sqlite-vec \| onnxruntime-node \| Engram \|$/m);
+    expect(table).not.toContain("(Node ");
+    expect(table).toMatch(/Node-version independent/);
+    for (const target of ["darwin-arm64", "linux-x64", "linuxmusl-x64", "win32-arm64"]) {
       expect(table).toMatch(new RegExp(`^\\| \`${target}\` \\|`, "m"));
     }
     expect(table).toMatch(/^\| any other target \|.*\*\*not supported\*\*/m);
     expect(table).toMatch(/^\| `linuxmusl-x64` \|.*\*\*not supported\*\*/m);
     expect(table).toMatch(/^\| `darwin-arm64` \|.*\*\*supported\*\*/m);
+    // armv7 lost its better-sqlite3 prebuild in 13.x: no row of its own, the catch-all covers it
+    expect(table).not.toMatch(/^\| `linux-arm` \|/m);
   });
 
   it("reports drift instead of passing silently", () => {
