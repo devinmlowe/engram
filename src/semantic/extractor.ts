@@ -25,6 +25,7 @@ import {
   setClient as setIntelligenceClient,
   type GenerationResult,
   type IntelligenceConfig,
+  type LlmProvider,
 } from "../_core/llm/index.js";
 import { loadConfig } from "../_core/config/index.js";
 import type {
@@ -423,7 +424,7 @@ export function cascadeTierOf(
 async function callExtraction(
   prompt: string,
   plan: TierPlan,
-): Promise<{ facts: ExtractedFact[]; model: string; tier: ExtractionTier }> {
+): Promise<{ facts: ExtractedFact[]; model: string; tier: ExtractionTier; provider?: LlmProvider }> {
   const result = await generateStructured<{ facts?: unknown[] }>(
     EXTRACTION_SYSTEM_PROMPT,
     prompt,
@@ -440,6 +441,7 @@ async function callExtraction(
     facts: parseExtractionResponse({ facts: result.result.facts }),
     model: result.model,
     tier: plan.pinnedTier ?? cascadeTierOf(result, plan.config),
+    provider: result.provider,
   };
 }
 
@@ -561,6 +563,7 @@ export async function extractFromConversation(
   let allFacts: ExtractedFact[] = [];
   let usedModel = plan.config.apiModel;
   let usedTier: ExtractionTier = "haiku";
+  let usedProvider: LlmProvider | undefined;
 
   for (const chunk of chunks) {
     const prompt = buildExtractionPrompt(chunk, metadata);
@@ -572,6 +575,7 @@ export async function extractFromConversation(
       allFacts.push(...result.facts);
       usedModel = result.model;
       usedTier = result.tier;
+      usedProvider = result.provider;
     } catch (err) {
       throw new Error(
         `All extraction tiers failed for conversation ${conversationId}: ${err instanceof Error ? err.message : String(err)}`,
@@ -608,6 +612,7 @@ export async function extractFromConversation(
     facts: allFacts,
     model: usedModel,
     tier: usedTier,
+    provider: usedProvider,
     confidence: allFacts.length > 0 ? 7 : 1,
     durationMs,
     chunkBoundaries,

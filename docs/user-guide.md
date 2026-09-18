@@ -55,6 +55,18 @@ npx -y @devinmlowe/engram mcp
 
 ## First-Time Setup
 
+**One command:** `engram setup` runs every step below in order — doctor, init, sync (asked),
+host registration, the three services, `doctor --fix`, one real extraction — printing what it
+did and the manual equivalent of each, and ends with a summary and next steps. `--yes` runs it
+unattended (the Linux `loginctl enable-linger` question is the one thing it never answers for
+you); `--no-daemons` / `--daemons=mcp,dream`, `--host claude`, `--no-sync` / `--sync`, `--no-smoke`
+and `--json` narrow it. With no LLM provider configured it still installs the nightly dream
+timer and ends with `[warn] dream timer installed but no LLM tier is reachable …` naming the
+variables to set. Afterwards, whenever something is red, `engram doctor --fix` repairs what it
+knows how to (service env file, model cache location, a missing Ollama model — asked first — a
+stopped MCP daemon, an unregistered host) and prints the manual command for each; a second run
+says `nothing to fix`. The steps by hand:
+
 ### 1. Initialize the Database
 
 ```bash
@@ -85,9 +97,16 @@ Scans `~/.claude/projects/` for conversation files, parses exchanges, generates 
 
 ```bash
 engram health
+engram doctor
 ```
 
-Checks database status, embedding model availability, Ollama (optional), and MCP server readiness.
+`health` checks database status, embedding model availability, Ollama (optional), and MCP server
+readiness. `doctor` adds the runtime checks (node, native modules, model cache, LLM providers,
+data dir, service env file, install path, MCP daemon, registered hosts) and ends with an
+`extraction smoke` line — one real extraction over your most recent conversation (or a bundled
+fixture) under a 60 s budget, reporting `tier=ollama memories=3` or every tier's reason when
+none answers. Its memories are stored like any other, stamped `source=smoke`, so `forget` can
+remove them; `--no-smoke` skips it and `--strict` exits 1 on any non-`[ok]` line.
 
 ---
 

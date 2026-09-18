@@ -59,8 +59,11 @@ beforeAll(async () => {
     savedCacheEnv[key] = process.env[key];
     delete process.env[key];
   }
+  // No smoke here: this suite pins the report's shape, and a real extraction
+  // would talk to whatever LLM tier this machine has and write to its store.
   report = await runDoctor(
     loadConfig({ modelCacheDir: join(tmpRoot, "models") }),
+    { noSmoke: true },
   );
 });
 
@@ -303,10 +306,12 @@ describe("engram doctor CLI", () => {
   );
   const built = existsSync(cli);
 
+  // --no-smoke and a temp data dir: the built CLI must never extract against
+  // (or write to) the developer's real store from a test.
   function run(...args: string[]): string {
-    return execFileSync(process.execPath, [cli, "doctor", ...args], {
+    return execFileSync(process.execPath, [cli, "doctor", "--no-smoke", ...args], {
       encoding: "utf8",
-      env: { ...process.env, ENGRAM_MODEL_CACHE_DIR: join(tmpRoot, "cli-cache") },
+      env: { ...process.env, ENGRAM_MODEL_CACHE_DIR: join(tmpRoot, "cli-cache"), ENGRAM_DATA_DIR: join(tmpRoot, "cli-data") },
     });
   }
 
@@ -326,6 +331,14 @@ describe("engram doctor CLI", () => {
     const parsed = JSON.parse(run("--json")) as DoctorReport;
     expect(parsed.checks.map((c) => c.name)).toEqual([...DOCTOR_CHECK_NAMES]);
     expect(parsed.platform).toBe(`${process.platform}-${process.arch}`);
+    expect(parsed.smoke?.status).toBe("skipped");
+    expect(parsed.checks.find((c) => c.name === "extraction smoke")!.detail).toBe("skipped (--no-smoke)");
+  }, CLI_TIMEOUT_MS);
+
+  it.skipIf(!built)("--strict exits 1 when any check is not [ok] (the skipped smoke is one)", () => {
+    let status = 0;
+    try { run("--strict"); } catch (err) { status = (err as { status: number }).status; }
+    expect(status).toBe(1);
   }, CLI_TIMEOUT_MS);
 });
 
@@ -436,8 +449,11 @@ describe("mcp daemon check (issue #28)", () => {
 });
 
 describe("hosts check (issue #50)", () => {
-  it("is the last documented check, never required, and warns with the install hint on an empty home", async () => {
-    expect(DOCTOR_CHECK_NAMES.at(-1)).toBe("hosts");
+  it("sits right before the extraction smoke, never required, and warns with the install hint on an empty home", async () => {
+    expect(DOCTOR_CHECK_NAMES.at(-2)).toBe("hosts");
+    expect(DOCTOR_CHECK_NAMES.at(-1)).toBe("extraction smoke");
+    // #61: `env file` follows `data dir`
+    expect(DOCTOR_CHECK_NAMES[DOCTOR_CHECK_NAMES.indexOf("data dir") + 1]).toBe("env file");
     const home = mkdtempSync(join(tmpdir(), "engram-doctor-hosts-"));
     try {
       const c = await checkHosts(defaultHostContext({ home, env: { HOME: home }, packageRoot: join(home, "pkg"), hermesHome: join(home, ".hermes") }));

@@ -21,10 +21,12 @@ LLM prompt templates used by the dream pipeline and semantic extraction layer. T
 - [resolve-conflict.md](./resolve-conflict.md) — Contradiction resolution between memories
 - [reflect.md](./reflect.md) — Higher-order pattern and observation generation
 - [summarize.md](./summarize.md) — Conversation summarization
+- [smoke-conversation.json](./smoke-conversation.json) — The bundled 3-exchange conversation the `extraction smoke` doctor check extracts when no conversation is indexed yet (#61); its facts are never written to the store
 
 ## See Also
 
 - [src/semantic/extractor.ts](../src/semantic/extractor.ts) — Uses extract-facts, calls LLM with these templates
+- [src/interfaces/cli/smoke.ts](../src/interfaces/cli/smoke.ts) — Loads smoke-conversation.json for `engram doctor` / `engram setup`
 - [src/semantic/commitments.ts](../src/semantic/commitments.ts) — Uses extract-commitments (dream commitments pass)
 - [src/graph/extractor.ts](../src/graph/extractor.ts) — Uses extract-entities and extract-relationships
 - [src/graph/reflection.ts](../src/graph/reflection.ts) — Uses reflect template

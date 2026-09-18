@@ -1,0 +1,23 @@
+{
+  "$comment": "Bundled conversation for the `extraction smoke` doctor check (#61). Used only when the database holds no ingested conversation; its facts are never written to the store.",
+  "id": "smoke-fixture",
+  "project": "engram-smoke",
+  "dateRange": "2026-09-17 to 2026-09-17",
+  "exchanges": [
+    {
+      "index": 0,
+      "userMessage": "We need to pick a storage engine for the memory store. It has to work offline on a laptop, and I don't want to run a database server.",
+      "assistantMessage": "Then SQLite is the natural fit: a single file, no server, and with the sqlite-vec extension it can do vector search in-process. I'd enable WAL mode so the MCP server and the nightly consolidation job can read and write concurrently without blocking each other."
+    },
+    {
+      "index": 1,
+      "userMessage": "Agreed — we decided on SQLite with WAL mode and sqlite-vec. One rule: memories must never be hard-deleted right away; I want a 30-day retention window so a wrong `forget` can be undone.",
+      "assistantMessage": "Understood. `forget` will soft-delete (is_active = 0, deleted_at stamped) and drop the vector and full-text rows immediately so the memory leaves every recall path, while the nightly prune hard-deletes only rows older than the retention window. The window is configurable with ENGRAM_FORGET_RETENTION_DAYS, defaulting to 30."
+    },
+    {
+      "index": 2,
+      "userMessage": "Good. Also, I prefer local inference: extraction should try Ollama with qwen2.5:7b first and only fall back to a cloud model when the local one is unavailable.",
+      "assistantMessage": "That is how the cascade is ordered: Ollama first, then the configured OpenAI-compatible, OpenRouter and Anthropic tiers in that order. When every tier fails the error names each tier's reason so a misconfigured key is visible instead of a silent empty extraction."
+    }
+  ]
+}

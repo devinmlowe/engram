@@ -623,7 +623,9 @@ describe("engram mcp status", () => {
 describe("doctor hosts check (#50)", () => {
   it("is [--] with the install hint when nothing is registered, [ok] once a host points at this install, never required", async () => {
     expect(DOCTOR_CHECK_NAMES).toContain("hosts");
-    expect(DOCTOR_CHECK_NAMES.at(-1)).toBe("hosts");
+    // #61 put `extraction smoke` after it
+    expect(DOCTOR_CHECK_NAMES.at(-2)).toBe("hosts");
+    expect(DOCTOR_CHECK_NAMES.at(-1)).toBe("extraction smoke");
     const c = ctx();
     const none = await checkHosts(c);
     expect(none).toEqual({ name: "hosts", level: "warn", required: false, detail: "no host registered — engram mcp install claude|codex|cursor|hermes (or --all)" });
