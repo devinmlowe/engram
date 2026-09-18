@@ -256,7 +256,13 @@ export async function runUpdate(plan: UpdatePlan, deps: UpdateDeps, opts: RunOpt
   for (const gone of pruneRollbackPlans(plan.dataDir.effective)) say(`  pruned old plan ${gone}`);
 
   // 1. stop writers
-  const stopped = await stopServicesInOrder(running, sdeps, say);
+  let stopped: Awaited<ReturnType<typeof stopServicesInOrder>>;
+  try {
+    stopped = await stopServicesInOrder(running, sdeps, say);
+  } catch (err) {
+    say(`  !! ${err instanceof Error ? err.message : String(err)}`);
+    stopped = { ok: false, failed: null };
+  }
   if (!stopped.ok) { say("  aborting before anything changed"); progress("failed:stop"); return { ok: false, lines, planFile }; }
   progress("stopped");
 
