@@ -35,7 +35,7 @@ jobs:
             verdict: unsupported
     continue-on-error: ${{ matrix.experimental == true }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Where the tests' model downloads land; see "Cache transformer model
       # downloads". Set from a step because the `runner` context is not
@@ -125,7 +125,7 @@ jobs:
     env:
       CI: "true"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v4
         with:
@@ -168,7 +168,7 @@ jobs:
       # instead of aborting npm ci (the preflight then reports `compiled locally`).
       - run: apk add --no-cache build-base python3 git
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - run: npm ci
 
