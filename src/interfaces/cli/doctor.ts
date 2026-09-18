@@ -18,6 +18,7 @@ import type { EngramConfig } from "../../_core/types/index.js";
 import { modelCacheSourceLabel } from "./data-migration.js";
 import { MIN_NODE_MAJOR, PREBUILT_TARGETS, describePrebuild, loadPreflight, type PrebuildProbe } from "./preflight.js";
 import { parseMcpPort, probeMcpHealth, type McpHealthProbe } from "../mcp/port.js";
+import { summariseHostsForDoctor, type HostContext } from "./hosts.js";
 
 export type DoctorLevel = "ok" | "warn" | "fail";
 
@@ -33,6 +34,7 @@ export const DOCTOR_CHECK_NAMES = [
   "llm providers",
   "data dir",
   "mcp daemon",
+  "hosts",
 ] as const;
 export type DoctorCheckName = (typeof DOCTOR_CHECK_NAMES)[number];
 
@@ -384,6 +386,22 @@ export async function checkMcpDaemon(
   }
 }
 
+/**
+ * Which MCP hosts are registered with this install (#50): `~/.claude.json`
+ * or the Claude Code plugin, `~/.codex/config.toml`, `~/.cursor/mcp.json`,
+ * the deployed Hermes plugin. Reads files only (no probes); never required —
+ * `[--]` with the `engram mcp install` hint when nothing points here.
+ */
+export async function checkHosts(ctx?: HostContext): Promise<DoctorCheck> {
+  const name = "hosts";
+  try {
+    const { ok, detail } = await summariseHostsForDoctor(ctx);
+    return { name, level: ok ? "ok" : "warn", required: false, detail };
+  } catch (err) {
+    return { name, level: "warn", required: false, detail: `could not read host configs: ${errMsg(err)}` };
+  }
+}
+
 /** Run every probe. Never throws; failures are reported as checks. */
 export async function runDoctor(
   config: EngramConfig = loadConfig(),
@@ -393,6 +411,7 @@ export async function runDoctor(
   const modelCache = checkModelCache(describeModelCacheDir(config));
   const ollama = await checkOllama(config);
   const mcpDaemon = await checkMcpDaemon();
+  const hosts = await checkHosts();
   const checks: DoctorCheck[] = [
     checkNode(),
     checkPlatform(),
@@ -404,6 +423,7 @@ export async function runDoctor(
     checkLlmProviders(config),
     checkDataDir(config),
     mcpDaemon,
+    hosts,
   ];
   return {
     node: process.version,

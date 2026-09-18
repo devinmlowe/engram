@@ -23,12 +23,25 @@ Designed as an MCP server for Claude Code and other LLM agents, with CLI and web
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) if you want `engram sync` to ingest your conversation history from `~/.claude/projects`
 - At least one LLM provider for extraction and dream consolidation (see [Configuration](#configuration)). Search, `remember`, and the web visualizer work without one.
 
-**From npm**
+**From npm — three commands**
 
 ```bash
 npx @devinmlowe/engram preflight    # is this node/platform/arch/libc covered by prebuilt native modules? (fix per OS if not)
 npm install -g @devinmlowe/engram   # puts `engram` on your PATH; the postinstall hook runs the same preflight
+engram mcp install claude           # registers engram with Claude Code (codex | cursor | hermes | --all); restart the host
 ```
+
+`engram mcp install <host>` edits the host's own config for you — `~/.claude.json`
+(`--project`: `.mcp.json`), `~/.codex/config.toml`, `~/.cursor/mcp.json`, or deploys the
+Hermes plugin — atomically, with the previous content kept in `<file>.bak`, never touching
+other servers, and re-running is a no-op. It prefers the HTTP daemon
+(`http://127.0.0.1:9907/mcp`) when `GET /health` answers and falls back to stdio
+(`node …/dist/interfaces/cli/index.js mcp`, which bridges to the daemon itself once one runs),
+printing which and why; `--transport http|stdio` overrides, `--dry-run` shows the path and diff.
+A daemon token is referenced as an environment variable (`${ENGRAM_MCP_TOKEN}` /
+`bearer_token_env_var` / `${env:ENGRAM_MCP_TOKEN}`), never written; `engram mcp status` reports
+every host, whether it points at this install, whether its daemon answers and whether the
+variable resolves. See [Registering hosts](#registering-hosts-engram-mcp-install) below.
 
 **From source**
 
@@ -44,10 +57,11 @@ Either way, continue with:
 
 ```bash
 engram preflight     # prebuilt / compiled locally / unsupported per native module, with the fix for this OS
-engram doctor        # node version, platform/arch, native modules, model cache, ollama tier, data dir, mcp daemon — all [ok]?
+engram doctor        # node version, platform/arch, native modules, model cache, ollama tier, data dir, mcp daemon, hosts — all [ok]?
 engram init          # creates engram.db in the data dir (default ~/.local/share/engram; see Configuration) and downloads the embedding model
 engram sync          # index conversations from ~/.claude/projects (optional)
 engram search "what did I decide about caching"
+engram mcp install --all   # from a checkout: register every host present (~/.claude, ~/.codex, ~/.cursor, ~/.hermes)
 ```
 
 > **First run downloads models once.** `engram init` (or the first search) pulls several hundred
@@ -82,7 +96,28 @@ handling the CLI, daemons and the Hermes plugin.
 > (`scripts/install-mcp-daemon.sh install`, below) — `engram mcp` then bridges to it and the host
 > process never opens the database or loads the model (see [Transports](#transports-stdio-default-and-http)).
 
-**Use it from Claude Code without the plugin (manual MCP config)**
+**Registering hosts (`engram mcp install`)**
+
+```bash
+engram mcp install claude            # ~/.claude.json  (--project: ./.mcp.json)
+engram mcp install codex             # ~/.codex/config.toml  (--project: ./.codex/config.toml)
+engram mcp install cursor            # ~/.cursor/mcp.json  (--project: ./.cursor/mcp.json)
+engram mcp install hermes            # deploys interfaces/hermes-plugin to ~/.hermes (+ profiles that already have it)
+engram mcp install --all --dry-run   # every host whose config dir exists; print path + unified diff, write nothing
+engram mcp status                    # registered? this install? daemon answering? ENGRAM_MCP_TOKEN resolving?
+engram mcp uninstall codex           # removes only the engram entry; <file>.bak keeps the previous content
+```
+
+Decisions: HTTP when the daemon answers `/health`, else stdio (#51); the token is referenced by
+environment variable and never written unless you pass `--inline-token` (#52). With the Claude
+Code plugin installed, `mcp install claude` skips the user-scope entry (it would register the
+server twice) unless `--force`; `mcp status` lists the plugin as a registered Claude host. A
+GUI-launched host does not inherit a fish/zsh login shell, so when the daemon requires a token
+`mcp status` prints the platform fix (`launchctl setenv ENGRAM_MCP_TOKEN …` on macOS,
+`~/.config/environment.d/` on Linux, `setx` on Windows). No host process is restarted, and the
+command needs no network beyond the loopback probe.
+
+**Manual configuration (if you would rather edit the file yourself)**
 
 Add the server to your Claude Code MCP config (`~/.claude.json`, or a project-level `.mcp.json`).
 From npm:
@@ -417,6 +452,9 @@ HTTP mode exposes `POST /mcp` (one MCP session per client, routed by the
 { "mcpServers": { "engram": { "type": "http", "url": "http://127.0.0.1:9907/mcp" } } }
 ```
 
+(`engram mcp install <host>` writes exactly this when the daemon answers `/health`, plus the
+token header reference when one is configured.)
+
 In HTTP mode every tool call runs on a `node:worker_threads` pool, so a
 multi-second `recall` never blocks `/health`, the handshake, or other clients.
 Each worker owns its own SQLite connection and embedding model. Stdio mode
@@ -455,8 +493,11 @@ anyone who can reach `127.0.0.1` (other local users, a reverse proxy) has full r
 to the memory store. Set `ENGRAM_MCP_TOKEN` (in `~/.config/engram/env` for the supervised daemon)
 to require a bearer token; Streamable-HTTP clients send it as a header, e.g.
 `{ "type": "http", "url": "http://127.0.0.1:9907/mcp", "headers": { "Authorization": "Bearer <token>" } }`,
-and the Hermes plugin reads it from `token` in `engram.json`. The token is compared in constant
-time and never logged. The visualizer uses `ENGRAM_WEB_TOKEN` (falling back to `ENGRAM_MCP_TOKEN`);
+and the Hermes plugin reads it from `token` in `engram.json`. `engram mcp install` never writes
+the literal: it references the variable (`Bearer ${ENGRAM_MCP_TOKEN}` for Claude Code,
+`bearer_token_env_var` for Codex, `Bearer ${env:ENGRAM_MCP_TOKEN}` for Cursor) so the secret
+stays in `~/.config/engram/env` — `engram mcp status` tells you when the host's environment does
+not resolve it. The token is compared in constant time and never logged. The visualizer uses `ENGRAM_WEB_TOKEN` (falling back to `ENGRAM_MCP_TOKEN`);
 see [Web Visualization](#web-visualization).
 
 See the "MCP Server Transports" section of [CLAUDE.md](CLAUDE.md) for the
@@ -464,6 +505,10 @@ worker-pool internals (`worker-pool.ts`, `dispatch.ts`, `worker.ts`).
 
 ### Integrating other agents (Codex CLI, Cursor, custom hosts)
 
+`engram mcp install codex` / `cursor` registers the MCP tools (see
+[Registering hosts](#registering-hosts-engram-mcp-install)); `engram mcp install codex &&
+engram mcp install cursor` gives both hosts one `engram.db`, so a `remember` from Codex is
+`recall`-able from Cursor. For auto-recall hooks and instruction blocks,
 [docs/integrate-your-agent.md](docs/integrate-your-agent.md) is written to be
 handed to an AI agent running in the host you want to connect. It states the
 public contract (endpoints, handshake, tools, scoping) and the three behaviors
@@ -558,7 +603,7 @@ stopped and started by hand, or replaced with `install-mcp-daemon.sh install`.
 Verify after restarting:
 
 ```bash
-engram doctor      # node, native modules, model cache, ollama tier, effective data dir, mcp daemon /health
+engram doctor      # node, native modules, model cache, ollama tier, effective data dir, mcp daemon /health, registered hosts
 engram health      # database, embedding model, MCP entry point
 engram stats       # counts must match the pre-update numbers
 engram search "smoke test"   # end-to-end recall through the new build
@@ -658,7 +703,7 @@ engram entities        # List/search entities
 engram relationships   # Show relationships for an entity
 engram stats           # Database statistics (--json: the row counts `engram update` compares before/after)
 engram health          # System health check (database, model, Ollama, MCP entry point)
-engram doctor          # Runtime diagnostics: node, platform/arch, better-sqlite3, sqlite-vec, model cache, ollama tier, data dir, mcp daemon (--json)
+engram doctor          # Runtime diagnostics: node, platform/arch, better-sqlite3, sqlite-vec, model cache, ollama tier, data dir, mcp daemon, hosts (--json)
 engram update          # Controlled self-update: backup, stop services, pull/npm install, migrate, restart, verify (--check, --plan, --yes, --no-backup)
 engram migrate [topic] # Install/data migration: data-dir | model-cache | schema | all; idempotent, --dry-run lists every action
 engram import-legacy --source <db>   # Import a legacy conversation-index SQLite DB (was `engram migrate --source`; the old spelling still forwards)
@@ -671,6 +716,9 @@ engram commitments-extract <conv>  # Re-scan one conversation (no checkpoint; pr
 engram export [--out f] [--scope s...] [--include-inactive] [--kinds ...]  # JSONL v1 of memories/entities/relationships/commitments (no embeddings)
 engram import <file> [--scope override] [--dry-run]  # Idempotent by id (newer wins); vectors + FTS regenerated from content
 engram mcp             # Start the MCP server (stdio; see Transports section)
+engram mcp install <host> [--all] [--project] [--transport http|stdio] [--dry-run] [--force] [--inline-token] [--json]  # Register with claude | codex | cursor | hermes
+engram mcp uninstall <host> [--project]   # Remove the engram entry (previous content in <file>.bak)
+engram mcp status [--json]                # Every host: registered, this install?, daemon /health, ENGRAM_MCP_TOKEN resolves?
 ```
 
 ## Web Visualization

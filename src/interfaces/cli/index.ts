@@ -6,6 +6,7 @@ import { getDatabase, closeDatabase } from "../../_core/db/index.js";
 import { ENGRAM_VERSION } from "../../_core/version/index.js";
 import { loadPreflight } from "./preflight.js";
 import { registerMemoriesCommand } from "./memories.js";
+import { registerMcpHostCommands } from "./hosts-command.js";
 
 const program = new Command();
 
@@ -1094,9 +1095,13 @@ program
 
 // ─── mcp ──────────────────────────────────────────────────────────
 
-program
+// Bare `engram mcp` is the server (stdio bridge/inline, or --http); the
+// `install` / `uninstall` / `status` subcommands (#50) register this install
+// with MCP hosts. Commander runs the parent action only when no subcommand
+// matched, so the plugin's `engram mcp` keeps working unchanged.
+const mcpCommand = program
   .command("mcp")
-  .description("Start the MCP server (stdio; bridges to the HTTP daemon when one is healthy, --standalone forces inline)")
+  .description("Start the MCP server (stdio; bridges to the HTTP daemon when one is healthy, --standalone forces inline). Subcommands: install <host>, uninstall <host>, status")
   .option("--standalone", "never bridge: run the full server in this process even if the daemon is up (also ENGRAM_MCP_STANDALONE=1)")
   .option("--http", "serve Streamable HTTP with the worker pool instead of stdio")
   .option("--port <port>", "daemon port: the HTTP listen port with --http, else the port to bridge to (default ENGRAM_MCP_PORT or 9907)")
@@ -1123,6 +1128,8 @@ program
       },
     });
   });
+
+registerMcpHostCommands(mcpCommand);
 
 // ─── health ───────────────────────────────────────────────────────
 
