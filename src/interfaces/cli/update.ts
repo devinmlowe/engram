@@ -12,20 +12,34 @@
  * The process running this command is the OLD build. Everything after the
  * code swap (schema migrations, doctor, stats) therefore runs the NEW build in
  * a child process, never via a lazy import of a module that just changed.
+ *
+ * Before anything changes the run persists a rollback plan (#65) at
+ * `<data dir>/updates/<stamp>.json` and advances its `progress` marker at
+ * every step; `engram update --rollback` (rollback.ts) replays it. When a
+ * step after the code swap fails, the run offers the rollback (`--yes`
+ * performs it; a terminal is asked; otherwise the command is printed).
  */
-import { cpSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import Database from "better-sqlite3";
+import { SCHEMA_VERSION } from "../../_core/db/schema.js";
 import type { EngramConfig } from "../../_core/types/index.js";
 import { compareSemver, detectInstall, latestAvailable, type AvailableVersion, type InstallInfo } from "./install-kind.js";
 import {
   applyDataDirPlan, applyModelCachePlan, modelCacheSourceLabel, planDataDir, planModelCache, type DataDirPlan, type ModelCachePlan,
 } from "./data-migration.js";
+import { defaultInstallPathContext, installPathReport, type InstallPathContext } from "./install-path.js";
 import {
-  listServices, portFor, startService, stopService, waitForPort, START_ORDER, STOP_ORDER,
-  type ServiceDeps, type ServiceStatus,
-} from "./services.js";
-import { snapshotCounts, snapshotRegressions, formatSnapshot, type CountSnapshot } from "./snapshot.js";
+  MODEL_CACHE_BACKUP_NOTE, backupDataDir, checkpointWal, manualRollbackSteps, planStamp, pruneRollbackPlans, readDbSchemaVersion,
+  restartAfterFailure, rollbackUpdate, startServicesInOrder, stopServicesInOrder, verifyBuild, writeRollbackPlan,
+  type RollbackPlan, type RollbackResult, type UpdateProgress,
+} from "./rollback.js";
+import { listServices, START_ORDER, STOP_ORDER, type ServiceDeps, type ServiceStatus } from "./services.js";
+import { snapshotCounts, formatSnapshot, type CountSnapshot } from "./snapshot.js";
+
+// The backup allowlist, the cold-start budgets and the #54 note moved to
+// rollback.ts (the rollback shares them); re-exported so callers keep importing them from here.
+export { MODEL_CACHE_BACKUP_NOTE, START_WAIT_MS, backupDataDir, checkpointWal } from "./rollback.js";
 
 export interface UpdateDeps {
   config: EngramConfig;
@@ -39,6 +53,10 @@ export interface UpdateDeps {
   /** Node binary + CLI script used for post-swap child runs. */
   node: string;
   cliScript: (install: InstallInfo) => string;
+  /** Ask a yes/no question on a terminal; absent when stdin is not a TTY (then `--yes` decides). */
+  confirm?: (question: string) => Promise<boolean>;
+  /** Overrides for the install-path check (tests); defaults to the running process. */
+  installPath?: Partial<InstallPathContext>;
 }
 
 export interface UpdatePlan {
@@ -53,6 +71,8 @@ export interface UpdatePlan {
   backupDir: string | null;
   /** Conditions the operator must resolve by hand before `engram update` will run. */
   blockers: string[];
+  /** Things worth knowing that do not stop the run (#65: the `engram` on PATH is not this install). */
+  warnings: string[];
   /** Ordered description of what the run does. */
   steps: string[];
 }
@@ -72,15 +92,8 @@ export function pluginDeployTargets(hermesHome: string): { targets: string[]; pr
   return { targets, profiles };
 }
 
-/** How long a cold start may take before the update gives up on a service. */
-export const START_WAIT_MS: Record<"mcp" | "visualizer" | "dream", number> = { mcp: 90_000, visualizer: 180_000, dream: 30_000 };
-
-/** Decision #54: the backup is an allowlist (engram.db + wal/shm + archive/); model weights are re-downloadable and never enter it. */
-export const MODEL_CACHE_BACKUP_NOTE = "models/ is not backed up (re-downloadable); rollback re-downloads if the cache is missing";
-
 export function backupDirFor(dataDir: string, now: Date): string {
-  const ts = now.toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z").replace("T", "-");
-  return `${dataDir}.backup-${ts}`;
+  return `${dataDir}.backup-${planStamp(now)}`;
 }
 
 export async function buildUpdatePlan(deps: UpdateDeps, opts: { noBackup?: boolean; to?: string } = {}): Promise<UpdatePlan> {
@@ -101,6 +114,12 @@ export async function buildUpdatePlan(deps: UpdateDeps, opts: { noBackup?: boole
   for (const s of services) {
     if (s.unsupervised) blockers.push(`${s.id} answers on its port but no supervisor owns it: stop that process by hand, or install the supervisor (${s.installHint})`);
   }
+  // #65: the same check as doctor's `install path`. A warning, never a
+  // blocker — the run still upgrades this install; it just says that the
+  // `engram` the shell finds is a different one.
+  const warnings: string[] = [];
+  const ip = installPathReport(defaultInstallPathContext({ packageRoot: deps.packageRoot, path: sdeps.env.PATH ?? "", platform: sdeps.platform, ...deps.installPath }));
+  if (!ip.ok) warnings.push(`install path: ${ip.detail}`);
 
   const steps: string[] = [];
   if (backupDir) steps.push(`back up ${dataDir.action.kind === "move" ? dataDir.action.from : dataDir.effective} (engram.db + wal/shm + archive) to ${backupDir}`);
@@ -117,8 +136,8 @@ export async function buildUpdatePlan(deps: UpdateDeps, opts: { noBackup?: boole
   const toStart = START_ORDER.map((id) => services.find((s) => s.id === id)!).filter((s) => running.includes(s));
   steps.push(toStart.length ? `start ${toStart.map((s) => `${s.id} (${s.startCommand})`).join(", then ")} and wait for /health` : "no services to start");
   if (pluginTargets.length && install.kind === "git") steps.push(`redeploy the Hermes plugin to ${pluginTargets.length} target(s) (interfaces/hermes-plugin/deploy.sh), then you restart the gateways`);
-  steps.push("verify: engram doctor, /health, engram stats counts >= the snapshot; on any drop print the rollback steps");
-  return { install, available, target, dataDir, modelCache, services, pluginTargets, pluginProfiles, backupDir, blockers, steps };
+  steps.push("verify: engram doctor, /health, engram stats counts >= the snapshot; on failure offer `engram update --rollback` (auto-restores the backup only when counts dropped)");
+  return { install, available, target, dataDir, modelCache, services, pluginTargets, pluginProfiles, backupDir, blockers, warnings, steps };
 }
 
 function mb(bytes: number): string {
@@ -154,7 +173,13 @@ export function formatPlan(plan: UpdatePlan): string[] {
   lines.push("");
   lines.push(plan.pluginTargets.length ? `Hermes plugin: ${plan.pluginTargets.length} deploy target(s)${plan.pluginProfiles.length ? ` (profiles: ${plan.pluginProfiles.join(", ")})` : ""}` : "Hermes plugin: not deployed here");
   lines.push(`Backup:     ${plan.backupDir ?? "skipped (--no-backup)"}`);
+  lines.push(`Rollback:   plan recorded in ${join(dataDir.effective, "updates")} before anything changes; engram update --rollback [<stamp>] [--restore-data]`);
   lines.push("");
+  if (plan.warnings.length) {
+    lines.push("Warnings:");
+    for (const w of plan.warnings) lines.push(`  -- ${w}`);
+    lines.push("");
+  }
   if (plan.blockers.length) {
     lines.push("BLOCKED — resolve before running `engram update`:");
     for (const b of plan.blockers) lines.push(`  !! ${b}`);
@@ -170,33 +195,23 @@ export function formatPlan(plan: UpdatePlan): string[] {
 export interface RunResult {
   ok: boolean;
   lines: string[];
+  /** The persisted rollback plan (`<data dir>/updates/<stamp>.json`), once written. */
+  planFile?: string;
+  /** Present when the run performed the automatic rollback after a failed step. */
+  rollback?: RollbackResult;
 }
 
 function openReadonly(dbPath: string): Database.Database {
   return new Database(dbPath, { readonly: true, fileMustExist: true });
 }
 
-/** Quiesce the WAL into the main file so a file copy is a complete backup. Services are stopped by now. */
-export function checkpointWal(dbPath: string): void {
-  if (!existsSync(dbPath)) return;
-  const db = new Database(dbPath);
-  try { db.pragma("wal_checkpoint(TRUNCATE)"); } finally { db.close(); }
+export interface RunOptions {
+  dryRun?: boolean;
+  /** `--yes`: no confirmation for the update, and perform the rollback without asking when a post-swap step fails. */
+  yes?: boolean;
 }
 
-export function backupDataDir(from: string, to: string): string[] {
-  const lines: string[] = [];
-  mkdirSync(to, { recursive: true });
-  for (const item of ["engram.db", "engram.db-wal", "engram.db-shm", "archive"]) {
-    const src = join(from, item);
-    if (!existsSync(src)) continue;
-    cpSync(src, join(to, item), { recursive: true });
-    const st = statSync(src);
-    lines.push(`  ${item}${st.isFile() ? ` (${mb(st.size)})` : "/"}`);
-  }
-  return lines;
-}
-
-export async function runUpdate(plan: UpdatePlan, deps: UpdateDeps, opts: { dryRun?: boolean } = {}): Promise<RunResult> {
+export async function runUpdate(plan: UpdatePlan, deps: UpdateDeps, opts: RunOptions = {}): Promise<RunResult> {
   const lines: string[] = [];
   const say = (l: string) => { lines.push(l); deps.log(l); };
   const { services: sdeps } = deps;
@@ -212,23 +227,53 @@ export async function runUpdate(plan: UpdatePlan, deps: UpdateDeps, opts: { dryR
   }
   const srcDataDir = plan.dataDir.action.kind === "move" ? plan.dataDir.action.from : plan.dataDir.effective;
   const srcDb = join(srcDataDir, "engram.db");
-  const rollback: string[] = [];
   const running = STOP_ORDER.map((id) => plan.services.find((s) => s.id === id)!).filter((s) => s.running);
+  const inst = plan.install;
+
+  // 0. persist the rollback plan before anything changes (#65). Everything
+  //    the rollback needs is known now except the snapshot, filled in at step 3.
+  const now = deps.now();
+  let applied: string[] = [];
+  try { applied = readDbSchemaVersion(srcDb).applied; } catch (err) { say(`  !! could not read the schema version of ${srcDb}: ${err instanceof Error ? err.message : String(err)}`); }
+  const rb: RollbackPlan = {
+    v: 1,
+    stamp: planStamp(now),
+    at: now.toISOString(),
+    install: { kind: inst.kind, root: inst.root, packageName: inst.packageName, version: inst.version, branch: inst.branch, headSha: inst.headSha },
+    target: plan.target,
+    dataDir: plan.dataDir.effective,
+    dataDirFrom: plan.dataDir.action.kind === "move" ? plan.dataDir.action.from : null,
+    modelCacheDir: plan.modelCache.durable ? null : plan.modelCache.proposed,
+    backupDir: plan.backupDir,
+    services: running,
+    pluginTargets: plan.pluginTargets,
+    pluginProfiles: plan.pluginProfiles,
+    schema: { version: SCHEMA_VERSION, applied },
+    snapshot: null,
+    progress: "planned",
+  };
+  const planFile = writeRollbackPlan(plan.dataDir.effective, rb);
+  say(`rollback plan: ${planFile}`);
+  const progress = (p: UpdateProgress) => { rb.progress = p; try { writeRollbackPlan(plan.dataDir.effective, rb); } catch { /* the run continues; the file is best effort from here */ } };
+  for (const gone of pruneRollbackPlans(plan.dataDir.effective)) say(`  pruned old plan ${gone}`);
 
   // 1. stop writers
-  for (const s of running) {
-    say(`stopping ${s.id} (${s.stopCommand})`);
-    await stopService(s, sdeps);
-    if (!(await waitForPort(s, sdeps, false))) { say(`  !! ${s.id} still answers on its port after 30s; aborting before anything changed`); return { ok: false, lines }; }
+  let stopped: Awaited<ReturnType<typeof stopServicesInOrder>>;
+  try {
+    stopped = await stopServicesInOrder(running, sdeps, say);
+  } catch (err) {
+    say(`  !! ${err instanceof Error ? err.message : String(err)}`);
+    stopped = { ok: false, failed: null };
   }
-  rollback.push(...running.map((s) => `start ${s.id}: ${s.startCommand}`));
+  if (!stopped.ok) { say("  aborting before anything changed"); progress("failed:stop"); return { ok: false, lines, planFile }; }
+  progress("stopped");
 
   // 2. backup
   if (plan.backupDir) {
     say(`backing up ${srcDataDir} -> ${plan.backupDir}`);
     checkpointWal(srcDb);
     for (const l of backupDataDir(srcDataDir, plan.backupDir)) say(l);
-    rollback.unshift(`restore: copy ${plan.backupDir}/* back into ${srcDataDir} (stop services first)`);
+    progress("backup");
   }
 
   // 3. snapshot
@@ -240,6 +285,8 @@ export async function runUpdate(plan: UpdatePlan, deps: UpdateDeps, opts: { dryR
   } else {
     say("snapshot: no database yet");
   }
+  rb.snapshot = before;
+  progress("snapshot");
 
   // 4. durable model cache, before npm touches node_modules: move a legacy
   //    node_modules cache into the resolved dir and/or relocate an explicit
@@ -251,7 +298,6 @@ export async function runUpdate(plan: UpdatePlan, deps: UpdateDeps, opts: { dryR
   }
 
   // 5. code
-  const inst = plan.install;
   if (inst.kind === "git") {
     // Name the remote and branch explicitly: a checkout whose branch has no
     // upstream (common after `git checkout -b main origin/main` variants)
@@ -260,46 +306,37 @@ export async function runUpdate(plan: UpdatePlan, deps: UpdateDeps, opts: { dryR
     if (inst.branch && inst.branch !== "HEAD") pullArgs.push("origin", inst.branch);
     say(`git ${pullArgs.slice(2).join(" ")} (${inst.root})`);
     const pull = await exec("git", pullArgs);
-    if (pull.status !== 0) { say(`  !! git pull failed: ${(pull.stderr || pull.stdout).trim()}`); return finish(false); }
-    rollback.push(`code: git -C ${inst.root} checkout ${inst.headSha ?? "<previous sha>"} && npm ci`);
+    if (pull.status !== 0) { say(`  !! git pull failed: ${(pull.stderr || pull.stdout).trim()}`); return finish("pull"); }
     say("npm ci (rebuilds dist/)");
     const ci = await exec("npm", ["ci"], { cwd: inst.root, env: npmEnv });
-    if (ci.status !== 0) { say(`  !! npm ci failed: ${(ci.stderr || ci.stdout).trim().split("\n").slice(-10).join("\n")}`); return finish(false); }
+    if (ci.status !== 0) { say(`  !! npm ci failed: ${(ci.stderr || ci.stdout).trim().split("\n").slice(-10).join("\n")}`); return finish("npm ci"); }
   } else {
     const spec = `${inst.packageName}@${plan.target ?? "latest"}`;
     say(`npm install -g ${spec}`);
     const r = await exec("npm", ["install", "-g", spec], { env: npmEnv });
-    if (r.status !== 0) { say(`  !! npm install failed: ${(r.stderr || r.stdout).trim().split("\n").slice(-10).join("\n")}`); return finish(false); }
-    rollback.push(`code: npm install -g ${inst.packageName}@${inst.version}`);
+    if (r.status !== 0) { say(`  !! npm install failed: ${(r.stderr || r.stdout).trim().split("\n").slice(-10).join("\n")}`); return finish("npm install"); }
   }
+  progress("code");
 
   // 6. data dir move (old code, pure file moves) + schema migrations (new build)
   if (plan.dataDir.action.kind === "move") {
     for (const l of applyDataDirPlan(plan.dataDir, { dryRun: false })) say(`data-dir: ${l}`);
-    rollback.push(`data: move the items back from ${plan.dataDir.action.to} to ${plan.dataDir.action.from}`);
   }
   const cli = deps.cliScript(inst);
   const childEnv: NodeJS.ProcessEnv = { ...npmEnv };
   say("engram migrate schema (new build)");
   const mig = await exec(deps.node, [cli, "migrate", "schema"], { env: childEnv });
-  if (mig.status !== 0) { say(`  !! migrate failed: ${(mig.stderr || mig.stdout).trim()}`); return finish(false); }
+  if (mig.status !== 0) { say(`  !! migrate failed: ${(mig.stderr || mig.stdout).trim()}`); return finish("migrate"); }
   for (const l of mig.stdout.trim().split("\n")) say(`  ${l}`);
+  progress("migrated");
 
   // 7. restart services in order, MCP first. Cold starts are slow: the MCP
   // daemon loads the embedding model, the visualizer pre-renders every page
   // over the whole graph (a 15k-entity store takes ~40 s), so each gets its
   // own budget rather than the 30 s poll default (#46).
-  for (const id of START_ORDER) {
-    const s = running.find((r) => r.id === id);
-    if (!s) continue;
-    say(`starting ${s.id} (${s.startCommand})`);
-    await startService(s, sdeps);
-    const budget = START_WAIT_MS[s.id];
-    if (!(await waitForPort(s, sdeps, true, budget))) { say(`  !! ${s.id} did not answer on its port within ${budget / 1000}s`); return finish(false); }
-  }
-  // dream is a timer/scheduled job: nothing to start, but on launchd the agent must be loaded again
-  const dream = running.find((r) => r.id === "dream");
-  if (dream) { say(`re-enabling ${dream.id} (${dream.startCommand})`); await startService(dream, sdeps); }
+  const started = await startServicesInOrder(running, sdeps, say);
+  if (!started.ok) return finish(`start ${started.failed}`);
+  progress("restarted");
 
   // 8. plugin redeploy (after the MCP server is back)
   if (inst.kind === "git" && plan.pluginTargets.length && sdeps.platform !== "win32") {
@@ -313,58 +350,52 @@ export async function runUpdate(plan: UpdatePlan, deps: UpdateDeps, opts: { dryR
   }
 
   // 9. verify
-  const doc = await exec(deps.node, [cli, "doctor", "--json"], { env: childEnv });
-  let doctorOk = doc.status === 0;
-  try { doctorOk = doctorOk && JSON.parse(doc.stdout).ok === true; } catch { doctorOk = false; }
-  say(`doctor: ${doctorOk ? "ok" : "FAILED"}`);
-  const mcp = running.find((r) => r.id === "mcp");
-  if (mcp) {
-    const port = portFor("mcp", sdeps.env)!;
-    say(`health: ${(await sdeps.probe(port.port, port.path)) ? "ok" : "NOT answering"} (http://127.0.0.1:${port.port}${port.path})`);
-  }
-  const st = await exec(deps.node, [cli, "stats", "--json"], { env: childEnv });
-  let after: CountSnapshot | null = null;
-  try { after = JSON.parse(st.stdout).counts as CountSnapshot; } catch { /* handled below */ }
-  if (!after) { say(`  !! could not read stats from the new build: ${(st.stderr || st.stdout).trim()}`); return finish(false); }
-  say(`counts:   ${formatSnapshot(after)}`);
-  const regressions = before ? snapshotRegressions(before, after) : [];
-  if (regressions.length) {
-    say(`  !! counts DROPPED after the update: ${regressions.join("; ")}`);
-    return finish(false);
-  }
-  if (!doctorOk) return finish(false);
+  const v = await verifyBuild({ cli, env: childEnv, running, before }, deps, say);
+  if (!v.ok) return finish("verify", v.regressions);
+  progress("verified");
   say(`updated to ${plan.target ?? "the latest build"}; verification passed${plan.backupDir ? ` (backup kept at ${plan.backupDir})` : ""}`);
-  return { ok: true, lines };
+  progress("done");
+  return { ok: true, lines, planFile };
 
-  async function finish(ok: boolean): Promise<RunResult> {
-    if (!ok) {
-      say("");
-      say("UPDATE FAILED.");
+  /**
+   * A step failed. A failed `git pull` changed nothing: bring the services
+   * back and say so. Anything later may have touched the code on disk (a
+   * failed `npm ci` follows a pull that already moved HEAD), so offer the
+   * rollback (#65): `--yes` performs it, a terminal is asked, otherwise the
+   * command is printed. The backup is restored only when verification proved
+   * counts dropped (decision #66).
+   */
+  async function finish(step: string, regressions: string[] = []): Promise<RunResult> {
+    say("");
+    say("UPDATE FAILED.");
+    progress(`failed:${step}`);
+    if (step === "pull") {
       // Never leave the machine without its services: bring back whatever
       // was running, on whatever code is on disk now, and say so.
-      for (const l of await restartAfterFailure()) say(l);
-      say("Rollback steps, in order (services were restarted on the code currently on disk):");
-      for (const s of STOP_ORDER) { const r = running.find((x) => x.id === s); if (r) say(`  stop ${r.id}: ${r.stopCommand}`); }
-      for (const r of rollback) say(`  ${r}`);
-      say(`  ${MODEL_CACHE_BACKUP_NOTE}`);
-      say("  then: engram doctor && engram stats");
+      for (const l of await restartAfterFailure(running, sdeps)) say(l);
+      say(`Nothing to roll back: the code on disk is unchanged (plan kept at ${planFile}).`);
+      return { ok: false, lines, planFile };
     }
-    return { ok, lines };
-  }
-
-  async function restartAfterFailure(): Promise<string[]> {
-    const out: string[] = [];
-    for (const id of [...START_ORDER, "dream" as const]) {
-      const s = running.find((r) => r.id === id);
-      if (!s) continue;
-      try {
-        await startService(s, sdeps);
-        const up = await waitForPort(s, sdeps, true, START_WAIT_MS[s.id]);
-        out.push(`  restarted ${s.id}${up ? "" : " (port not answering yet)"}`);
-      } catch (err) {
-        out.push(`  !! could not restart ${s.id}: ${err instanceof Error ? err.message : String(err)} — run: ${s.startCommand}`);
-      }
+    const restoreData = regressions.length > 0 && rb.backupDir !== null;
+    if (regressions.length && !rb.backupDir) say("  counts dropped but this run had --no-backup: there is no backup to restore, so a rollback is code-only");
+    const reason = regressions.length ? `counts dropped: ${regressions.join("; ")}` : `${step} failed`;
+    const command = `engram update --rollback ${rb.stamp}${restoreData ? " --restore-data" : ""}`;
+    const question = `Roll back to ${inst.version}${restoreData ? " and restore the backup (counts dropped)" : " (code-only)"}? [y/N] `;
+    let go = false;
+    if (opts.yes) go = true;
+    else if (deps.confirm) go = await deps.confirm(question);
+    else say(`Not a terminal: run \`${command}\` to roll back (or re-run the update with --yes to roll back automatically).`);
+    if (!go) {
+      for (const l of await restartAfterFailure(running, sdeps)) say(l);
+      say(`Rollback: ${command}`);
+      say("Manual steps, in order (services were restarted on the code currently on disk):");
+      for (const l of manualRollbackSteps(rb)) say(`  ${l}`);
+      return { ok: false, lines, planFile };
     }
-    return out;
+    say("");
+    say(`rolling back to ${inst.version} (${restoreData ? "code + data: verification proved data loss" : "code-only"})`);
+    const rollback = await rollbackUpdate(rb, planFile, deps, { restoreData, reason });
+    lines.push(...rollback.lines);
+    return { ok: false, lines, planFile, rollback };
   }
 }

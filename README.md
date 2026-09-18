@@ -57,7 +57,7 @@ Either way, continue with:
 
 ```bash
 engram preflight     # prebuilt / compiled locally / unsupported per native module, with the fix for this OS
-engram doctor        # node version, platform/arch, native modules, model cache, ollama tier, data dir, mcp daemon, hosts — all [ok]?
+engram doctor        # node version, platform/arch, native modules, model cache, ollama tier, data dir, install path, mcp daemon, hosts — all [ok]?
 engram init          # creates engram.db in the data dir (default ~/.local/share/engram; see Configuration) and downloads the embedding model
 engram sync          # index conversations from ~/.claude/projects (optional)
 engram search "what did I decide about caching"
@@ -523,10 +523,12 @@ dir and database), schema migrations are additive and run on every database
 open, and `engram update` does the rest — one command per platform:
 
 ```bash
-engram update --check   # current vs available (git tag or npm dist-tag), nothing else
+engram update --check   # current vs available (git tag or npm dist-tag), nothing else; cached 24 h
 engram update --plan    # read-only: install kind, every dir holding an engram.db, model cache,
                         # every service and how it will be restarted, plugin deploy targets
 engram update           # the controlled upgrade (asks once; --yes for scripts, --no-backup to skip the backup)
+engram update --rollback            # undo the last update: previous code back, services restarted, verified
+engram update --rollback --restore-data   # …and put the pre-update backup of the data dir back
 ```
 
 ```powershell
@@ -561,9 +563,65 @@ paths filled in):
    through the marketplace, `/plugin update engram@engram`, and a stdio
    bridge that was talking to the old daemon reconnects to the new one.)
 8. **Verify**: `engram doctor`, `/health`, and `engram stats` counts that must
-   not have dropped. Any failure prints the rollback steps (stop services,
-   restore the backup, check out the previous sha or reinstall the previous
-   npm version, start services).
+   not have dropped. When a step after the code swap fails, the run offers
+   the rollback below: `--yes` performs it, a terminal is asked
+   `Roll back to <previous>? [y/N]`, and a script without `--yes` gets the
+   exact command to run. Whatever happens, the services come back.
+
+### Rolling back
+
+Before it changes anything, `engram update` records a rollback plan at
+`<data dir>/updates/<stamp>.json` (the last 10 are kept;
+`engram update --list-rollbacks` lists them): the previous version and git
+sha, install kind and root, the backup dir, the services that were running
+with their start commands, the plugin deploy targets, the target version,
+the database's schema version, the pre-update row counts, and a `progress`
+marker advanced at every step — so the file exists even when the update
+aborts at step 1, and the rollback knows how far the update got.
+
+```bash
+engram update --rollback                  # the most recent plan; --rollback <stamp> for an older one
+engram update --rollback --restore-data   # also restore the backup (everything written since is discarded)
+```
+
+A rollback is **code-only by default** (decision #66): stop the services →
+`git checkout <previous sha> && npm ci` or `npm install -g @devinmlowe/engram@<previous>`
+→ `engram migrate schema` with the *restored* build in a child process →
+restart what was running → the same verification (version, doctor, `/health`,
+counts at least the snapshot). `engram.db` keeps everything written since the
+update: schema migrations are additive, so the previous build reads the newer
+database and ignores the columns and tables it does not know (the caveat is
+printed). The backup is restored only with `--restore-data`, or automatically
+when the failed verification that triggered the rollback showed counts below
+the pre-update snapshot — never silently. `--restore-data` puts `engram.db` +
+WAL + `archive/` back (the archive is merged, backup winning) and is refused
+when the update ran with `--no-backup`. Every rollback prints which mode ran
+and that `models/` is not part of the backup (#54). Should a release ever
+ship a migration an older build cannot read past (`BREAKING_MIGRATIONS` in
+`src/_core/db/schema.ts`, empty today), a code-only rollback across it is
+refused and says so; `--restore-data` remains possible.
+
+### Which `engram` runs?
+
+Two global trees — Homebrew's node and nvm's node each with a `bin/engram` —
+mean `npm i -g` upgrades one while your shell keeps running the other.
+`engram doctor` has an `install path` check that lists every `engram` on
+`PATH` and warns (`[--]`, never a failure) when there is more than one or the
+first is not the install `engram update` would upgrade, with the fix
+(`npm uninstall -g @devinmlowe/engram` with the other tree's npm, or reorder
+`PATH`). `engram update --plan` prints the same warning.
+
+### Daily version notice
+
+`engram update --check` caches its answer for 24 hours in
+`<data dir>/cache/update-check.json`. `engram doctor`, `health`, `stats`,
+`search`, `sync` and `reflect` print one line on stderr when a newer version is
+known — `engram 0.4.0 available (you have 0.3.0) — engram update` — refreshing
+the cache at most once a day (never with `--json`, never from the MCP server),
+and the daemon's `/health` JSON carries `update: {current, available, checkedAt}`
+from the same cache. Nothing ever updates itself; `ENGRAM_NO_UPDATE_CHECK=1`
+disables the automatic lookup and the notice (an explicit `engram update --check`
+still asks, and still reuses a fresh cache entry).
 
 `engram migrate [data-dir|model-cache|schema] [--dry-run]` runs step 4 and 6
 on their own, idempotently, for installs you update by hand (`model-cache` is a
@@ -603,7 +661,7 @@ stopped and started by hand, or replaced with `install-mcp-daemon.sh install`.
 Verify after restarting:
 
 ```bash
-engram doctor      # node, native modules, model cache, ollama tier, effective data dir, mcp daemon /health, registered hosts
+engram doctor      # node, native modules, model cache, ollama tier, effective data dir, install path, mcp daemon /health, registered hosts
 engram health      # database, embedding model, MCP entry point
 engram stats       # counts must match the pre-update numbers
 engram search "smoke test"   # end-to-end recall through the new build
@@ -703,8 +761,8 @@ engram entities        # List/search entities
 engram relationships   # Show relationships for an entity
 engram stats           # Database statistics (--json: the row counts `engram update` compares before/after)
 engram health          # System health check (database, model, Ollama, MCP entry point)
-engram doctor          # Runtime diagnostics: node, platform/arch, better-sqlite3, sqlite-vec, model cache, ollama tier, data dir, mcp daemon, hosts (--json)
-engram update          # Controlled self-update: backup, stop services, pull/npm install, migrate, restart, verify (--check, --plan, --yes, --no-backup)
+engram doctor          # Runtime diagnostics: node, platform/arch, better-sqlite3, sqlite-vec, model cache, ollama tier, data dir, install path, mcp daemon, hosts (--json)
+engram update          # Controlled self-update: backup, stop services, pull/npm install, migrate, restart, verify (--check, --plan, --yes, --no-backup, --rollback [stamp], --restore-data, --list-rollbacks)
 engram migrate [topic] # Install/data migration: data-dir | model-cache | schema | all; idempotent, --dry-run lists every action
 engram import-legacy --source <db>   # Import a legacy conversation-index SQLite DB (was `engram migrate --source`; the old spelling still forwards)
 engram memories list|show|edit|delete|restore|purge|log  # Inspect and curate memories: provenance, edit, forget (soft delete + retention), restore, purge a conversation, change log
@@ -890,6 +948,7 @@ The one exception is the launchd dream daemon, whose launcher (`scripts/run-drea
 | `ENGRAM_RERANK_ENABLED` | `true` | Set to `false` or `0` to disable the cross-encoder reranker |
 | `ENGRAM_MODEL_CACHE_DIR` | `$ENGRAM_DATA_DIR/models` (`$HF_HOME/hub` when `HF_HOME` is set) | Where model weights are downloaded/cached; never inside `node_modules` (see [Model cache](#model-cache)) |
 | `ENGRAM_SKIP_PREFLIGHT` | — | Set to `1` to silence the `npm install` platform preflight |
+| `ENGRAM_NO_UPDATE_CHECK` | — | Set to `1` to disable the automatic daily version lookup and the "newer version available" notice; `engram update --check` still asks (see [Daily version notice](#daily-version-notice)) |
 | `ENGRAM_CHUNKING_STRATEGY` | `fixed` | `fixed` or `adaptive` (content-aware boundaries) |
 | `ENGRAM_FORGET_RETENTION_DAYS` | `30` | Days a forgotten memory is kept (out of recall, restorable) before the dream prune phase hard-deletes it; `0` purges on the next run. `forget hard: true` / `engram memories delete --hard` / `purge --hard` bypass it |
 | `ENGRAM_BIND` | `127.0.0.1` | Web visualizer bind address (`0.0.0.0` to expose on the network; requires `ENGRAM_WEB_TOKEN`) |

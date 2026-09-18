@@ -462,20 +462,25 @@ engram backfill-event-ts [--dry-run] [--tmp-dir <path>]
 Controlled self-update, modelled on `hermes update`: backup, stop services, pull or `npm install -g`, migrate, restart services (MCP before the Hermes plugin redeploy), verify.
 
 ```bash
-engram update --check          # current vs available (git tag or npm dist-tag)
+engram update --check          # current vs available (git tag or npm dist-tag); cached 24 h
 engram update --plan           # read-only plan; --dry-run is an alias
 engram update [--yes] [--no-backup] [--to <version>]
+engram update --rollback [<stamp>] [--restore-data] [--yes]
+engram update --list-rollbacks
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--check` | Print the installed version, the install kind, and the latest available version, then exit |
-| `--plan`, `--dry-run` | Print install kind, every directory holding an `engram.db`, model cache, every service + restart command, plugin deploy targets, backup path, blockers, and the ordered steps. Changes nothing |
-| `-y, --yes` | Skip the confirmation prompt (required when stdin is not a terminal) |
-| `--no-backup` | Skip the pre-update copy of `engram.db` + WAL + `archive/` to `<data dir>.backup-<timestamp>` |
+| `--check` | Print the installed version, the install kind, and the latest available version, then exit. The answer is cached for 24 h in `<data dir>/cache/update-check.json` (a second run within the day makes no network call and says `(cached …)`) |
+| `--plan`, `--dry-run` | Print install kind, every directory holding an `engram.db`, model cache, every service + restart command, plugin deploy targets, backup path, where the rollback plan will be written, warnings (the doctor `install path` check), blockers, and the ordered steps. Changes nothing |
+| `-y, --yes` | Skip the confirmation prompt (required when stdin is not a terminal). After a failed post-swap step, perform the rollback without asking |
+| `--no-backup` | Skip the pre-update copy of `engram.db` + WAL + `archive/` to `<data dir>.backup-<timestamp>` (a later `--rollback --restore-data` is then refused) |
 | `--to <version>` | Target version for npm installs (default: `dist-tags.latest`) |
+| `--rollback [<stamp>]` | Roll back the most recent update, or the plan whose stamp (`YYYYMMDD-HHMMSSZ`, a prefix is enough) is given: stop the services → `git checkout <previous sha> && npm ci` or `npm install -g @devinmlowe/engram@<previous>` → `engram migrate schema` with the restored build (child process) → restart what was running → verify (`--version`, `doctor --json`, `/health`, `stats --json` counts at least the snapshot). Code-only: `engram.db` keeps everything written since the update (migrations are additive; the caveat is printed). Refused across a `BREAKING_MIGRATIONS` checkpoint (none today). Exit 1 with a hint when no plan is recorded. Records `rolledBack: {at, mode, ok}` in the plan file |
+| `--restore-data` | With `--rollback`: also copy the pre-update backup back (`engram.db` + WAL + `archive/`, archive merged with the backup winning, WAL checkpointed) — everything written since the update is discarded. Refused when the plan has no backup |
+| `--list-rollbacks` | List the recorded plans in `<data dir>/updates/` (newest first: stamp, versions, progress, sha, backup, rollback outcome) |
 
-Blockers (exit 1, nothing changed): a dirty git checkout, two directories both holding a database, a daemon answering on its port with no supervisor. On any failure after the code swap the command prints the rollback steps. Post-swap steps (`migrate schema`, `doctor --json`, `stats --json`) run the new build in a child process.
+Blockers (exit 1, nothing changed): a dirty git checkout, two directories both holding a database, a daemon answering on its port with no supervisor. Before step 1 the run writes the rollback plan `<data dir>/updates/<stamp>.json` (previous version + sha, install kind + root, backup dir, services that were running with their start commands, plugin targets, target version, schema version, pre-update counts, `progress`: `planned` → `stopped` → `backup` → `snapshot` → `code` → `migrated` → `restarted` → `verified` → `done`, or `failed:<step>`); the newest 10 are kept. When a step after the code swap fails, the rollback is offered: `--yes` performs it, a terminal is asked `Roll back to <previous>? [y/N]`, otherwise the command is printed; the backup is restored automatically only when the failed verification showed counts below the snapshot (decision #66). Every rollback prints its mode (`code-only` / `code + data`) and that `models/` is not backed up. Post-swap steps (`migrate schema`, `doctor --json`, `stats --json`) run the new — or, on rollback, the restored — build in a child process.
 
 ---
 
@@ -619,6 +624,8 @@ Check system health — database, embedding model, Ollama, MCP server, and tool 
 ```bash
 engram health
 ```
+
+`health`, `doctor`, `stats`, `search`, `sync` and `reflect` end with one stderr line — `engram 0.4.0 available (you have 0.3.0) — engram update` — when the daily cached version check (`engram update --check`, `<data dir>/cache/update-check.json`, refreshed at most once a day with a bounded lookup) knows a newer version; never with `--json`, never from `engram mcp`. `ENGRAM_NO_UPDATE_CHECK=1` disables the automatic lookup and the line (an explicit `engram update --check` still asks). The HTTP daemon's `/health` JSON carries the same answer as `update: {current, available, checkedAt}` (cache only).
 
 ---
 

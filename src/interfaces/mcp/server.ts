@@ -26,6 +26,7 @@ import { runStdioEntry } from "./bridge.js";
 import { resolveMcpToken } from "./auth.js";
 import { ENGRAM_VERSION } from "../../_core/version/index.js";
 import { loadConfig } from "../../_core/config/index.js";
+import { updateHealthField } from "../cli/update-check.js";
 import { escapeXml } from "../../_core/search/index.js";
 import { initEmbeddings } from "../../_core/embeddings/index.js";
 import { rememberFact, storeMemoryBatch } from "../shared/remember.js";
@@ -2184,7 +2185,8 @@ export async function startMcpServer(args: string[] = process.argv.slice(2)): Pr
       registerHandlers: (srv) => registerToolHandlers(srv, dispatcher.call),
       health: () => {
         const stats = dispatcher.stats();
-        return { workers: stats ?? { size: 0 } };
+        // #65: the daily version check the CLI caches (never the network from here)
+        return { workers: stats ?? { size: 0 }, update: updateHealthField((config ??= loadConfig()).dataDir) };
       },
     });
 

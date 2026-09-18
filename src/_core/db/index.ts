@@ -16,6 +16,11 @@ export {
   FORGET_MIGRATION,
   MEMORY_CHANGE_OPS,
   EVENT_TS_SUBQUERY,
+  SCHEMA_MIGRATIONS,
+  SCHEMA_VERSION,
+  BREAKING_MIGRATIONS,
+  schemaVersion,
+  type SchemaVersion,
 } from "./schema.js";
 
 // Connection management

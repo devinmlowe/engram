@@ -23,6 +23,11 @@ import {
   planDataDir, applyDataDirPlan, planModelCache, applyModelCachePlan, reportSchema, isSqliteFile, DATA_DIR_ITEMS,
 } from "../../../src/interfaces/cli/data-migration.js";
 import { buildUpdatePlan, formatPlan, runUpdate, backupDirFor, backupDataDir, pluginDeployTargets, MODEL_CACHE_BACKUP_NOTE, type UpdateDeps } from "../../../src/interfaces/cli/update.js";
+import {
+  listRollbackPlans, readRollbackPlan, restoreDataDir, rollbackPlanPath, rollbackUpdate, schemaRollbackCheck, selectRollbackPlan, formatRollbackPlans,
+  writeRollbackPlan, ROLLBACK_PLANS_KEPT, type RollbackPlan,
+} from "../../../src/interfaces/cli/rollback.js";
+import { SCHEMA_MIGRATIONS, SCHEMA_VERSION, BREAKING_MIGRATIONS } from "../../../src/_core/db/schema.js";
 
 const ENV_KEYS = ["ENGRAM_DATA_DIR", "ENGRAM_DB_PATH", "ENGRAM_MODEL_CACHE_DIR", "HF_HOME", "ENGRAM_MCP_PORT", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "LOCALAPPDATA", "ENGRAM_ENV_FILE", "PORT"];
 let saved: Record<string, string | undefined>;
@@ -467,6 +472,31 @@ describe("update --plan", () => {
     expect(res.lines[0]).toBe("Refusing to update:");
   });
 
+  it("prints the doctor install-path warning as a plan warning, never a blocker (#65)", async () => {
+    const home = join(root, "home");
+    seedDb(join(root, "data"));
+    const other = join(root, "other", "lib", "node_modules", "@devinmlowe", "engram", "dist", "interfaces", "cli");
+    mkdirSync(other, { recursive: true });
+    writeFileSync(join(other, "index.js"), "");
+    mkdirSync(join(root, "other", "bin"));
+    writeFileSync(join(root, "other", "bin", "engram"), `#!/bin/sh\nexec node ${join(other, "index.js")} "$@"\n`);
+    const { exec } = fakeExec([[/npm view/, () => ({ stdout: "0.3.0\n" })], [/launchctl list/, () => ({ status: 113 })]]);
+    const d = updateDeps("darwin", home, loadConfig({ dataDir: join(root, "data") }), exec, async () => false, []);
+    // the check's install root is this checkout, not the temp root that holds the other tree
+    const checkout = join(root, "checkout");
+    d.installPath = { packageRoot: checkout, argv1: join(checkout, "dist", "interfaces", "cli", "index.js"), path: join(root, "other", "bin") };
+    const plan = await buildUpdatePlan(d, { noBackup: true });
+    expect(plan.blockers).toEqual([]);
+    expect(plan.warnings).toHaveLength(1);
+    expect(plan.warnings[0]).toContain("install path: `engram` on PATH is not this install: " + join(root, "other", "bin", "engram"));
+    const text = formatPlan(plan).join("\n");
+    expect(text).toContain("Warnings:\n  -- install path:");
+    expect(text).not.toContain("BLOCKED");
+    expect(text).toContain("Rollback:   plan recorded in " + join(root, "data", "updates"));
+    d.installPath = { packageRoot: checkout, argv1: join(checkout, "dist", "interfaces", "cli", "index.js"), path: "/nowhere" };
+    expect((await buildUpdatePlan(d, { noBackup: true })).warnings).toEqual([]);
+  });
+
   it("pluginDeployTargets ignores a missing hermes home", () => {
     expect(pluginDeployTargets(join(root, "nope"))).toEqual({ targets: [], profiles: [] });
   });
@@ -581,14 +611,19 @@ describe("update run (git install, macOS, legacy data dir)", () => {
     const res = await runUpdate(plan, d);
     expect(res.ok).toBe(false);
     const text = res.lines.join("\n");
-    expect(text).toContain("counts DROPPED after the update: conversations: 1 -> 0; entities: 1 -> 0");
+    expect(text).toContain("counts DROPPED: conversations: 1 -> 0; entities: 1 -> 0");
     expect(text).toContain("UPDATE FAILED.");
-    expect(text).toContain("Rollback steps, in order");
+    // #65: not a terminal and no --yes → the rollback command is printed, not run; --no-backup → code-only
+    expect(text).toContain("Not a terminal: run `engram update --rollback 20260917-123456Z` to roll back");
+    expect(text).toContain("no backup to restore, so a rollback is code-only");
+    expect(text).toContain("Manual steps, in order");
     expect(text).toContain(MODEL_CACHE_BACKUP_NOTE); // #54: rollback re-downloads, never restores, models/
     expect(text).toContain("restarted mcp"); // services come back even when verification fails
     expect(text).toContain("stop mcp: launchctl unload");
     expect(text).toContain("git -C " + root + " checkout abc1234 && npm ci");
-    expect(text).toContain("move the items back");
+    expect(text).toContain("the update moved it from");
+    expect(res.rollback).toBeUndefined();
+    expect(JSON.parse(readFileSync(res.planFile!, "utf-8")).progress).toBe("failed:verify");
   });
 
   it("a failed git pull aborts before the data dir moves", async () => {
@@ -638,6 +673,361 @@ describe("update run (git install, macOS, legacy data dir)", () => {
     const res = await runUpdate(plan, d);
     expect(res.ok, res.lines.join("\n")).toBe(true);
     expect(calls.some((c) => c.cmd === "npm" && c.args.join(" ") === `install -g ${PACKAGE_NAME}@0.5.0`)).toBe(true);
+  });
+});
+
+// ─── rollback plan + engram update --rollback (#65, decision #66) ────
+
+describe("rollback plan file (#65)", () => {
+  function setup() {
+    const home = join(root, "home");
+    const legacy = join(home, ".local", "share", "engram");
+    seedDb(legacy);
+    mkdirSync(join(home, "Library", "LaunchAgents"), { recursive: true });
+    writeFileSync(join(home, "Library", "LaunchAgents", "com.engram.mcp.plist"), "<plist/>");
+    mkdirSync(join(root, ".git"));
+    const xdg = join(root, "xdg");
+    process.env.XDG_DATA_HOME = xdg;
+    const cfg = loadConfig({ dataDir: join(xdg, "engram") });
+    let mcpUp = true;
+    const probe = async (port: number) => port === 9907 && mcpUp;
+    return { home, legacy, xdg, cfg, probe, setMcp: (v: boolean) => { mcpUp = v; } };
+  }
+  const gitBase: Array<[RegExp, (args: string[]) => Partial<ExecResult> | void]> = [
+    [/rev-parse --abbrev-ref/, () => ({ stdout: "main\n" })],
+    [/remote get-url/, () => ({ stdout: "origin\n" })],
+    [/status --porcelain/, () => ({ stdout: "" })],
+    [/rev-parse --short/, () => ({ stdout: "abc1234\n" })],
+    [/ls-remote --tags/, () => ({ stdout: "x\trefs/tags/v0.4.0\n" })],
+    [/launchctl list com\.engram\.mcp$/, () => ({ stdout: '"PID" = 7;' })],
+    [/launchctl list/, () => ({ status: 113 })],
+  ];
+
+  it("is written before step 1, survives an abort at step 1, and advances its progress marker to done", async () => {
+    const { home, xdg, cfg, probe, setMcp } = setup();
+    const dataDir = join(xdg, "engram");
+    // 12 stale plans from earlier runs: only ROLLBACK_PLANS_KEPT survive
+    for (let i = 0; i < 12; i++) {
+      const stamp = `2026010${i < 10 ? `${i}-00000${i}` : `${i}-000000`}Z`;
+      writeRollbackPlan(dataDir, { v: 1, stamp, at: "x", install: { kind: "git", root, packageName: PACKAGE_NAME, version: "0.1.0" }, target: "0.2.0", dataDir, dataDirFrom: null, modelCacheDir: null, backupDir: null, services: [], pluginTargets: [], pluginProfiles: [], schema: { version: 0, applied: [] }, snapshot: null, progress: "done" });
+    }
+    // step 1 fails: launchctl unload exits 1 while mcp is running
+    const failing = fakeExec([...gitBase, [/launchctl unload/, () => ({ status: 1, stderr: "Could not find specified service" })]]);
+    const d = updateDeps("darwin", home, cfg, failing.exec, probe, []);
+    const plan = await buildUpdatePlan(d, { noBackup: true });
+    const res = await runUpdate(plan, d);
+    expect(res.ok).toBe(false);
+    expect(res.planFile).toBe(rollbackPlanPath(dataDir, "20260917-123456Z"));
+    expect(existsSync(res.planFile!)).toBe(true);
+    let rb = readRollbackPlan(res.planFile!);
+    expect(rb).toMatchObject({
+      v: 1, stamp: "20260917-123456Z", at: "2026-09-17T12:34:56.000Z", progress: "failed:stop",
+      install: { kind: "git", root, version: ENGRAM_VERSION, headSha: "abc1234", branch: "main", packageName: PACKAGE_NAME },
+      target: "0.4.0", backupDir: null, dataDir, dataDirFrom: join(home, ".local", "share", "engram"),
+      schema: { version: SCHEMA_VERSION, applied: [...SCHEMA_MIGRATIONS].sort() },
+      snapshot: null,
+    });
+    expect(rb.services.map((s) => s.id)).toEqual(["mcp"]);
+    expect(rb.services[0].startCommand).toContain("launchctl load");
+    expect(listRollbackPlans(dataDir)).toHaveLength(ROLLBACK_PLANS_KEPT);
+    expect(listRollbackPlans(dataDir)[0].stamp).toBe("20260917-123456Z"); // newest first
+    expect(res.lines.join("\n")).toContain("aborting before anything changed");
+
+    // a full run: snapshot filled in, progress ends at done
+    const { exec } = fakeExec([
+      ...gitBase,
+      [/launchctl unload/, () => { setMcp(false); }],
+      [/launchctl load/, () => { setMcp(true); }],
+      [/pull --ff-only/, () => ({ stdout: "Already up to date.\n" })],
+      [/^npm ci$/, () => ({})],
+      [/cli\.js migrate schema/, () => ({ stdout: "ok\n" })],
+      [/cli\.js doctor --json/, () => ({ stdout: JSON.stringify({ ok: true }) })],
+      [/cli\.js stats --json/, () => {
+        const db = new Database(join(dataDir, "engram.db"), { readonly: true });
+        try { return { stdout: JSON.stringify({ counts: snapshotCounts(db) }) }; } finally { db.close(); }
+      }],
+    ]);
+    const d2 = updateDeps("darwin", home, cfg, exec, probe, []);
+    d2.now = () => new Date("2026-09-17T13:00:00Z");
+    const ok = await runUpdate(await buildUpdatePlan(d2), d2);
+    expect(ok.ok, ok.lines.join("\n")).toBe(true);
+    rb = readRollbackPlan(ok.planFile!);
+    expect(rb.progress).toBe("done");
+    expect(rb.snapshot).toMatchObject({ conversations: 1, entities: 1 });
+    expect(rb.backupDir).toBe(backupDirFor(join(home, ".local", "share", "engram"), d2.now()));
+    expect(rb.rolledBack).toBeUndefined();
+    expect(formatRollbackPlans(listRollbackPlans(dataDir))[0]).toContain(`20260917-130000Z  ${ENGRAM_VERSION} -> 0.4.0  done  (git @ abc1234`);
+  });
+
+  it("restoreDataDir puts the allowlist back, drops a stale WAL, merges archive/ with the backup winning", () => {
+    const data = join(root, "data");
+    seedDb(data);
+    const backup = join(root, "data.backup-x");
+    mkdirSync(join(data, "archive", "p"), { recursive: true });
+    writeFileSync(join(data, "archive", "p", "old.jsonl"), "old");
+    backupDataDir(data, backup);
+    // life after the update: a row added, a new archive file, an overwritten one, a stale WAL
+    const db = new Database(join(data, "engram.db"));
+    db.prepare("INSERT INTO conversations (id, project, started_at, last_indexed) VALUES ('c2', 'p', 2, 2)").run();
+    db.close();
+    writeFileSync(join(data, "engram.db-wal"), "stale");
+    writeFileSync(join(data, "archive", "p", "old.jsonl"), "changed");
+    writeFileSync(join(data, "archive", "p", "new.jsonl"), "new");
+    const lines = restoreDataDir(backup, data);
+    expect(lines.join("\n")).toContain("engram.db (");
+    expect(lines.join("\n")).toContain("archive/ (merged, backup wins)");
+    expect(existsSync(join(data, "engram.db-wal"))).toBe(false);
+    expect(readFileSync(join(data, "archive", "p", "old.jsonl"), "utf-8")).toBe("old");
+    expect(readFileSync(join(data, "archive", "p", "new.jsonl"), "utf-8")).toBe("new");
+    const after = new Database(join(data, "engram.db"), { readonly: true });
+    expect(snapshotCounts(after).conversations).toBe(1);
+    after.close();
+    expect(() => restoreDataDir(join(root, "nope"), data)).toThrow(/does not exist/);
+  });
+
+  it("schemaRollbackCheck: unchanged, additive caveat, breaking refusal; BREAKING_MIGRATIONS is empty today", () => {
+    const all = [...SCHEMA_MIGRATIONS].sort();
+    expect(BREAKING_MIGRATIONS.size).toBe(0);
+    expect(schemaRollbackCheck({ version: 5, applied: all }, { version: 5, applied: all })).toMatchObject({ ok: true, added: [], line: expect.stringContaining("unchanged") });
+    const additive = schemaRollbackCheck({ version: 4, applied: all.filter((n) => n !== "forget_v1") }, { version: 5, applied: all });
+    expect(additive).toMatchObject({ ok: true, added: ["forget_v1"] });
+    expect(additive.line).toContain("additive migration(s) applied by the update stay in place (forget_v1; version 4 -> 5)");
+    const breaking = schemaRollbackCheck({ version: 4, applied: all.filter((n) => n !== "forget_v1") }, { version: 5, applied: all }, new Set(["forget_v1"]));
+    expect(breaking).toMatchObject({ ok: false, breaking: ["forget_v1"] });
+    expect(breaking.line).toContain("breaking migration(s) forget_v1");
+  });
+
+  it("selectRollbackPlan: newest by default, exact or prefix stamp, .json tolerated", () => {
+    const mk = (stamp: string) => ({ file: `${stamp}.json`, stamp, plan: {} as RollbackPlan });
+    const plans = [mk("20260917-130000Z"), mk("20260917-123456Z"), mk("20260101-000000Z")];
+    expect(selectRollbackPlan(plans)!.stamp).toBe("20260917-130000Z");
+    expect(selectRollbackPlan(plans, "20260917-123456Z.json")!.stamp).toBe("20260917-123456Z");
+    expect(selectRollbackPlan(plans, "202601")!.stamp).toBe("20260101-000000Z");
+    expect(selectRollbackPlan(plans, "2027")).toBeNull();
+    expect(selectRollbackPlan([], undefined)).toBeNull();
+  });
+});
+
+describe("engram update --rollback (#65, decision #66)", () => {
+  function setup(opts: { backup?: boolean } = {}) {
+    const home = join(root, "home");
+    const legacy = join(home, ".local", "share", "engram");
+    seedDb(legacy);
+    mkdirSync(join(home, "Library", "LaunchAgents"), { recursive: true });
+    writeFileSync(join(home, "Library", "LaunchAgents", "com.engram.mcp.plist"), "<plist/>");
+    mkdirSync(join(root, ".git"));
+    const xdg = join(root, "xdg");
+    process.env.XDG_DATA_HOME = xdg;
+    const dataDir = join(xdg, "engram");
+    const cfg = loadConfig({ dataDir });
+    const state = { mcpUp: true, probesSinceLoad: 0, onNewBuild: false, healthBrokenOnNewBuild: false };
+    // /health answers once after each start (so the start step passes), then follows the build's health
+    const probe = async (port: number) => {
+      if (port !== 9907 || !state.mcpUp) return false;
+      state.probesSinceLoad++;
+      if (state.probesSinceLoad === 1) return true;
+      return !(state.onNewBuild && state.healthBrokenOnNewBuild);
+    };
+    const stats = () => {
+      const db = new Database(join(dataDir, "engram.db"), { readonly: true });
+      try { return { stdout: JSON.stringify({ counts: snapshotCounts(db) }) }; } finally { db.close(); }
+    };
+    const handlers: Array<[RegExp, (args: string[]) => Partial<ExecResult> | void]> = [
+      [/rev-parse --abbrev-ref/, () => ({ stdout: "main\n" })],
+      [/remote get-url/, () => ({ stdout: "origin\n" })],
+      [/status --porcelain/, () => ({ stdout: "" })],
+      [/rev-parse --short/, () => ({ stdout: "abc1234\n" })],
+      [/ls-remote --tags/, () => ({ stdout: "x\trefs/tags/v0.4.0\n" })],
+      [/launchctl list com\.engram\.mcp$/, () => ({ stdout: '"PID" = 7;' })],
+      [/launchctl list/, () => ({ status: 113 })],
+      [/launchctl unload/, () => { state.mcpUp = false; }],
+      [/launchctl load/, () => { state.mcpUp = true; state.probesSinceLoad = 0; }],
+      [/pull --ff-only/, () => { state.onNewBuild = true; return { stdout: "Updating abc1234..def5678\n" }; }],
+      [/git -C .* checkout abc1234$/, () => { state.onNewBuild = false; }],
+      [/^npm ci$/, () => ({})],
+      [/cli\.js --version/, () => ({ stdout: `${ENGRAM_VERSION}\n` })],
+      [/cli\.js doctor --json/, () => ({ stdout: JSON.stringify({ ok: true }) })],
+      [/cli\.js stats --json/, stats],
+    ];
+    return { home, legacy, xdg, dataDir, cfg, probe, state, handlers, backup: opts.backup ?? true };
+  }
+  const seq = (calls: Call[]) => calls.map((c) => `${c.cmd} ${c.args.join(" ")}`);
+
+  it("a failing /health on the new build + --yes → automatic code-only rollback: services restarted with the prior command, code restored, verify via the restored build, rolledBack recorded", async () => {
+    const { home, dataDir, cfg, probe, state, handlers } = setup();
+    state.healthBrokenOnNewBuild = true;
+    const { exec, calls } = fakeExec([...handlers, [/cli\.js migrate schema/, () => ({ stdout: "ok\n" })]]);
+    const log: string[] = [];
+    const d = updateDeps("darwin", home, cfg, exec, probe, log);
+    const plan = await buildUpdatePlan(d);
+    const res = await runUpdate(plan, d, { yes: true });
+    expect(res.ok).toBe(false);
+    expect(res.rollback).toMatchObject({ ok: true, mode: "code-only" });
+    const text = res.lines.join("\n");
+    expect(text).toContain("health: NOT answering");
+    expect(text).toContain("UPDATE FAILED.");
+    expect(text).toContain(`rolling back to ${ENGRAM_VERSION} (code-only)`);
+    expect(text).toContain("rollback mode: code-only — engram.db keeps everything written since the update (reason: verify failed)");
+    expect(text).toContain(MODEL_CACHE_BACKUP_NOTE);
+    expect(text).toContain("schema: unchanged since the update");
+    expect(text).toContain(`the checkout is detached at abc1234; \`git -C ${root} checkout main\` returns to the branch`);
+    expect(text).toContain(`rolled back to ${ENGRAM_VERSION} (code-only); verification passed`);
+    expect(text).not.toContain("restoring ");
+    // exec order: update (unload, pull, ci, migrate, load, doctor, stats) then rollback (unload, checkout, ci, migrate, load, --version, doctor, stats)
+    const s = seq(calls);
+    const nth = (re: RegExp, n: number) => s.map((l, i) => (re.test(l) ? i : -1)).filter((i) => i >= 0)[n];
+    expect(nth(/launchctl unload/, 1)).toBeGreaterThan(nth(/stats --json/, 0));
+    expect(nth(/checkout abc1234/, 0)).toBeGreaterThan(nth(/launchctl unload/, 1));
+    expect(nth(/^npm ci$/, 1)).toBeGreaterThan(nth(/checkout abc1234/, 0));
+    expect(nth(/migrate schema/, 1)).toBeGreaterThan(nth(/^npm ci$/, 1));
+    expect(nth(/launchctl load/, 1)).toBeGreaterThan(nth(/migrate schema/, 1));
+    expect(nth(/cli\.js --version/, 0)).toBeGreaterThan(nth(/launchctl load/, 1));
+    expect(nth(/doctor --json/, 1)).toBeGreaterThan(nth(/launchctl load/, 1));
+    expect(s.filter((l) => /launchctl load/.test(l))).toHaveLength(2);
+    expect(s.at(-1)).toMatch(/stats --json$/);
+    // the plan file records the outcome; counts equal the snapshot
+    const rb = readRollbackPlan(res.planFile!);
+    expect(rb.progress).toBe("failed:verify");
+    expect(rb.rolledBack).toMatchObject({ ok: true, mode: "code-only", reason: "verify failed" });
+    const db = new Database(join(dataDir, "engram.db"), { readonly: true });
+    expect(snapshotCounts(db)).toEqual(rb.snapshot);
+    db.close();
+    expect(existsSync(plan.backupDir!)).toBe(true); // the backup is kept, untouched
+  });
+
+  it("counts below the snapshot after the update → the auto-rollback also restores the backup (code + data)", async () => {
+    const { home, dataDir, cfg, probe, state, handlers } = setup();
+    // a "bad migration" on the new build loses a row; the restored build's migrate is harmless
+    const { exec, calls } = fakeExec([...handlers, [/cli\.js migrate schema/, () => {
+      if (state.onNewBuild) { const db = new Database(join(dataDir, "engram.db")); db.prepare("DELETE FROM conversations").run(); db.close(); }
+      return { stdout: "ok\n" };
+    }]]);
+    const d = updateDeps("darwin", home, cfg, exec, probe, []);
+    const plan = await buildUpdatePlan(d);
+    const res = await runUpdate(plan, d, { yes: true });
+    expect(res.ok).toBe(false);
+    expect(res.rollback).toMatchObject({ ok: true, mode: "code + data" });
+    const text = res.lines.join("\n");
+    expect(text).toContain("counts DROPPED: conversations: 1 -> 0");
+    expect(text).toContain(`rolling back to ${ENGRAM_VERSION} (code + data: verification proved data loss)`);
+    expect(text).toContain(`restoring ${plan.backupDir} -> ${dataDir}`);
+    expect(text).toContain(`rolled back to ${ENGRAM_VERSION} (code + data); verification passed`);
+    // the restore happened after the stop and before the checkout
+    const s = seq(calls);
+    const nth = (re: RegExp, n: number) => s.map((l, i) => (re.test(l) ? i : -1)).filter((i) => i >= 0)[n];
+    expect(nth(/checkout abc1234/, 0)).toBeGreaterThan(nth(/launchctl unload/, 1));
+    const rb = readRollbackPlan(res.planFile!);
+    expect(rb.rolledBack).toMatchObject({ ok: true, mode: "code + data", reason: "counts dropped: conversations: 1 -> 0" });
+    const db = new Database(join(dataDir, "engram.db"), { readonly: true });
+    expect(snapshotCounts(db)).toEqual(rb.snapshot);
+    db.close();
+  });
+
+  it("a terminal is asked; declining restarts the services on the new code and prints the command", async () => {
+    const { home, cfg, probe, state, handlers } = setup();
+    state.healthBrokenOnNewBuild = true;
+    const { exec, calls } = fakeExec([...handlers, [/cli\.js migrate schema/, () => ({ stdout: "ok\n" })]]);
+    const questions: string[] = [];
+    const d = updateDeps("darwin", home, cfg, exec, probe, []);
+    d.confirm = async (q) => { questions.push(q); return false; };
+    const res = await runUpdate(await buildUpdatePlan(d), d);
+    expect(res.ok).toBe(false);
+    expect(res.rollback).toBeUndefined();
+    expect(questions).toEqual([`Roll back to ${ENGRAM_VERSION} (code-only)? [y/N] `]);
+    expect(seq(calls).some((l) => /checkout abc1234/.test(l))).toBe(false);
+    expect(res.lines.join("\n")).toContain("Rollback: engram update --rollback 20260917-123456Z");
+    expect(res.lines.join("\n")).toContain("restarted mcp");
+  });
+
+  it("by hand: --restore-data is refused without a backup; a breaking migration refuses code-only but not --restore-data", async () => {
+    const { home, dataDir, cfg, probe, handlers } = setup();
+    const { exec, calls } = fakeExec([...handlers, [/cli\.js migrate schema/, () => ({ stdout: "ok\n" })]]);
+    const d = updateDeps("darwin", home, cfg, exec, probe, []);
+    const plan = await buildUpdatePlan(d, { noBackup: true });
+    const res = await runUpdate(plan, d); // a clean update; then roll it back by hand
+    expect(res.ok, res.lines.join("\n")).toBe(true);
+    const rb = readRollbackPlan(res.planFile!);
+    calls.length = 0;
+    const noBackup = await rollbackUpdate(rb, res.planFile!, d, { restoreData: true });
+    expect(noBackup).toMatchObject({ ok: false, mode: "code + data", refused: expect.stringContaining("--no-backup") });
+    expect(calls).toHaveLength(0);
+    // pretend the update applied forget_v1 and that it is breaking
+    const older: RollbackPlan = { ...rb, schema: { version: 4, applied: rb.schema.applied.filter((n) => n !== "forget_v1") } };
+    const refused = await rollbackUpdate(older, res.planFile!, d, { breaking: new Set(["forget_v1"]) });
+    expect(refused.ok).toBe(false);
+    expect(refused.refused).toContain("breaking migration(s) forget_v1");
+    expect(refused.lines.join("\n")).toContain("engram update --rollback 20260917-123456Z --restore-data");
+    expect(calls).toHaveLength(0);
+    expect(readRollbackPlan(res.planFile!).rolledBack).toBeUndefined();
+    // the additive caveat when the update added checkpoints that are not breaking
+    const additive = await rollbackUpdate(older, res.planFile!, d);
+    expect(additive.ok, additive.lines.join("\n")).toBe(true);
+    expect(additive.lines.join("\n")).toContain("additive migration(s) applied by the update stay in place (forget_v1; version 4 -> 5)");
+    expect(readRollbackPlan(res.planFile!).rolledBack).toMatchObject({ ok: true, mode: "code-only" });
+    // with a backup, --restore-data is allowed across a breaking migration (the backup predates it)
+    mkdirSync(join(root, "bk"), { recursive: true });
+    backupDataDir(dataDir, join(root, "bk"));
+    const withBackup: RollbackPlan = { ...older, backupDir: join(root, "bk") };
+    const restored = await rollbackUpdate(withBackup, res.planFile!, d, { restoreData: true, breaking: new Set(["forget_v1"]) });
+    expect(restored.ok, restored.lines.join("\n")).toBe(true);
+    expect(restored.lines.join("\n")).toContain("rollback mode: code + data");
+  });
+
+  it("a failed npm ci (HEAD already moved by the pull) offers the rollback; a failed pull does not", async () => {
+    const { home, cfg, probe, handlers } = setup();
+    const { exec } = fakeExec([...handlers.filter(([re]) => !/npm ci/.test(re.source)), [/^npm ci$/, () => ({ status: 1, stderr: "gyp ERR!" })]]);
+    const d = updateDeps("darwin", home, cfg, exec, probe, []);
+    const res = await runUpdate(await buildUpdatePlan(d, { noBackup: true }), d);
+    expect(res.ok).toBe(false);
+    expect(readRollbackPlan(res.planFile!).progress).toBe("failed:npm ci");
+    expect(res.lines.join("\n")).toContain("Not a terminal: run `engram update --rollback 20260917-123456Z`");
+    const pullFails = fakeExec([...handlers.filter(([re]) => !/pull/.test(re.source)), [/pull --ff-only/, () => ({ status: 1, stderr: "fatal: no route" })]]);
+    const d2 = updateDeps("darwin", home, cfg, pullFails.exec, probe, []);
+    const r2 = await runUpdate(await buildUpdatePlan(d2, { noBackup: true }), d2);
+    expect(r2.ok).toBe(false);
+    expect(readRollbackPlan(r2.planFile!).progress).toBe("failed:pull");
+    expect(r2.lines.join("\n")).toContain("Nothing to roll back: the code on disk is unchanged");
+    expect(r2.lines.join("\n")).not.toContain("--rollback 2026");
+  });
+
+  it("npm installs roll back with npm install -g <package>@<previous>", async () => {
+    const home = join(root, "home");
+    const data = join(root, "data");
+    seedDb(data);
+    const { exec, calls } = fakeExec([
+      [/npm view/, () => ({ stdout: "0.5.0\n" })],
+      [/npm install -g/, () => ({})],
+      [/launchctl list/, () => ({ status: 113 })],
+      [/migrate schema/, () => ({ stdout: "ok\n" })],
+      [/cli\.js --version/, () => ({ stdout: `${ENGRAM_VERSION}\n` })],
+      [/doctor --json/, () => ({ stdout: JSON.stringify({ ok: true }) })],
+      [/stats --json/, () => {
+        const db = new Database(join(data, "engram.db"), { readonly: true });
+        try { return { stdout: JSON.stringify({ counts: snapshotCounts(db) }) }; } finally { db.close(); }
+      }],
+    ]);
+    const d = updateDeps("darwin", home, loadConfig({ dataDir: data, modelCacheDir: join(root, "models") }), exec, async () => false, []);
+    const res = await runUpdate(await buildUpdatePlan(d, { noBackup: true }), d);
+    expect(res.ok).toBe(true);
+    const rb = readRollbackPlan(res.planFile!);
+    expect(rb.install).toMatchObject({ kind: "npm", version: ENGRAM_VERSION, packageName: PACKAGE_NAME });
+    const r = await rollbackUpdate(rb, res.planFile!, d);
+    expect(r.ok, r.lines.join("\n")).toBe(true);
+    expect(calls.some((c) => c.cmd === "npm" && c.args.join(" ") === `install -g ${PACKAGE_NAME}@${ENGRAM_VERSION}`)).toBe(true);
+    expect(r.lines.join("\n")).toContain("no running services to stop");
+  });
+
+  it("a rollback whose restored build reports the wrong version fails verification and records it", async () => {
+    const { home, cfg, probe, handlers } = setup();
+    const { exec } = fakeExec([...handlers.filter(([re]) => !/--version/.test(re.source)), [/cli\.js --version/, () => ({ stdout: "9.9.9\n" })], [/cli\.js migrate schema/, () => ({ stdout: "ok\n" })]]);
+    const d = updateDeps("darwin", home, cfg, exec, probe, []);
+    const res = await runUpdate(await buildUpdatePlan(d, { noBackup: true }), d);
+    expect(res.ok).toBe(true);
+    const r = await rollbackUpdate(readRollbackPlan(res.planFile!), res.planFile!, d);
+    expect(r.ok).toBe(false);
+    expect(r.lines.join("\n")).toContain(`version: 9.9.9 — expected ${ENGRAM_VERSION}`);
+    expect(r.lines.join("\n")).toContain("ROLLBACK VERIFICATION FAILED (code-only): version");
+    expect(readRollbackPlan(res.planFile!).rolledBack).toMatchObject({ ok: false });
   });
 });
 

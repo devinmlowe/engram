@@ -19,6 +19,7 @@ import { modelCacheSourceLabel } from "./data-migration.js";
 import { MIN_NODE_MAJOR, PREBUILT_TARGETS, describePrebuild, loadPreflight, type PrebuildProbe } from "./preflight.js";
 import { parseMcpPort, probeMcpHealth, type McpHealthProbe } from "../mcp/port.js";
 import { summariseHostsForDoctor, type HostContext } from "./hosts.js";
+import { defaultInstallPathContext, installPathReport, type InstallPathContext } from "./install-path.js";
 
 export type DoctorLevel = "ok" | "warn" | "fail";
 
@@ -33,6 +34,7 @@ export const DOCTOR_CHECK_NAMES = [
   "ollama",
   "llm providers",
   "data dir",
+  "install path",
   "mcp daemon",
   "hosts",
 ] as const;
@@ -351,6 +353,23 @@ export function checkDataDir(config: EngramConfig, legacyDir: string = legacyDat
   return { name, level: "ok", required: false, detail: where };
 }
 
+/**
+ * Is the `engram` the shell runs this install (#65)? Lists every `engram` on
+ * PATH; `[--]` when there is more than one distinct binary or the first one
+ * is not under the root `engram update` upgrades, with the fix (uninstall
+ * the other tree, or reorder PATH). Pure and never required; `[ok]` when
+ * nothing is on PATH at all (a checkout run by path).
+ */
+export function checkInstallPath(ctx: InstallPathContext = defaultInstallPathContext()): DoctorCheck {
+  const name = "install path";
+  try {
+    const r = installPathReport(ctx);
+    return { name, level: r.ok ? "ok" : "warn", required: false, detail: r.detail };
+  } catch (err) {
+    return { name, level: "warn", required: false, detail: `could not resolve the engram on PATH: ${errMsg(err)}` };
+  }
+}
+
 // The probe lives in ../mcp/port.ts since #58 so the stdio bridge can share it;
 // re-exported here because `engram doctor` was its first home.
 export { probeMcpHealth, type McpHealthProbe } from "../mcp/port.js";
@@ -422,6 +441,7 @@ export async function runDoctor(
     ollama,
     checkLlmProviders(config),
     checkDataDir(config),
+    checkInstallPath(),
     mcpDaemon,
     hosts,
   ];

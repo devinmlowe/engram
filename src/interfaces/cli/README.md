@@ -17,12 +17,15 @@ Command-line interface for direct human interaction with engram. Built on Comman
 
 - `index.ts` — All 26 CLI commands: `init`, `sync`, `search`, `remember`, `memories`, `extract`, `dream`, `reflect`, `explore`, `entities`, `relationships`, `stats`, `health`, `doctor`, `preflight`, `update`, `migrate`, `import-legacy`, `validate`, `backfill-event-ts`, `commitments`, `commitment-done`, `commitments-extract`, `export`, `import`, `mcp` (with the `install` / `uninstall` / `status` subcommands from `hosts-command.ts`)
 - `memories.ts` — `engram memories list|show|edit|delete|restore|purge|log` (#55): the inspection and curation surface over `semantic/inspect.ts` and `semantic/forget.ts`; pure formatters exported for tests
-- `update.ts` — `engram update`: plan (install kind, data-dir candidates, model cache, services, plugin targets, blockers) and run (backup → stop → snapshot → code → migrate → restart → verify, rollback steps on failure). Post-swap steps run the new build in a child process (#44)
+- `update.ts` — `engram update`: plan (install kind, data-dir candidates, model cache, services, plugin targets, warnings, blockers) and run (persist the rollback plan → stop → backup → snapshot → code → migrate → restart → verify; a failed post-swap step offers the rollback). Post-swap steps run the new build in a child process (#44, #65)
+- `rollback.ts` — `engram update --rollback` (#65, decision #66): the persisted plan `<data dir>/updates/<stamp>.json` (prior version/sha, install, backup dir, services + start commands, plugin targets, target, schema version, snapshot, `progress` marker; newest 10 kept), `restoreDataDir` (the backup allowlist in reverse + WAL checkpoint), `schemaRollbackCheck` against `BREAKING_MIGRATIONS`, `rollbackUpdate` (code-only by default, `--restore-data` opt-in; migrate + verify run the *restored* build in a child process), and the stop / start / verify steps shared with `runUpdate`
+- `install-path.ts` — doctor's `install path` check (#65): every `engram` on PATH (symlinks and shim scripts resolved) vs the install root `engram update` upgrades; pure and injectable
+- `update-check.ts` — the daily cached version check (#65): `<data dir>/cache/update-check.json`, `refreshUpdateCheck` (one lookup per day, bounded by a timeout, failures cached), `updateNotice` (pure), `updateHealthField` for `/health`; `ENGRAM_NO_UPDATE_CHECK=1` disables
 - `install-kind.ts` — git checkout vs global npm install detection, latest available version (git tags / npm dist-tag), `--check` output
 - `services.ts` — Supervisor adapters (launchd, systemd user units, Windows Task Scheduler) behind one `ServiceStatus` shape with injectable `exec`/`probe`; never kills an unsupervised process
 - `data-migration.ts` — `engram migrate`: data-dir split detection and move (refuses when two dirs hold a database), model cache (moves a pre-0.4.0 `node_modules` cache into the resolved dir; relocates an explicit dir that sits inside `node_modules`; no-op once the durable default applies, #53), schema checkpoint report
 - `snapshot.ts` — Row counts for `engram stats --json` and the before/after comparison in `engram update`
-- `doctor.ts` — Runtime diagnostics behind `engram doctor` (node, platform/arch incl. libc + Node ABI, native modules with their prebuild verdict `prebuilt — …` / `compiled locally — …`, model cache with `durable: yes|no` + the tier that chose it, effective data dir + legacy-split warning, MCP daemon /health, registered hosts)
+- `doctor.ts` — Runtime diagnostics behind `engram doctor` (node, platform/arch incl. libc + Node ABI, native modules with their prebuild verdict `prebuilt — …` / `compiled locally — …`, model cache with `durable: yes|no` + the tier that chose it, effective data dir + legacy-split warning, install path, MCP daemon /health, registered hosts)
 - `hosts.ts` — `engram mcp install|uninstall|status` (#50): per-host config paths, transport decision (`decideTransport`, #51), entry builder + token reference (#52), the JSON and TOML writers, dependency-free unified diff, atomic write with `.bak`, Claude plugin detection, Hermes deploy via `pluginDeployTargets`, the status report and the doctor `hosts` summary. Pure apart from the injected `probe` / `exec`
 - `hosts-command.ts` — Commander wiring for the three `mcp` subcommands (flag parsing and printing only)
 - `preflight.ts` — Typed `createRequire` bridge to `scripts/preflight.cjs` (resolved through `PACKAGE_ROOT`, so it works from a checkout, a global install and `npx`): `loadPreflight()`, the re-exported `PREBUILT_TARGETS` / `PREBUILT_NODE_MAJORS` / `MIN_NODE_MAJOR`, and `describePrebuild()` for doctor lines. `engram preflight [--strict] [--json] [--expect <spec>]` prints the per-dependency prebuild verdict without opening the database or loading models (#63)
@@ -66,7 +69,7 @@ Tests: `tests/interfaces/cli/hosts.test.ts`.
 | Command | Purpose |
 |---------|---------|
 | `engram preflight [--strict] [--json] [--expect <spec>]` | One line per native dependency (`better-sqlite3`, `sqlite-vec`, `onnxruntime-node`): `[ok] prebuilt`, `[warn] compiled locally` / `will compile (needs python3 + C++ toolchain)`, `[FAIL] unsupported`, `[--] unknown (<reason>)`, each warn/fail followed by the fix for this OS and `nvm use <major>` when the gap is a Node major. Inspects `node_modules` when present, else the static table. `--strict` exits 1 on any `[FAIL]`; `--expect prebuilt` or `--expect better-sqlite3=prebuilt,sqlite-vec=unsupported` exits 1 unless the verdicts match (CI). Same script as the npm `postinstall` hook; `ENGRAM_SKIP_PREFLIGHT` only silences the hook. |
-| `engram doctor [--json]` | Full post-build diagnostics; the `better-sqlite3` / `sqlite-vec` lines end with the same prebuild verdict; `hosts` is `[ok]` when a registered host points at this install, `[--]` with the `engram mcp install` hint otherwise (never `[FAIL]`). |
+| `engram doctor [--json]` | Full post-build diagnostics; the `better-sqlite3` / `sqlite-vec` lines end with the same prebuild verdict; `install path` lists every `engram` on PATH and is `[--]` when there is more than one distinct binary or the first is not this install (fix: `npm uninstall -g` in the other tree, or reorder PATH; never `[FAIL]`); `hosts` is `[ok]` when a registered host points at this install, `[--]` with the `engram mcp install` hint otherwise (never `[FAIL]`). |
 
 Tests: `tests/deployment/preflight.test.ts`, `tests/deployment/prebuild-probe.test.ts`, `tests/deployment/supported-platforms.test.ts`, `tests/interfaces/cli/doctor.test.ts`.
 
@@ -74,13 +77,15 @@ Tests: `tests/deployment/preflight.test.ts`, `tests/deployment/prebuild-probe.te
 
 | Command | Purpose |
 |---------|---------|
-| `engram update --check` | Current vs available version (git: highest `vX.Y.Z` tag on origin; npm: `dist-tags.latest`). |
-| `engram update --plan` (`--dry-run`) | Read-only plan: install kind, every directory holding an `engram.db` (effective, pre-0.2.0 legacy, platform default), model-cache location, every service with its supervisor and restart command, Hermes plugin deploy targets, backup path, blockers. |
-| `engram update [--yes] [--no-backup] [--to <version>]` | Runs the plan. Refuses on blockers: dirty checkout, two populated data dirs, a daemon answering on its port with no supervisor. |
+| `engram update --check` | Current vs available version (git: highest `vX.Y.Z` tag on origin; npm: `dist-tags.latest`), cached 24 h in `<data dir>/cache/update-check.json`. |
+| `engram update --plan` (`--dry-run`) | Read-only plan: install kind, every directory holding an `engram.db` (effective, pre-0.2.0 legacy, platform default), model-cache location, every service with its supervisor and restart command, Hermes plugin deploy targets, backup path, rollback-plan location, warnings (install path), blockers. |
+| `engram update [--yes] [--no-backup] [--to <version>]` | Runs the plan. Refuses on blockers: dirty checkout, two populated data dirs, a daemon answering on its port with no supervisor. Writes `<data dir>/updates/<stamp>.json` before step 1 and advances its `progress` at every step; a failed post-swap step offers the rollback (`--yes` performs it; a TTY is asked; otherwise the command is printed), restoring the backup only when verification showed counts dropped. |
+| `engram update --rollback [<stamp>] [--restore-data] [--yes]` | Code-only rollback of the newest (or named) plan: stop → `git checkout <sha> && npm ci` / `npm install -g <pkg>@<prev>` → `migrate schema` with the restored build → restart → verify. `--restore-data` also copies the backup back (refused without one). Refused across a `BREAKING_MIGRATIONS` checkpoint. Records `rolledBack` in the plan. |
+| `engram update --list-rollbacks` | The recorded plans, newest first. |
 | `engram migrate [all\|data-dir\|model-cache\|schema] [--dry-run]` | Idempotent install/data migration; refuses to move the data dir while the MCP daemon answers on its port. `--source` forwards to `import-legacy` with a deprecation notice. |
 | `engram import-legacy --source <path>` | The legacy conversation-index importer (unchanged behaviour, new name). |
 
-Tests: `tests/interfaces/cli/update.test.ts`.
+Tests: `tests/interfaces/cli/update.test.ts`, `tests/interfaces/cli/install-path.test.ts`, `tests/interfaces/cli/update-check.test.ts`.
 
 ## See Also
 

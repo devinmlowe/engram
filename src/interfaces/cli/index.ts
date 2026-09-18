@@ -672,36 +672,65 @@ program
     if (failed) process.exit(1);
   });
 
-// ─── update (controlled self-update, #44) ─────────────────────────
+// ─── update (controlled self-update, #44; rollback + daily check, #65) ──
+
+/** One yes/no question on the terminal. */
+async function askYesNo(question: string): Promise<boolean> {
+  const { createInterface } = await import("node:readline/promises");
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = (await rl.question(question)).trim().toLowerCase();
+    return answer === "y" || answer === "yes";
+  } finally {
+    rl.close();
+  }
+}
 
 program
   .command("update")
   .description(
-    "Upgrade this install safely: backup, stop services, pull/npm install, migrate, restart services, verify. --check compares versions; --plan shows what would happen",
+    "Upgrade this install safely: backup, stop services, pull/npm install, migrate, restart services, verify. --check compares versions; --plan shows what would happen; --rollback restores the previous version from the plan the last run recorded",
   )
-  .option("--check", "Print current vs available version and exit")
+  .option("--check", "Print current vs available version and exit (cached for 24 h in <data dir>/cache/update-check.json)")
   .option("--plan", "Read-only: print the full plan (install kind, data dirs, model cache, services) and exit")
   .option("--dry-run", "Alias for --plan")
-  .option("-y, --yes", "Do not ask for confirmation")
+  .option("-y, --yes", "Do not ask for confirmation; after a failed post-swap step, roll back without asking")
   .option("--no-backup", "Skip the pre-update backup of the data dir")
   .option("--to <version>", "Target version for npm installs (default: latest)")
+  .option("--rollback [stamp]", "Roll back the most recent update (or the plan with this stamp; see --list-rollbacks): stop services, restore the previous code, migrate, restart, verify. Code-only unless --restore-data")
+  .option("--restore-data", "With --rollback: also restore the pre-update backup of the data dir (everything written since the update is discarded)")
+  .option("--list-rollbacks", "List the recorded update plans (<data dir>/updates/) and exit")
   .action(async (opts) => {
     const { homedir } = await import("node:os");
     const { realpathSync } = await import("node:fs");
     const { PACKAGE_ROOT } = await import("../../_core/version/index.js");
     const { defaultServiceDeps } = await import("./services.js");
-    const { detectInstall, latestAvailable, formatCheck } = await import("./install-kind.js");
+    const { formatCheck } = await import("./install-kind.js");
     const { buildUpdatePlan, formatPlan, runUpdate } = await import("./update.js");
+    const { refreshUpdateCheck } = await import("./update-check.js");
+    const { formatRollbackPlans, listRollbackPlans, rollbackPlansDir, rollbackUpdate, selectRollbackPlan } = await import("./rollback.js");
 
+    const config = loadConfig();
     const services = defaultServiceDeps({ engramDir: PACKAGE_ROOT, home: homedir() });
     if (opts.check) {
-      const install = await detectInstall({ exec: services.exec, packageRoot: PACKAGE_ROOT });
-      for (const l of formatCheck(install, await latestAvailable(install, services.exec))) console.log(l);
+      const r = await refreshUpdateCheck({ dataDir: config.dataDir, exec: services.exec, packageRoot: PACKAGE_ROOT }, { force: true });
+      for (const l of formatCheck(r.install, r.available)) console.log(l);
+      if (r.cached) console.log(`(cached ${r.entry.checkedAt}; refreshed daily, ENGRAM_NO_UPDATE_CHECK=1 silences the notice)`);
       return;
+    }
+    if (opts.listRollbacks) {
+      const plans = listRollbackPlans(config.dataDir);
+      console.log(`Update plans in ${rollbackPlansDir(config.dataDir)} (newest first):`);
+      for (const l of formatRollbackPlans(plans)) console.log(l);
+      return;
+    }
+    if (opts.restoreData && opts.rollback === undefined) {
+      console.error("--restore-data only makes sense with --rollback");
+      process.exit(2);
     }
     const thisScript = (() => { try { return realpathSync(process.argv[1] ?? ""); } catch { return process.argv[1] ?? ""; } })();
     const deps = {
-      config: loadConfig(),
+      config,
       services,
       packageRoot: PACKAGE_ROOT,
       hermesHome: process.env.HERMES_HOME?.trim() || process.env.HERMES_ROOT?.trim() || join(homedir(), ".hermes"),
@@ -710,7 +739,39 @@ program
       node: process.execPath,
       cliScript: (install: { kind: string; root: string }) =>
         install.kind === "git" ? join(install.root, "dist", "interfaces", "cli", "index.js") : thisScript,
+      confirm: process.stdin.isTTY ? askYesNo : undefined,
     };
+
+    if (opts.rollback !== undefined) {
+      const plans = listRollbackPlans(config.dataDir);
+      if (plans.length === 0) {
+        console.error(`nothing to roll back: no update plan in ${rollbackPlansDir(config.dataDir)} (engram update records one before it changes anything)`);
+        process.exit(1);
+      }
+      const chosen = selectRollbackPlan(plans, typeof opts.rollback === "string" ? opts.rollback : undefined);
+      if (!chosen) {
+        console.error(`no update plan matches "${opts.rollback}". Recorded plans:`);
+        for (const l of formatRollbackPlans(plans)) console.error(l);
+        process.exit(1);
+      }
+      const { plan, file } = chosen;
+      const mode = opts.restoreData ? "code + data" : "code-only";
+      console.log(`Rollback plan: ${file}`);
+      for (const l of formatRollbackPlans([chosen])) console.log(l);
+      if (plan.rolledBack) console.log(`  (already rolled back ${plan.rolledBack.ok ? "successfully" : "with errors"} at ${plan.rolledBack.at}; running again)`);
+      if (!opts.yes) {
+        if (!process.stdin.isTTY) {
+          console.error("Not a terminal: re-run with --yes to proceed without confirmation.");
+          process.exit(2);
+        }
+        if (!(await askYesNo(`\nRoll back to ${plan.install.version} (${mode})? [y/N] `))) { console.log("Aborted."); return; }
+      }
+      console.log("");
+      const result = await rollbackUpdate(plan, file, deps, { restoreData: Boolean(opts.restoreData), reason: "engram update --rollback" });
+      if (!result.ok) process.exit(1);
+      return;
+    }
+
     const plan = await buildUpdatePlan(deps, { noBackup: opts.backup === false, to: opts.to });
     for (const l of formatPlan(plan)) console.log(l);
     if (opts.plan || opts.dryRun) return;
@@ -720,14 +781,10 @@ program
         console.error("Not a terminal: re-run with --yes to proceed without confirmation.");
         process.exit(2);
       }
-      const { createInterface } = await import("node:readline/promises");
-      const rl = createInterface({ input: process.stdin, output: process.stdout });
-      const answer = (await rl.question("\nProceed with the update? [y/N] ")).trim().toLowerCase();
-      rl.close();
-      if (answer !== "y" && answer !== "yes") { console.log("Aborted."); return; }
+      if (!(await askYesNo("\nProceed with the update? [y/N] "))) { console.log("Aborted."); return; }
     }
     console.log("");
-    const result = await runUpdate(plan, deps);
+    const result = await runUpdate(plan, deps, { yes: Boolean(opts.yes) });
     if (!result.ok) process.exit(1);
   });
 
@@ -1322,7 +1379,7 @@ program
 program
   .command("doctor")
   .description(
-    "Diagnose the runtime: node version, platform/arch, native modules, model cache, data dir, MCP daemon",
+    "Diagnose the runtime: node version, platform/arch, native modules, model cache, data dir, install path (every engram on PATH vs this install), MCP daemon, hosts",
   )
   .option("--json", "Print the report as JSON instead of text")
   .action(async (opts) => {
@@ -1393,6 +1450,20 @@ program
       closeDatabase();
     }
   });
+
+// #65: the daily version notice — one stderr line, on a few user-facing
+// commands, never on JSON output, never on the MCP server. The lookup runs at
+// most once a day (cached in <data dir>/cache/update-check.json, bounded by a
+// timeout) and ENGRAM_NO_UPDATE_CHECK=1 disables it.
+const UPDATE_NOTICE_COMMANDS = new Set(["doctor", "health", "stats", "search", "sync", "reflect"]);
+program.hook("postAction", async (_thisCommand, actionCommand) => {
+  if (!UPDATE_NOTICE_COMMANDS.has(actionCommand.name())) return;
+  if ((actionCommand.opts() as { json?: boolean }).json) return;
+  const { maybeUpdateNotice } = await import("./update-check.js");
+  const { realExec } = await import("./services.js");
+  const notice = await maybeUpdateNotice({ dataDir: loadConfig().dataDir, exec: realExec });
+  if (notice) console.error(notice);
+});
 
 // #37: an async action that throws must surface as one line + exit 1, not
 // an unhandled-rejection stack trace. Per-command catches that need their
