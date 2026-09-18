@@ -182,6 +182,26 @@ Explicitly store a fact, preference, decision, or other knowledge that should pe
 remember("The project uses ESM modules with .js import extensions")
 ```
 
+### forget — Correct the Store
+
+When a recalled memory is wrong or stale, say "forget that": the agent passes the `id` printed on every recalled `<semantic id="…">` element and the memory is gone from recall in one call. With a `query` instead, the tool lists matching memories with their ids and deletes nothing unless `confirm` is set and exactly one memory matches.
+
+```
+forget(memory_id: "3f9c1c2e-…")
+forget(query: "we deploy on Fridays", confirm: true)   # acts only on an unambiguous match
+```
+
+A forgotten memory is kept (out of recall, restorable) for `ENGRAM_FORGET_RETENTION_DAYS` (30 by default) and then hard-deleted by the dream prune phase; `hard: true` deletes it at once. The dream pipeline will not re-extract the same statement from that conversation. Inspect and curate from the terminal:
+
+```bash
+engram memories list --query "deploy"        # ids, dates, types, scopes
+engram memories show <id>                    # where it came from: conversation, exchanges, extractor, FSRS stats, change log
+engram memories delete <id>                  # same as the forget tool (actor: cli); --hard purges
+engram memories restore <id>                 # undo inside the retention window
+engram memories purge --conversation <id>    # forget everything derived from one conversation
+engram memories log                          # who forgot / edited what, and when
+```
+
 ### show — Read Conversations
 
 Read the full content of a conversation file found via `recall`. Supports pagination with `startLine`/`endLine` for large files.
@@ -283,7 +303,7 @@ a near-duplicate sibling before insertion. `--force` ignores the fingerprint.
 | **extract** | Extracts facts, entities, and relationships from new exchanges. The model scores each fact's `importance` and its own `confidence` (0–1; used as the memory's initial confidence). Point-in-time status ("phase 3 is complete", "added 12 tests") is filed as a transient tier: importance capped at 0.3 and FSRS stability 7 days, so it fades quickly unless recalled |
 | **consolidate** | Deduplicates memories (against the store and within the batch), resolves conflicts, merges entities |
 | **reflect** | Runs community detection, finds bridge entities, generates observations |
-| **prune** | Applies confidence decay, archives low-confidence memories, cleans orphans |
+| **prune** | Applies confidence decay, archives low-confidence memories, cleans orphans; hard-deletes memories forgotten more than `ENGRAM_FORGET_RETENTION_DAYS` ago and removes graph rows a `forget` left with no evidence |
 
 ### Uninstall
 
@@ -335,6 +355,7 @@ Engram is configured through environment variables. All settings have sensible d
 | `ENGRAM_LOCAL_MODEL` | `qwen2.5:7b` | Ollama model used by the local tier (must be pulled on `OLLAMA_HOST`) |
 | `ENGRAM_LOCAL_MODEL_FALLBACKS` | (none) | Comma-separated Ollama models tried in order when `ENGRAM_LOCAL_MODEL` is not pulled; `engram doctor` shows which model the Ollama tier resolved to |
 | `ENGRAM_DREAM_MAX_CONVERSATIONS` | (unlimited) | Cap on conversations extracted per run (bounds a manual end-to-end run) |
+| `ENGRAM_FORGET_RETENTION_DAYS` | `30` | Days a forgotten memory is kept before the prune phase hard-deletes it (`0` = next run); `--hard` bypasses it |
 
 ---
 

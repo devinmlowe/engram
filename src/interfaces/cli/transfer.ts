@@ -136,7 +136,9 @@ function readRows(db: Database.Database, kind: ExportKind, opts: ExportOptions):
   let sql = `SELECT * FROM ${kind}`;
   const params: unknown[] = [];
   if (kind === "memories") {
-    const where: string[] = [];
+    // Forgotten memories (#55) are never exported, even with includeInactive:
+    // importing them elsewhere would resurrect what the user deleted.
+    const where: string[] = ["deleted_at IS NULL"];
     if (!opts.includeInactive) where.push("is_active = 1");
     if (opts.scopes && opts.scopes.length > 0) {
       where.push(`scope IN (${opts.scopes.map(() => "?").join(", ")})`);

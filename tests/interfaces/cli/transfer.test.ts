@@ -210,6 +210,17 @@ describe("export", () => {
     expect(inactive.superseded_by).toBe("mem-global-1");
   });
 
+  it("never exports forgotten memories, even with includeInactive (#55)", () => {
+    a.db
+      .prepare("UPDATE memories SET is_active = 0, deleted_at = '2026-09-17T00:00:00.000Z', deleted_by = 'cli' WHERE id = 'mem-global-1'")
+      .run();
+    const { header, records } = parseAll(exportLines(a.db, { includeInactive: true }));
+    expect(header.counts.memories).toBe(3);
+    expect(records.find((r) => r.data.id === "mem-global-1")).toBeUndefined();
+    const active = parseAll(exportLines(a.db));
+    expect(active.records.find((r) => r.data.id === "mem-global-1")).toBeUndefined();
+  });
+
   it("--scope exports only memories in that scope", () => {
     const { header, records } = parseAll(exportLines(a.db, { scopes: ["hermes:career"] }));
     expect(header.counts.memories).toBe(1);
