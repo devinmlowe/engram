@@ -17,7 +17,7 @@ External access points to engram — CLI for humans, MCP for LLM agents, web for
 
 ## Contains
 
-- [cli/](./cli/) — Command-line interface (26 commands, commander-based; `mcp install|uninstall|status` registers hosts)
+- [cli/](./cli/) — Command-line interface (27 commands, commander-based; `mcp install|uninstall|status` registers hosts; `setup` is the one-command first run)
 - [mcp/](./mcp/) — Model Context Protocol server (16 tools; stdio by default — bridging to a healthy HTTP daemon, `--standalone` to force inline — or Streamable HTTP with a worker pool via `--http`)
 - [web/](./web/) — Web visualization server (4 views, SSE real-time updates)
 - [shared/](./shared/) — Shared operation handlers (search, remember, explore, reflect)
@@ -25,7 +25,7 @@ External access points to engram — CLI for humans, MCP for LLM agents, web for
 ## Key Interfaces
 
 - **MCP Tools**: `recall`, `remember`, `reflect`, `explore`, `show`, `recall_session`, `recall_drill`, `explore_selective`, `remember_batch`, `fetch_snippets`, `index_file_structure`, `scan_file`
-- **CLI Commands**: `init`, `sync`, `search`, `remember`, `extract`, `dream`, `reflect`, `explore`, `entities`, `relationships`, `stats`, `health`, `doctor`, `preflight`, `update`, `migrate`, `import-legacy`, `validate`, `backfill-event-ts`, `commitments`, `commitment-done`, `commitments-extract`, `export`, `import`, `mcp`
+- **CLI Commands**: `init`, `sync`, `search`, `remember`, `extract`, `dream`, `reflect`, `explore`, `entities`, `relationships`, `stats`, `health`, `doctor`, `setup`, `preflight`, `update`, `migrate`, `import-legacy`, `validate`, `backfill-event-ts`, `commitments`, `commitment-done`, `commitments-extract`, `export`, `import`, `mcp`
 - **Web Routes**: `/graph`, `/graph/depth`, `/graph/galaxy`, `/words`, `/api/*`
 
 ## See Also

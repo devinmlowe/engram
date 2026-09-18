@@ -23,11 +23,32 @@ Designed as an MCP server for Claude Code and other LLM agents, with CLI and web
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) if you want `engram sync` to ingest your conversation history from `~/.claude/projects`
 - At least one LLM provider for extraction and dream consolidation (see [Configuration](#configuration)). Search, `remember`, and the web visualizer work without one.
 
-**From npm — three commands**
+**Quick start — three commands**
 
 ```bash
 npx @devinmlowe/engram preflight    # is this node/platform/arch/libc covered by prebuilt native modules? (fix per OS if not)
 npm install -g @devinmlowe/engram   # puts `engram` on your PATH; the postinstall hook runs the same preflight
+engram setup                        # doctor → init → sync (asked) → register every host present → install the three services → doctor --fix → one real extraction → summary
+```
+
+`engram setup` walks a bare install to running and ends by telling you which LLM tier did
+the extraction (`extraction smoke: tier=ollama memories=3`). Every step prints what it did and
+the manual command it stands for, so nothing is hidden. It installs **all three services** —
+the MCP HTTP daemon, the nightly dream timer and the web visualizer (port 3001, loopback) — by
+default (decision #62); `--no-daemons` or `--daemons=mcp,dream` narrows that, `--host claude`
+narrows host registration, `--no-sync` / `--sync` skip or force indexing, `--no-smoke` skips the
+extraction, `--yes` answers every question for scripts (the Linux `loginctl enable-linger`
+prompt is never implied), `--json` prints the result. With no LLM provider configured the
+dream timer is still installed and setup ends with `[warn] dream timer installed but no LLM
+tier is reachable …` naming the variables to set — exit 0; only a required doctor failure (or a
+failed `init`) exits 1. Later, `engram doctor --fix` repairs whatever is red — the service env
+file, a model cache inside `node_modules`, a missing Ollama model (asked first), a stopped MCP
+daemon, an unregistered host — printing the manual equivalent of each; a second run says
+`nothing to fix`. See [CLI](#cli) and `docs/api-reference.md`.
+
+**The same, by hand**
+
+```bash
 engram mcp install claude           # registers engram with Claude Code (codex | cursor | hermes | --all); restart the host
 ```
 
@@ -53,16 +74,26 @@ npm install          # runs the same preflight as postinstall, then builds via t
 npm link             # puts `engram` on your PATH (or run `node dist/interfaces/cli/index.js` directly)
 ```
 
-Either way, continue with:
+Either way, continue with `engram setup` — or step by step:
 
 ```bash
 engram preflight     # prebuilt / compiled locally / unsupported per native module, with the fix for this OS
-engram doctor        # node version, platform/arch, native modules, model cache, ollama tier, data dir, install path, mcp daemon, hosts — all [ok]?
+engram doctor        # node, platform/arch, native modules, model cache, ollama tier, llm providers, data dir, env file, install path, mcp daemon, hosts, extraction smoke — all [ok]?
+engram doctor --fix  # apply the known remediations (env file, durable model cache, ollama pull with confirmation, start a stopped daemon, register a host) and re-check
 engram init          # creates engram.db in the data dir (default ~/.local/share/engram; see Configuration) and downloads the embedding model
 engram sync          # index conversations from ~/.claude/projects (optional)
 engram search "what did I decide about caching"
 engram mcp install --all   # from a checkout: register every host present (~/.claude, ~/.codex, ~/.cursor, ~/.hermes)
+scripts/install-mcp-daemon.sh install; scripts/install-daemon.sh install; scripts/install-visualizer.sh install   # the three services (what setup runs)
 ```
+
+`engram doctor` ends with an `extraction smoke` line: one real extraction over your most recent
+conversation (or a bundled fixture when nothing is indexed yet) under a 60 s budget with a
+capped input, reporting `tier=<ollama|openai|openrouter|anthropic> memories=N` or every tier's
+reason when none answers. Memories it extracts from a real conversation are written like any
+other, stamped `source=smoke` (find them with `engram memories list`, remove them with `forget`);
+the fixture is never written. `--no-smoke` skips it; `--strict` exits 1 when any line is not
+`[ok]` (CI).
 
 > **First run downloads models once.** `engram init` (or the first search) pulls several hundred
 > MB of model weights into `~/.local/share/engram/models` (or `$ENGRAM_MODEL_CACHE_DIR` /
@@ -661,7 +692,7 @@ stopped and started by hand, or replaced with `install-mcp-daemon.sh install`.
 Verify after restarting:
 
 ```bash
-engram doctor      # node, native modules, model cache, ollama tier, effective data dir, install path, mcp daemon /health, registered hosts
+engram doctor      # node, native modules, model cache, ollama tier, effective data dir, env file, install path, mcp daemon /health, registered hosts, extraction smoke
 engram health      # database, embedding model, MCP entry point
 engram stats       # counts must match the pre-update numbers
 engram search "smoke test"   # end-to-end recall through the new build
@@ -761,7 +792,8 @@ engram entities        # List/search entities
 engram relationships   # Show relationships for an entity
 engram stats           # Database statistics (--json: the row counts `engram update` compares before/after)
 engram health          # System health check (database, model, Ollama, MCP entry point)
-engram doctor          # Runtime diagnostics: node, platform/arch, better-sqlite3, sqlite-vec, model cache, ollama tier, data dir, install path, mcp daemon, hosts (--json)
+engram doctor          # Runtime diagnostics: node, platform/arch, better-sqlite3, sqlite-vec, model cache, ollama tier, llm providers, data dir, env file, install path, mcp daemon, hosts, extraction smoke (--json, --fix [--yes], --strict, --no-smoke)
+engram setup           # First run in one command: doctor → init → sync → mcp install → all three services → doctor --fix → extraction smoke → summary (--yes, --no-sync/--sync, --no-daemons/--daemons=<ids>, --host <id...>, --no-smoke, --json)
 engram update          # Controlled self-update: backup, stop services, pull/npm install, migrate, restart, verify (--check, --plan, --yes, --no-backup, --rollback [stamp], --restore-data, --list-rollbacks)
 engram migrate [topic] # Install/data migration: data-dir | model-cache | schema | all; idempotent, --dry-run lists every action
 engram import-legacy --source <db>   # Import a legacy conversation-index SQLite DB (was `engram migrate --source`; the old spelling still forwards)

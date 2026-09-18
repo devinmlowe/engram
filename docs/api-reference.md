@@ -629,6 +629,75 @@ engram health
 
 ---
 
+### engram doctor
+
+Runtime diagnostics — 14 checks in a fixed order, one `[ok]` / `[--]` / `[FAIL]` line each, then a verdict. Only a *required* `[FAIL]` (node < 22, a native module that does not load, an unwritable model cache) makes the exit code 1.
+
+```bash
+engram doctor                   # node, platform/arch, better-sqlite3, sqlite-vec, transformers.js, model cache, ollama, llm providers,
+                                # data dir, env file, install path, mcp daemon, hosts, extraction smoke
+engram doctor --json            # the report as JSON (checks[], ok, smoke{…}; with --fix also fixes[])
+engram doctor --fix             # apply every known remediation, re-run the check, print [fixed]/[skipped]/[failed] + the manual command
+engram doctor --fix --yes       # also the confirm-gated ones (the multi-GB `ollama pull`) — for scripts
+engram doctor --strict          # exit 1 when any line is not [ok] (CI)
+engram doctor --no-smoke        # skip the extraction (no LLM call, nothing written)
+```
+
+| Check | `[--]` means | `--fix` (#61) — manual equivalent printed with every outcome |
+|-------|--------------|-----------------------------------------------------------------|
+| `model cache` | the resolved dir is inside `node_modules` (wiped by `npm ci`) | writes `ENGRAM_MODEL_CACHE_DIR='<data dir>/models'` into the service env file (created if missing), moves the downloaded weights there (`engram migrate model-cache`), adopts the value for this process and says what other shells must export |
+| `ollama` | Ollama answers but the configured model is not pulled | `ollama pull <model>` — **confirm-gated**: asked on a terminal, needs `--yes` otherwise (skipped with the command printed). Unreachable Ollama has no fix |
+| `env file` | `~/.config/engram/env` (`$XDG_CONFIG_HOME`, `ENGRAM_ENV_FILE`) is missing, or group/other can read it | creates it with mode 600 (dir 700) and a commented template of every supported variable; `chmod 600` when too wide. Never rewrites an existing file |
+| `mcp daemon` | `/health` does not answer | when the service is installed but stopped: starts it through the supervisor (`launchctl load …` / `systemctl --user start …` / the `.ps1`) and waits for `/health`. Not installed → no fix, the installer hint (that is `engram setup`'s job) |
+| `hosts` | no host is registered with this install | `engram mcp install <first host present>` — Claude Code when `~/.claude` / `~/.claude.json` exists, else Codex, Cursor, Hermes. Skipped by `mcp install` itself when the Claude plugin is installed (#60) |
+| `extraction smoke` | no tier answered / timed out | no fix; the line names every tried tier's reason and the variables to set |
+
+`--fix` is idempotent: a second run reports `Doctor --fix: nothing to fix`. Every fix prints its
+manual equivalent (`  manual: …`) so nothing happens that you could not have done by hand.
+
+**`extraction smoke`** (#61) proves extraction end to end: the most recently ingested conversation
+(`conversations.last_indexed`) — or `prompts/smoke-conversation.json` when the store is empty or
+there is no database yet — goes through the real extractor with a capped input (the last 3
+exchanges, 2 000 characters per message) under a hard 60 s budget. `[ok] extraction smoke:
+tier=ollama memories=3 (qwen2.5:7b; conversation <id> (3 exchanges); written to …/engram.db as
+source=smoke: 3 inserted, 0 merged; …)` on success; `[--] extraction smoke: no LLM tier reachable —
+ollama: skipped: …; openai: …; openrouter: skipped: OPENROUTER_API_KEY not set; anthropic: … — dream
+will not extract until a provider is configured (…)` when the cascade fails; `timed out after 60s`
+when nothing answered. Facts from a real conversation are consolidated into the real store like
+any other memory, stamped `source=smoke` (`engram memories list` shows them, `forget` /
+`engram memories delete` removes them); the bundled fixture is never written and the smoke never
+creates a database. Never required; `--no-smoke` skips it; `engram update`'s verification runs
+`doctor --no-smoke`.
+
+---
+
+### engram setup
+
+First run in one command (#61; decision #62). Orchestration only — every step is an existing
+command, printed under a numbered header with its manual equivalent:
+
+```bash
+engram setup                       # walk through everything, asking where a question makes sense
+engram setup --yes                 # unattended: yes to sync, the Hermes deploy and confirm-gated fixes (never the Linux linger prompt)
+engram setup --yes --no-daemons --host claude   # scripts: register one host, install no service
+engram setup --daemons=mcp,dream   # only these services (mcp, dream, visualizer)
+engram setup --no-sync --no-smoke  # skip indexing and the extraction
+engram setup --json                # the result (steps, doctor report, fixes, smoke, hosts, daemons, log) as JSON
+```
+
+1. **doctor** — the report; aborts (exit 1) only on a required `[FAIL]`.
+2. **init** — `engram init`: database + embedding model, idempotent (`already present` when it is).
+3. **sync** — `Index conversations from ~/.claude/projects now? [Y/n]` on a terminal; `--yes` / `--sync` index, `--no-sync` skips, a script without either skips and says so.
+4. **hosts** — `engram mcp install <every host whose config dir exists>` (`--host` restricts). Claude Code is skipped by the installer when the plugin is installed (#60); the Hermes plugin deploy is offered when profiles carry it.
+5. **daemons** — **all three** by default: the MCP HTTP daemon, the nightly dream timer and the web visualizer, through the shipped installers (`scripts/install-*.sh install`, the `.ps1` twins on Windows). A service already installed and running is left alone. The visualizer line names its port (`3001`) and that it binds `127.0.0.1` unless `ENGRAM_BIND` is set (which requires `ENGRAM_WEB_TOKEN`). On Linux the visualizer has no installer (run it under your own supervisor) and `loginctl enable-linger <user>` is asked separately — `--yes` never implies it; declined or scripted, the command is printed as a next step.
+6. **doctor --fix** — the remediations above, same `--yes` semantics.
+7. **extraction smoke** — unless `--no-smoke`.
+8. **summary** — one line per step (`ok` / `warn` / `skipped` / `fail`), next steps (restart the host, `engram search …`, what to configure), and, when the dream timer is installed but the smoke found no reachable tier: `[warn] dream timer installed but no LLM tier is reachable — nightly runs will not extract until a provider is configured (OLLAMA_HOST / ENGRAM_LOCAL_MODEL, OPENROUTER_API_KEY, ANTHROPIC_API_KEY, ENGRAM_OPENAI_BASE_URL + ENGRAM_OPENAI_MODEL)`.
+
+Exit 0 with warnings; exit 1 only when a required doctor check failed or `init` itself failed (no database / model); exit 2 on a bad flag.
+
+---
+
 ### engram preflight
 
 Native-dependency check for this Node ABI + platform + arch + libc, before or after install. Needs no database or models, so it also runs as `npx @devinmlowe/engram preflight` before `npm install -g`.
