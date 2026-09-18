@@ -24,6 +24,7 @@ The graph domain manages the knowledge graph — entities, typed relationships, 
 - **REQ-6**: The domain shall provide graph search returning `LayerSearchResult[]`. *(traces to L0 REQ-4)*
 - **REQ-7**: The domain shall support entity exploration (neighborhood traversal with depth). *(traces to L0 REQ-4)*
 - **REQ-8**: The domain shall generate community names and reflection observations via LLM. *(traces to L0 REQ-3)*
+- **REQ-9**: Graph rows carry a nullable `stale_since` flag (#57): a forget stamps it on entities whose `mention_count` reached zero and on relationships whose evidence list emptied; fresh evidence (`recordEntityMention`, `linkMemoryToEntities`, `findOrCreateRelationship`) clears it; `pruneOrphanEntities` deletes flagged relationships with no evidence and flagged entities with zero mentions and no relationships regardless of age. `reflect` reports `staleNodes` and the most recently flagged entities. Only the prune path deletes graph rows.
 
 ## Interface Contract
 
@@ -73,4 +74,5 @@ The graph domain manages the knowledge graph — entities, typed relationships, 
 | REQ-3 | Unit test | `../tests/graph/analyzer.test.ts` |
 | REQ-6 | Integration test | `../tests/graph/search.test.ts` |
 | REQ-7 | Unit test | `../tests/graph/search.test.ts` (exploreEntity, traverseNeighborhood) |
+| REQ-9 | Unit test | `../tests/semantic/forget.test.ts` ("forget and the graph") |
 | POST-2 | Unit test | `../tests/graph/search.test.ts` ("throws for unknown entity"); the MCP `isError` mapping: `../tests/contracts/interface-parity.test.ts` |

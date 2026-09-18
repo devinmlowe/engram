@@ -339,7 +339,7 @@ Four domains with shared core infrastructure:
 
 ## MCP Server
 
-15 tools for LLM agent memory operations:
+16 tools for LLM agent memory operations:
 
 | Tool | Purpose |
 |------|---------|
@@ -358,6 +358,7 @@ Four domains with shared core infrastructure:
 | `commitments` | List tracked commitments (promises, intentions, follow-ups owed by others) — overdue first; honours `read_scopes` |
 | `commitments_update` | Mark a commitment done, dropped, or superseded |
 | `ingest_turn` | Record one user/assistant turn of an external agent session (`session_id`, `turn_index`, `scope`, `user_text`, `assistant_text`) — idempotent upsert into the episodic layer; extracted memories inherit the scope |
+| `forget` | Remove a memory the user says is wrong or stale (#55): `memory_id` (the `id` on every recalled `<semantic>`) acts in one call; `query` returns candidates with ids and only acts with `confirm: true` and a single unambiguous match. Soft delete kept for `ENGRAM_FORGET_RETENTION_DAYS` (vector/FTS rows removed at once, change-logged with the client's name, not re-extracted by dream); `hard: true` deletes outright; honours `read_scopes` unless `scope: "global"` |
 
 ### Transports: stdio (default) and HTTP
 
@@ -600,7 +601,8 @@ engram doctor          # Runtime diagnostics: node, platform/arch, better-sqlite
 engram update          # Controlled self-update: backup, stop services, pull/npm install, migrate, restart, verify (--check, --plan, --yes, --no-backup)
 engram migrate [topic] # Install/data migration: data-dir | model-cache | schema | all; idempotent, --dry-run lists every action
 engram import-legacy --source <db>   # Import a legacy conversation-index SQLite DB (was `engram migrate --source`; the old spelling still forwards)
-engram validate --source <db>  # Validate legacy-import integrity against that source DB
+engram memories list|show|edit|delete|restore|purge|log  # Inspect and curate memories: provenance, edit, forget (soft delete + retention), restore, purge a conversation, change log
+engram validate [--source <db>] [--fix]  # Store integrity (embeddings, FTS, no vector/FTS rows for forgotten memories; --fix repairs); --source also compares against a legacy import DB
 engram backfill-event-ts  # Backfill event-time timestamps (temporal recall)
 engram commitments [status]        # List tracked commitments (same XML as the MCP tool)
 engram commitment-done <id>        # Mark a commitment done (--status dropped|superseded)
@@ -780,6 +782,7 @@ The one exception is the launchd dream daemon, whose launcher (`scripts/run-drea
 | `ENGRAM_MODEL_CACHE_DIR` | `$ENGRAM_DATA_DIR/models` (`$HF_HOME/hub` when `HF_HOME` is set) | Where model weights are downloaded/cached; never inside `node_modules` (see [Model cache](#model-cache)) |
 | `ENGRAM_SKIP_PREFLIGHT` | — | Set to `1` to silence the `npm install` platform preflight |
 | `ENGRAM_CHUNKING_STRATEGY` | `fixed` | `fixed` or `adaptive` (content-aware boundaries) |
+| `ENGRAM_FORGET_RETENTION_DAYS` | `30` | Days a forgotten memory is kept (out of recall, restorable) before the dream prune phase hard-deletes it; `0` purges on the next run. `forget hard: true` / `engram memories delete --hard` / `purge --hard` bypass it |
 | `ENGRAM_BIND` | `127.0.0.1` | Web visualizer bind address (`0.0.0.0` to expose on the network; requires `ENGRAM_WEB_TOKEN`) |
 | `ENGRAM_WEB_TOKEN` | `ENGRAM_MCP_TOKEN` | Bearer token / `?token=` required by the visualizer (all routes but `/api/health`) |
 | `ENGRAM_MCP_TOKEN` | — | Bearer token required on the MCP daemon's `/mcp`; see [MCP Server](#transports-stdio-default-and-http) |

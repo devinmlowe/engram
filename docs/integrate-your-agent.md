@@ -142,6 +142,7 @@ Twelve tools, registered in `src/interfaces/mcp/tool-names.ts`:
 | `commitments` | List the user's tracked commitments (pending by default; overdue first). Call it in proactive check-ins. |
 | `commitments_update` | Mark a commitment done, dropped, or superseded once the user confirms. |
 | `index_file_structure` | Parse a source file into its function, class, and module definitions. |
+| `forget` | Remove a memory the user says is wrong. Pass the `id` from a recalled `<semantic id="…">`; or a `query` to get candidates (nothing is deleted unless `confirm` is true and exactly one matches). **This is the correction call.** |
 
 The list above and `tools/list` on a running server are authoritative;
 `docs/api-reference.md` documents the five core tools in detail.

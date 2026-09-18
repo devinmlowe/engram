@@ -21,7 +21,8 @@ Shared infrastructure in `_core/` (config, db, types, embeddings, search, llm, c
 - **remember** — Store a single memory (fact, decision, pattern, solution, convention, preference)
 - **show** — Retrieve full conversation or memory context
 - **explore** — Fixed-depth graph traversal from an entity
-- **reflect** — Graph analysis — communities, bridges, temporal patterns
+- **reflect** — Graph analysis — communities, bridges, temporal patterns (health reports `stale_nodes` — entities flagged by `forget`, pruned on the next dream run)
+- **forget** — Remove a memory the user says is wrong or stale (#55). `memory_id` (the `id` attribute on every recalled `<semantic>`) acts in one call; `query` runs semantic search and returns candidates with ids, acting only with `confirm: true` and exactly one match (a single result, or one whose content equals the query). Soft delete (#56): `is_active = 0` + `deleted_at`/`deleted_by`, vector + FTS rows removed immediately, a `memory_changes` row (`before` = content, actor = the MCP client's `clientInfo.name`), and a `memory_suppressions` content hash so dream extract does not re-extract it; the dream prune phase hard-deletes after `ENGRAM_FORGET_RETENTION_DAYS`. `hard: true` deletes outright. Graph (#57): decrements `mention_count` on evidenced entities and stamps `stale_since` at zero; never deletes graph rows (`pruneOrphanEntities` does, next run). `readOnlyHint: false`, `destructiveHint: true`; honours `read_scopes` unless `scope: "global"`.
 
 ### Memory & Knowledge (Phase 6 RLM)
 
@@ -43,7 +44,7 @@ Shared infrastructure in `_core/` (config, db, types, embeddings, search, llm, c
 
 ### External Ingestion
 
-- **ingest_turn** — Record one user/assistant turn of an external agent session (`session_id`, `turn_index`, `scope`, `user_text`, `assistant_text`); idempotent upsert, extracted memories inherit the scope. 15 tools total; `src/interfaces/mcp/tool-names.ts` is canonical.
+- **ingest_turn** — Record one user/assistant turn of an external agent session (`session_id`, `turn_index`, `scope`, `user_text`, `assistant_text`); idempotent upsert, extracted memories inherit the scope. 16 tools total; `src/interfaces/mcp/tool-names.ts` is canonical.
 
 Recall tools (`recall`, `recall_session`, `recall_drill`) reinforce returned memories (FSRS bookkeeping only) and keep `readOnlyHint: true`; `reinforce: false` opts out. `recall`/`recall_session`/`remember`/`remember_batch`/`explore`/`explore_selective`/`commitments` accept per-call `scope` / `read_scopes` over the `ENGRAM_SCOPE` / `ENGRAM_READ_SCOPES` defaults. Since #25 `scope` lives on memories, conversations, exchanges, entities, relationships and commitments (`src/_core/db/scope.ts`): episodic recall, graph search, explore and the commitments ledger filter by `read_scopes`; dream extraction stamps entities/relationships/commitments with the conversation's scope, and a graph row seen from a second scope widens to `global`. `reflect` stays global.
 
@@ -55,9 +56,11 @@ For large file analysis, combine tools in this order:
 3. `scan_file` → exhaustive regex search for enumeration tasks (breadth)
 4. `fetch_snippets` → read specific line ranges for detail extraction (depth)
 
-## CLI Commands (25)
+## CLI Commands (26)
 
-`init`, `sync`, `search`, `remember`, `extract`, `dream`, `reflect`, `explore`, `entities`, `relationships`, `stats`, `health`, `migrate`, `import-legacy`, `validate`, `backfill-event-ts`, `mcp`, `commitments`, `commitment-done`, `commitments-extract`, `doctor`, `preflight`, `update`, `export`, `import`
+`init`, `sync`, `search`, `remember`, `memories`, `extract`, `dream`, `reflect`, `explore`, `entities`, `relationships`, `stats`, `health`, `migrate`, `import-legacy`, `validate`, `backfill-event-ts`, `mcp`, `commitments`, `commitment-done`, `commitments-extract`, `doctor`, `preflight`, `update`, `export`, `import`
+
+`engram memories` (`src/interfaces/cli/memories.ts`, #55) is the inspection/curation surface: `list [--type] [--scope] [--since] [--query] [--deleted] [--json]`, `show <id>` (source conversation title + archive path for the `show` tool, source exchanges, `source`/extractor tier, `extraction_basis`, scope, FSRS stats, graph evidence with `stale_since`, change log; accepts a unique 6+ char id prefix), `edit <id> --content` (re-embeds), `delete <id> [--hard]` (alias `forget`), `restore <id>`, `purge --conversation <id> [--hard]`, `log [--memory] [--op] [--limit]`. Actor is `cli`. `engram validate [--source <db>] [--fix]` no longer needs a legacy source: it fails on vector/FTS rows for forgotten or missing memories (`src/semantic/index-integrity.ts`) and `--fix` repairs them.
 
 `engram preflight [--strict] [--json] [--expect <spec>]` runs `scripts/preflight.cjs` (also the npm `postinstall` hook) without a database or models: per native dependency (`better-sqlite3`, `sqlite-vec`, `onnxruntime-node`) it reports `prebuilt` / `compiled locally` / `will compile` / `unsupported` / `unknown` for the Node ABI + platform + arch + libc, with the fix per OS. The script's `NATIVE_DEPS` table is the single source of truth: `engram doctor` appends the same verdict to its native-module lines, and the README "Supported platform/arch set" table is generated from it (`node scripts/supported-platforms.cjs --write`, checked by `tests/deployment/supported-platforms.test.ts`). CI runs `preflight --strict --expect prebuilt` on every supported matrix entry (Node 22/24 × ubuntu, ubuntu-24.04-arm, macos, windows) and asserts the documented `unsupported` verdict on `windows-11-arm` and in a `node:22-alpine` container (#63).
 
@@ -106,6 +109,7 @@ and is mandatory before `ENGRAM_MCP_HOST` may be anything but loopback; the visu
 
 - `ENGRAM_DB_PATH` — Database path (default: `~/.local/share/engram/engram.db`)
 - `ENGRAM_CHUNKING_STRATEGY` — `fixed` or `adaptive` (content-aware chunk boundaries)
+- `ENGRAM_FORGET_RETENTION_DAYS` — Days a forgotten memory stays (out of recall, `engram memories restore`-able) before dream prune hard-deletes it (default 30; `0` = next run). `--hard` bypasses it (#56)
 - `ENGRAM_LOCAL_MODEL` / `ENGRAM_LOCAL_MODEL_FALLBACKS` / `ENGRAM_OPENROUTER_MODEL` — Ollama model (+ ordered fallbacks when it is not pulled) and OpenRouter model; `OLLAMA_HOST`, `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY` enable those cascade tiers. `ENGRAM_OPENAI_BASE_URL` / `ENGRAM_OPENAI_MODEL` / `ENGRAM_OPENAI_API_KEY_ENV` (name of the env var holding the key) / `ENGRAM_OPENAI_TEMPERATURE` configure the generic OpenAI-compatible tier (OpenAI, LiteLLM, self-hosted; `src/_core/llm/providers/openai-compatible.ts`, which OpenRouter also runs on); `ENGRAM_LLM_PROVIDERS` sets the tier order (default `ollama,openai,openrouter,anthropic`). All-tier failures name every tier's reason (`CascadeError`); dream checkpoints record it once per conversation per run
 
 ## Development

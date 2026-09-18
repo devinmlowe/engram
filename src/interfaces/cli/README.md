@@ -1,6 +1,6 @@
 # CLI
 
-Command-line interface for direct human interaction with engram. Built on Commander.js with 25 commands covering search, memory management, graph exploration, dream pipeline, commitments, portable export/import, self-update, and system administration.
+Command-line interface for direct human interaction with engram. Built on Commander.js with 26 commands covering search, memory management and curation, graph exploration, dream pipeline, commitments, portable export/import, self-update, and system administration.
 
 ## In Scope
 
@@ -15,7 +15,8 @@ Command-line interface for direct human interaction with engram. Built on Comman
 
 ## Contains
 
-- `index.ts` — All 25 CLI commands: `init`, `sync`, `search`, `remember`, `extract`, `dream`, `reflect`, `explore`, `entities`, `relationships`, `stats`, `health`, `doctor`, `preflight`, `update`, `migrate`, `import-legacy`, `validate`, `backfill-event-ts`, `commitments`, `commitment-done`, `commitments-extract`, `export`, `import`, `mcp`
+- `index.ts` — All 26 CLI commands: `init`, `sync`, `search`, `remember`, `memories`, `extract`, `dream`, `reflect`, `explore`, `entities`, `relationships`, `stats`, `health`, `doctor`, `preflight`, `update`, `migrate`, `import-legacy`, `validate`, `backfill-event-ts`, `commitments`, `commitment-done`, `commitments-extract`, `export`, `import`, `mcp`
+- `memories.ts` — `engram memories list|show|edit|delete|restore|purge|log` (#55): the inspection and curation surface over `semantic/inspect.ts` and `semantic/forget.ts`; pure formatters exported for tests
 - `update.ts` — `engram update`: plan (install kind, data-dir candidates, model cache, services, plugin targets, blockers) and run (backup → stop → snapshot → code → migrate → restart → verify, rollback steps on failure). Post-swap steps run the new build in a child process (#44)
 - `install-kind.ts` — git checkout vs global npm install detection, latest available version (git tags / npm dist-tag), `--check` output
 - `services.ts` — Supervisor adapters (launchd, systemd user units, Windows Task Scheduler) behind one `ServiceStatus` shape with injectable `exec`/`probe`; never kills an unsupervised process
@@ -33,6 +34,20 @@ Command-line interface for direct human interaction with engram. Built on Comman
 | `engram import <file> [--scope <override>] [--dry-run]` | Read that JSONL. Idempotent by id: an existing id is updated in place only when the incoming record is newer (`updated_at` for memories/relationships, `last_seen` for entities, `resolved_at` for commitments, each falling back to `created_at`), otherwise skipped. Inserts go through the existing helpers so `memories_fts`/`entities_fts` and the vec0 tables are regenerated from content. Relationships whose endpoints are missing are skipped and counted. `--scope` overrides the scope on every imported memory. The whole file is validated before the first write; a malformed line exits non-zero with nothing changed. |
 
 Tests: `tests/interfaces/cli/transfer.test.ts`.
+
+## Memories (#55)
+
+| Command | Behaviour |
+|---------|-----------|
+| `engram memories list [--type t] [--scope a,b] [--since date] [--query text] [--deleted] [--inactive] [--limit n] [--json]` | Newest first. Forgotten rows appear only with `--deleted` (marked `[forgotten <day> by <actor>]`). |
+| `engram memories show <id>` | Full provenance: content, type, scope, `source` (extractor tier), `extraction_basis`, status (active / forgotten by whom / superseded), FSRS stats (stored + composite confidence, importance, stability, retrievability, access count, embedding presence), source conversation(s) with title (summary), project, archive path (the `show` MCP tool's `path`) and the source exchanges, graph entities it evidences (with `stale_since`), and its change log. `<id>` may be a unique prefix of 6+ characters. |
+| `engram memories edit <id> --content <text>` | Replaces the text, re-embeds and re-indexes, logs `edit` with before/after. Refuses forgotten memories. |
+| `engram memories delete <id> [--hard]` (alias `forget`) | Soft delete kept for `ENGRAM_FORGET_RETENTION_DAYS` (out of every recall path now; vector/FTS rows removed; graph counts decremented, #57). `--hard` deletes the row outright. |
+| `engram memories restore <id>` | Undo a forget inside the retention window (re-indexed; extraction suppression lifted). |
+| `engram memories purge --conversation <id> [--hard]` | Forget every memory derived from that conversation's exchanges (privacy purge). |
+| `engram memories log [--memory id] [--op forget\|edit\|purge\|restore] [--limit n] [--json]` | The change log, newest first, with actor (`cli` or the MCP client name). |
+
+`engram validate [--source <db>] [--fix]`: `--source` is optional; the memory-index check fails on vector/FTS rows for forgotten or missing memories and `--fix` repairs them (vectors by id; FTS by rebuild + re-unindexing every forgotten row). Tests: `tests/interfaces/cli/memories.test.ts`, `tests/semantic/forget.test.ts`.
 
 ## Preflight / doctor
 

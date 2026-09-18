@@ -18,7 +18,7 @@ SQLite database connection, schema management, and thin data access helpers. All
 ## Contains
 
 - `connection.ts` — Database connection with WAL mode, PRAGMA tuning
-- `schema.ts` — Full schema definition and initialization
+- `schema.ts` — Full schema definition and initialization. Checkpointed migrations in `schema_migrations`: `commitments_v1`, `conversations_scope_v1`, `graph_scope_v1`, `exchanges_author_v1`, `forget_v1` (#55: `memories.deleted_at` / `deleted_by`, `memory_changes`, `memory_suppressions`, `entities.stale_since`, `relationships.stale_since`)
 - `helpers.ts` — Thin data access helpers (upsert, batch insert)
 - `fts.ts` — FTS5 index rebuild and sync utilities
 - `vector.ts` — sqlite-vec vector table operations

@@ -22,6 +22,7 @@ The dream domain orchestrates autonomous memory consolidation through a five-pha
 - **REQ-5**: The domain shall apply type-specific decay rates to memory retrievability during the prune phase. *(traces to L0 REQ-9)*
 - **REQ-6**: The domain shall produce a `DreamReport` with per-phase metrics on completion. *(traces to L0 POST-3)*
 - **REQ-7**: The domain shall support selective phase execution and single-conversation targeting. *(traces to L0 REQ-5)*
+- **REQ-8**: The extract phase shall not store a fact whose content hash is in `memory_suppressions` (a statement the user forgot), counting it in `DreamReport.suppressedFacts`; the prune phase shall hard-delete memories with `deleted_at` older than `ENGRAM_FORGET_RETENTION_DAYS` (0 = every forgotten memory), logging a `purge` change with actor `dream`, and shall run the stale-row fast path of `pruneOrphanEntities`. Both steps are non-fatal to the run. *(#55; decisions #56, #57)*
 
 ## Interface Contract
 
@@ -67,4 +68,5 @@ The dream domain orchestrates autonomous memory consolidation through a five-pha
 | REQ-3 | Unit test | `../tests/dream/scheduler.test.ts` |
 | REQ-4 | Integration test | `../tests/dream/daemon.test.ts` |
 | REQ-6 | Integration test | `../tests/dream/integration.test.ts` |
+| REQ-8 | Integration test | `../tests/dream/daemon.test.ts` ("Forget suppression + retention purge") |
 | INV-2 | Integration test | `../tests/dream/integration.test.ts` (idempotent re-run), `../tests/dream/scheduler.test.ts` (checkpoint idempotency) |
