@@ -61,7 +61,7 @@ jobs:
         run: node scripts/preflight.cjs --strict --expect prebuilt
 
       - name: Cache transformer model downloads
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}/.engram-model-cache
           key: ${{ runner.os }}-${{ runner.arch }}-transformers-${{ hashFiles('package-lock.json') }}

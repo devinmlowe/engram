@@ -76,7 +76,7 @@ jobs:
       # location for every OS via ENGRAM_MODEL_CACHE_DIR above and caches that.
       - name: Cache transformer model downloads
         if: matrix.verdict != 'unsupported'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ runner.temp }}/engram-model-cache
           # Weights are Node-version independent: one cache per os/arch, so the
