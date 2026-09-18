@@ -1379,7 +1379,7 @@ program
 program
   .command("doctor")
   .description(
-    "Diagnose the runtime: node version, platform/arch, native modules, model cache, data dir, MCP daemon",
+    "Diagnose the runtime: node version, platform/arch, native modules, model cache, data dir, install path (every engram on PATH vs this install), MCP daemon, hosts",
   )
   .option("--json", "Print the report as JSON instead of text")
   .action(async (opts) => {

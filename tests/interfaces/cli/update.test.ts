@@ -973,6 +973,23 @@ describe("engram update --rollback (#65, decision #66)", () => {
     expect(restored.lines.join("\n")).toContain("rollback mode: code + data");
   });
 
+  it("a failed npm ci (HEAD already moved by the pull) offers the rollback; a failed pull does not", async () => {
+    const { home, cfg, probe, handlers } = setup();
+    const { exec } = fakeExec([...handlers.filter(([re]) => !/npm ci/.test(re.source)), [/^npm ci$/, () => ({ status: 1, stderr: "gyp ERR!" })]]);
+    const d = updateDeps("darwin", home, cfg, exec, probe, []);
+    const res = await runUpdate(await buildUpdatePlan(d, { noBackup: true }), d);
+    expect(res.ok).toBe(false);
+    expect(readRollbackPlan(res.planFile!).progress).toBe("failed:npm ci");
+    expect(res.lines.join("\n")).toContain("Not a terminal: run `engram update --rollback 20260917-123456Z`");
+    const pullFails = fakeExec([...handlers.filter(([re]) => !/pull/.test(re.source)), [/pull --ff-only/, () => ({ status: 1, stderr: "fatal: no route" })]]);
+    const d2 = updateDeps("darwin", home, cfg, pullFails.exec, probe, []);
+    const r2 = await runUpdate(await buildUpdatePlan(d2, { noBackup: true }), d2);
+    expect(r2.ok).toBe(false);
+    expect(readRollbackPlan(r2.planFile!).progress).toBe("failed:pull");
+    expect(r2.lines.join("\n")).toContain("Nothing to roll back: the code on disk is unchanged");
+    expect(r2.lines.join("\n")).not.toContain("--rollback 2026");
+  });
+
   it("npm installs roll back with npm install -g <package>@<previous>", async () => {
     const home = join(root, "home");
     const data = join(root, "data");

@@ -18,7 +18,7 @@ SQLite database connection, schema management, and thin data access helpers. All
 ## Contains
 
 - `connection.ts` — Database connection with WAL mode, PRAGMA tuning
-- `schema.ts` — Full schema definition and initialization. Checkpointed migrations in `schema_migrations`: `commitments_v1`, `conversations_scope_v1`, `graph_scope_v1`, `exchanges_author_v1`, `forget_v1` (#55: `memories.deleted_at` / `deleted_by`, `memory_changes`, `memory_suppressions`, `entities.stale_since`, `relationships.stale_since`)
+- `schema.ts` — Full schema definition and initialization. Checkpointed migrations in `schema_migrations`: `commitments_v1`, `conversations_scope_v1`, `graph_scope_v1`, `exchanges_author_v1`, `forget_v1` (#55: `memories.deleted_at` / `deleted_by`, `memory_changes`, `memory_suppressions`, `entities.stale_since`, `relationships.stale_since`). Schema version (#65): `SCHEMA_MIGRATIONS` is that list in apply order, `SCHEMA_VERSION` its length, `schemaVersion(db)` the checkpoints a database has recorded, and `BREAKING_MIGRATIONS` the checkpoints an older build cannot read past (empty: every migration is additive). `engram update` persists the version, and `--rollback` refuses a code-only rollback across a breaking one — add a checkpoint to the set in the same change that makes it breaking
 - `helpers.ts` — Thin data access helpers (upsert, batch insert)
 - `fts.ts` — FTS5 index rebuild and sync utilities
 - `vector.ts` — sqlite-vec vector table operations

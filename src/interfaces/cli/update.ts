@@ -356,8 +356,9 @@ export async function runUpdate(plan: UpdatePlan, deps: UpdateDeps, opts: RunOpt
   return { ok: true, lines, planFile };
 
   /**
-   * A step failed. Before the code swap there is nothing to roll back:
-   * bring the services back and print the recipe. After it, offer the
+   * A step failed. A failed `git pull` changed nothing: bring the services
+   * back and say so. Anything later may have touched the code on disk (a
+   * failed `npm ci` follows a pull that already moved HEAD), so offer the
    * rollback (#65): `--yes` performs it, a terminal is asked, otherwise the
    * command is printed. The backup is restored only when verification proved
    * counts dropped (decision #66).
@@ -366,13 +367,11 @@ export async function runUpdate(plan: UpdatePlan, deps: UpdateDeps, opts: RunOpt
     say("");
     say("UPDATE FAILED.");
     progress(`failed:${step}`);
-    const codeSwapped = ["migrate", "verify"].includes(step) || step.startsWith("start ");
-    if (!codeSwapped) {
+    if (step === "pull") {
       // Never leave the machine without its services: bring back whatever
       // was running, on whatever code is on disk now, and say so.
       for (const l of await restartAfterFailure(running, sdeps)) say(l);
-      say("Nothing to roll back: the code on disk is unchanged. If you want the pre-update state anyway:");
-      for (const l of manualRollbackSteps(rb)) say(`  ${l}`);
+      say(`Nothing to roll back: the code on disk is unchanged (plan kept at ${planFile}).`);
       return { ok: false, lines, planFile };
     }
     const restoreData = regressions.length > 0 && rb.backupDir !== null;

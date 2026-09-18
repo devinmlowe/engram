@@ -68,6 +68,8 @@ For large file analysis, combine tools in this order:
 
 `engram update` (`--check` / `--plan` / run) is the controlled self-update: backup, stop services via the per-platform supervisor adapter (`src/interfaces/cli/services.ts`), pull or `npm install -g`, `engram migrate`, restart (MCP before the plugin redeploy), verify doctor + `/health` + `stats --json` counts. `engram migrate [data-dir|model-cache|schema]` is the idempotent install/data migration (`src/interfaces/cli/data-migration.ts`); the legacy conversation-index importer is `engram import-legacy`. Post-swap steps run the *new* build in a child process. The version string comes from `package.json` via `src/_core/version/index.ts`.
 
+Rollback (#65, decision #66; `src/interfaces/cli/rollback.ts`): before step 1 the run writes `<data dir>/updates/<stamp>.json` (prior version + sha, install kind/root, backup dir, services that were running with start commands, plugin targets, target, `schema: {version, applied}`, pre-update `CountSnapshot`, `progress` marker `planned|stopped|backup|snapshot|code|migrated|restarted|verified|done|failed:<step>`; newest 10 kept). `engram update --rollback [<stamp>] [--restore-data] [--yes]` / `--list-rollbacks`: code-only by default — stop → `git checkout <sha> && npm ci` / `npm install -g <pkg>@<prev>` → `migrate schema` with the *restored* build (child process) → restart → verify (`--version`, doctor, `/health`, counts ≥ snapshot); `engram.db` keeps everything written since the update (migrations are additive). `--restore-data` copies the backup back (refused with `--no-backup`); the auto-rollback offered when a post-swap step fails (`--yes` performs it, a TTY is asked via `UpdateDeps.confirm`, otherwise the command is printed) restores data only when verification showed counts dropped. `SCHEMA_MIGRATIONS` / `SCHEMA_VERSION` / `BREAKING_MIGRATIONS` (empty) / `schemaVersion(db)` live in `src/_core/db/schema.ts`; a code-only rollback across a breaking checkpoint is refused. `engram doctor` has an `install path` check (`src/interfaces/cli/install-path.ts`: every `engram` on PATH vs `PACKAGE_ROOT`, sees through shim scripts; `[--]` on two trees or a foreign first binary, never `[FAIL]`); `update --plan` prints it as a warning, never a blocker. `update --check` is cached 24 h at `<data dir>/cache/update-check.json` (`src/interfaces/cli/update-check.ts`); `doctor`/`health`/`stats`/`search`/`sync`/`reflect` print one stderr notice (`postAction` hook, never with `--json`) and `/health` carries `update: {current, available, checkedAt}`; `ENGRAM_NO_UPDATE_CHECK=1` disables both.
+
 ## Web Visualization
 
 Port 3001 — Force graph (`/graph`), 3D depth view (`/graph/depth`), galaxy view (`/graph/galaxy`), word cloud (`/words`). Real-time SSE updates via WAL watching, dream pipeline control with live phase tracking.
@@ -140,13 +142,14 @@ through the marketplace.
 - `ENGRAM_DB_PATH` — Database path (default: `~/.local/share/engram/engram.db`)
 - `ENGRAM_CHUNKING_STRATEGY` — `fixed` or `adaptive` (content-aware chunk boundaries)
 - `ENGRAM_FORGET_RETENTION_DAYS` — Days a forgotten memory stays (out of recall, `engram memories restore`-able) before dream prune hard-deletes it (default 30; `0` = next run). `--hard` bypasses it (#56)
+- `ENGRAM_NO_UPDATE_CHECK` — `1` disables the automatic daily version lookup and the "newer version available" notice; an explicit `engram update --check` still asks (#65)
 - `ENGRAM_LOCAL_MODEL` / `ENGRAM_LOCAL_MODEL_FALLBACKS` / `ENGRAM_OPENROUTER_MODEL` — Ollama model (+ ordered fallbacks when it is not pulled) and OpenRouter model; `OLLAMA_HOST`, `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY` enable those cascade tiers. `ENGRAM_OPENAI_BASE_URL` / `ENGRAM_OPENAI_MODEL` / `ENGRAM_OPENAI_API_KEY_ENV` (name of the env var holding the key) / `ENGRAM_OPENAI_TEMPERATURE` configure the generic OpenAI-compatible tier (OpenAI, LiteLLM, self-hosted; `src/_core/llm/providers/openai-compatible.ts`, which OpenRouter also runs on); `ENGRAM_LLM_PROVIDERS` sets the tier order (default `ollama,openai,openrouter,anthropic`). All-tier failures name every tier's reason (`CascadeError`); dream checkpoints record it once per conversation per run
 
 ## Development
 
 ```bash
 npm run build        # TypeScript compilation
-npm run test:run     # Run tests (vitest, 132 test files)
+npm run test:run     # Run tests (vitest, 134 test files)
 npm run mcp          # Start MCP server
 npm run dev          # Dev CLI via tsx
 npm run dream        # Run dream consolidation

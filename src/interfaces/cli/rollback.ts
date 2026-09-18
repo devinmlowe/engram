@@ -483,8 +483,11 @@ export async function rollbackUpdate(plan: RollbackPlan, file: string, deps: Upd
   if (mig.status !== 0) { say(`  !! migrate failed: ${(mig.stderr || mig.stdout).trim()}`); return fail("migrate"); }
   for (const l of mig.stdout.trim().split("\n").filter(Boolean)) say(`  ${l}`);
 
-  // 5. restart what was running before the update
-  const toStart = wasRunning.map((was) => live.find((s) => s.id === was.id) ?? was);
+  // 5. restart what was running before the update — and anything that was
+  //    running just now (a supervisor may have started something since), so
+  //    the machine never ends up with fewer services than it had
+  const ids = [...new Set([...wasRunning, ...runningNow].map((s) => s.id))];
+  const toStart = ids.map((id) => live.find((s) => s.id === id) ?? wasRunning.find((s) => s.id === id)!);
   const started = await startServicesInOrder(toStart, sdeps, say);
   if (!started.ok) return fail(`start ${started.failed}`);
   if (toStart.length === 0) say("no services to start");

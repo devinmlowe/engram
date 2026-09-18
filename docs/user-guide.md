@@ -360,6 +360,7 @@ Engram is configured through environment variables. All settings have sensible d
 | `ENGRAM_ARCHIVE_DIR` | `{dataDir}/archive` | Archived conversation storage |
 | `ENGRAM_LOGS_DIR` | `{dataDir}/logs` | Log file directory |
 | `ENGRAM_CLAUDE_PROJECTS_DIR` | `~/.claude/projects` | Claude Code projects directory |
+| `ENGRAM_NO_UPDATE_CHECK` | (unset) | Set to `1` to disable the automatic daily "newer version available" lookup and notice (`engram update --check` still asks) |
 
 ### Embedding
 
@@ -410,6 +411,14 @@ The extract and reflect phases use the Claude API for LLM inference. Set `ANTHRO
 2. Verify the MCP server starts: `node dist/interfaces/mcp/server.js` (should print to stderr and wait)
 3. Check Claude Code MCP configuration: `claude mcp list`
 4. Ensure the path in your config points to the built `dist/interfaces/mcp/server.js` (or `dist/interfaces/cli/index.js mcp`), not the TypeScript source
+
+### `engram --version` is still old after `engram update`
+
+Two `engram` binaries are on your `PATH` (typically Homebrew's node and nvm's node each with a global install): `npm i -g` upgraded one and your shell runs the other. `engram doctor` lists them under `install path` with the fix — `npm uninstall -g @devinmlowe/engram` with the other tree's npm, or put the right `bin` dir first on `PATH`. `engram update --plan` prints the same warning.
+
+### An update failed verification
+
+`engram update` records a rollback plan in `<data dir>/updates/` before it changes anything and, when a step after the code swap fails, offers `engram update --rollback` (performed automatically with `--yes`). The rollback restores the previous code, re-runs migrations with the restored build, restarts your services and verifies; your database keeps everything written since the update. Add `--restore-data` to put the pre-update backup back as well (it is restored automatically only when the failed verification showed row counts had dropped). `engram update --list-rollbacks` shows the recorded plans. See "Rolling back" in the README.
 
 ### Database is locked
 
