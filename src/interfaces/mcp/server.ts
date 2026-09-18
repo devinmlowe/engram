@@ -22,6 +22,7 @@ import {
 } from "./dispatch.js";
 import { createEngramHttpServer } from "./http.js";
 import { DEFAULT_MCP_PORT, parseMcpPort } from "./port.js";
+import { runStdioEntry } from "./bridge.js";
 import { resolveMcpToken } from "./auth.js";
 import { ENGRAM_VERSION } from "../../_core/version/index.js";
 import { loadConfig } from "../../_core/config/index.js";
@@ -2120,8 +2121,24 @@ function isDirectRun(): boolean {
   }
 }
 
-async function main() {
-  const args = process.argv.slice(2);
+/**
+ * Run the full server in this process on stdio. Exported so the stdio entry
+ * (`bridge.ts` → `runStdioEntry`) can start it lazily from the CLI without
+ * a second mode decision.
+ */
+export async function connectStdioInline(): Promise<void> {
+  console.error("Engram MCP server running via stdio");
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+}
+
+/**
+ * Entry point for `node dist/interfaces/mcp/server.js [--http] [--port N] [--standalone]`
+ * and `engram mcp --http`. `--http` serves Streamable HTTP with the worker
+ * pool; otherwise the stdio entry decides between bridging to a healthy
+ * daemon and running inline (#58/#60).
+ */
+export async function startMcpServer(args: string[] = process.argv.slice(2)): Promise<void> {
   const httpMode = args.includes("--http");
   const portIdx = args.indexOf("--port");
   // --port wins; ENGRAM_MCP_PORT lets the supervisor launchers (scripts/run-mcp-daemon.sh,
@@ -2184,17 +2201,16 @@ async function main() {
       `Engram MCP HTTP server listening on http://${host}:${address.port}/mcp (workers: ${workerCount}, timeout: ${timeoutMs}ms, auth: ${token ? "bearer token" : "none, loopback only"})`,
     );
   } else {
-    console.error("Engram MCP server running via stdio");
-    const transport = new StdioServerTransport();
-    await server.connect(transport);
+    await runStdioEntry({ args, env: process.env, inline: connectStdioInline });
   }
 }
 
 // Only start a transport when this file is the process entry point on the
 // main thread. Worker threads (worker.ts) and tests import the tool handlers
-// from this module and must not open stdio or bind a port.
+// from this module and must not open stdio or bind a port. `engram mcp`
+// calls startMcpServer / connectStdioInline explicitly (src/interfaces/cli/index.ts).
 if (isMainThread && isDirectRun()) {
-  main().catch((error) => {
+  startMcpServer().catch((error) => {
     console.error("Server error:", error);
     process.exit(1);
   });

@@ -8,7 +8,6 @@
  * make the report not-ok (and the CLI exit non-zero).
  */
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { request as httpRequest } from "node:http";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type Database from "better-sqlite3";
@@ -18,7 +17,7 @@ import { buildIntelligenceConfig, describeProviders, resolveOllamaModel } from "
 import type { EngramConfig } from "../../_core/types/index.js";
 import { modelCacheSourceLabel } from "./data-migration.js";
 import { MIN_NODE_MAJOR, PREBUILT_TARGETS, describePrebuild, loadPreflight, type PrebuildProbe } from "./preflight.js";
-import { parseMcpPort } from "../mcp/port.js";
+import { parseMcpPort, probeMcpHealth, type McpHealthProbe } from "../mcp/port.js";
 
 export type DoctorLevel = "ok" | "warn" | "fail";
 
@@ -350,28 +349,9 @@ export function checkDataDir(config: EngramConfig, legacyDir: string = legacyDat
   return { name, level: "ok", required: false, detail: where };
 }
 
-export interface McpHealthProbe {
-  status: number;
-  body: string;
-}
-
-/** GET http://127.0.0.1:port/health with a short timeout. Rejects on any transport error. */
-export function probeMcpHealth(port: number, timeoutMs = 1500): Promise<McpHealthProbe> {
-  return new Promise((resolvePromise, reject) => {
-    const req = httpRequest(
-      { host: "127.0.0.1", port, path: "/health", method: "GET", timeout: timeoutMs },
-      (res) => {
-        let body = "";
-        res.setEncoding("utf8");
-        res.on("data", (chunk: string) => { body += chunk; });
-        res.on("end", () => resolvePromise({ status: res.statusCode ?? 0, body }));
-      },
-    );
-    req.on("timeout", () => { req.destroy(new Error(`timed out after ${timeoutMs}ms`)); });
-    req.on("error", reject);
-    req.end();
-  });
-}
+// The probe lives in ../mcp/port.ts since #58 so the stdio bridge can share it;
+// re-exported here because `engram doctor` was its first home.
+export { probeMcpHealth, type McpHealthProbe } from "../mcp/port.js";
 
 /**
  * Is the HTTP MCP daemon (what the Hermes plugin and other HTTP clients talk

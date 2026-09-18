@@ -1096,9 +1096,32 @@ program
 
 program
   .command("mcp")
-  .description("Start MCP server (stdio transport)")
-  .action(async () => {
-    await import("../mcp/server.js");
+  .description("Start the MCP server (stdio; bridges to the HTTP daemon when one is healthy, --standalone forces inline)")
+  .option("--standalone", "never bridge: run the full server in this process even if the daemon is up (also ENGRAM_MCP_STANDALONE=1)")
+  .option("--http", "serve Streamable HTTP with the worker pool instead of stdio")
+  .option("--port <port>", "daemon port: the HTTP listen port with --http, else the port to bridge to (default ENGRAM_MCP_PORT or 9907)")
+  .action(async (opts: { standalone?: boolean; http?: boolean; port?: string }) => {
+    const args: string[] = [];
+    if (opts.http) args.push("--http");
+    if (opts.port) args.push("--port", opts.port);
+    if (opts.standalone) args.push("--standalone");
+    if (opts.http) {
+      const { startMcpServer } = await import("../mcp/server.js");
+      await startMcpServer(args);
+      return;
+    }
+    // The stdio entry decides bridge vs inline BEFORE server.ts is imported, so a
+    // bridged `engram mcp` (the plugin's `npx` command, #58/#60) never loads
+    // better-sqlite3 or the embedding model.
+    const { runStdioEntry } = await import("../mcp/bridge.js");
+    await runStdioEntry({
+      args,
+      env: process.env,
+      inline: async () => {
+        const { connectStdioInline } = await import("../mcp/server.js");
+        await connectStdioInline();
+      },
+    });
   });
 
 // ─── health ───────────────────────────────────────────────────────
