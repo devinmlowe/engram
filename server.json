@@ -8,13 +8,13 @@
     "source": "github"
   },
   "websiteUrl": "https://github.com/devinmlowe/engram#readme",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "packages": [
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@devinmlowe/engram",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"

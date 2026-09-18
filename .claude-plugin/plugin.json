@@ -1,6 +1,6 @@
 {
   "name": "engram",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Cognitive memory system — episodic storage, semantic extraction, knowledge graph, and dream-state consolidation for Claude Code",
   "author": {
     "name": "Devin Lowe"
@@ -20,7 +20,7 @@
       "command": "npx",
       "args": [
         "-y",
-        "@devinmlowe/engram@0.3.0",
+        "@devinmlowe/engram@0.4.0",
         "mcp"
       ]
     }
