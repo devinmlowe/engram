@@ -146,7 +146,7 @@ through the marketplace.
 
 ```bash
 npm run build        # TypeScript compilation
-npm run test:run     # Run tests (vitest, 128 test files)
+npm run test:run     # Run tests (vitest, 132 test files)
 npm run mcp          # Start MCP server
 npm run dev          # Dev CLI via tsx
 npm run dream        # Run dream consolidation
