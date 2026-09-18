@@ -595,3 +595,47 @@ describe("inspect", () => {
     expect(listMemoryChanges(t.db, { limit: 1 })).toHaveLength(1);
   });
 });
+
+// ─── Index integrity / engram validate (#55) ────────────────────
+
+describe("memory index integrity (engram validate)", () => {
+  it("a clean store passes; orphaned vector/FTS rows for forgotten or missing memories fail; --fix repairs", async () => {
+    const { auditMemoryIndex, repairMemoryIndex } = await import("../../src/semantic/index-integrity.js");
+    const { validateMemoryIndex } = await import("../../src/migration/validate.js");
+    seed("live", "a live memory");
+    seed("gone", "a forgotten memory");
+    forgetMemory(t.db, { memoryId: "gone", actor: "cli" });
+    expect(validateMemoryIndex(t.db).every((r) => r.passed)).toBe(true);
+
+    // Simulate a bypass: put the forgotten memory's vector + FTS row back, and
+    // leave a vector + FTS row for a memory that no longer exists.
+    t.db.prepare("INSERT INTO vec_memories (id, embedding) VALUES (?, ?)").run("gone", Buffer.from(new Float32Array(vec("x")).buffer));
+    t.db.prepare("INSERT INTO memories_fts (rowid, content, context) VALUES (?, ?, ?)").run(rowidOf("gone"), "a forgotten memory", null);
+    t.db.prepare("INSERT INTO vec_memories (id, embedding) VALUES (?, ?)").run("ghost", Buffer.from(new Float32Array(vec("y")).buffer));
+    t.db.prepare("INSERT INTO memories_fts (rowid, content, context) VALUES (?, ?, ?)").run(999_999, "ghost row", null);
+
+    const audit = auditMemoryIndex(t.db);
+    expect(audit.orphanVectorsForgotten).toEqual(["gone"]);
+    expect(audit.orphanVectorsMissing).toEqual(["ghost"]);
+    expect(audit.orphanFtsForgotten).toEqual([rowidOf("gone")]);
+    expect(audit.orphanFtsMissing).toEqual([999_999]);
+
+    const failing = validateMemoryIndex(t.db);
+    expect(failing.map((r) => [r.check, r.passed, r.actual])).toEqual([
+      ["No vector rows for forgotten or missing memories", false, 2],
+      ["No FTS rows for forgotten or missing memories", false, 2],
+    ]);
+    expect(failing[0].details).toMatch(/--fix/);
+
+    const fixed = validateMemoryIndex(t.db, { fix: true });
+    expect(fixed.every((r) => r.passed)).toBe(true);
+    expect(fixed[0].details).toMatch(/Removed 2 orphaned vector/);
+    expect(fixed[1].details).toMatch(/Rebuilt memories_fts/);
+    expect(auditMemoryIndex(t.db)).toMatchObject({ orphanVectorsForgotten: [], orphanVectorsMissing: [], orphanFtsForgotten: [], orphanFtsMissing: [] });
+    // the live memory is still searchable and the index is healthy
+    expect(ftsHits("live")).toEqual(["live"]);
+    expect(getMemoryEmbedding(t.db, "live")).not.toBeNull();
+    expect(() => t.db.prepare("INSERT INTO memories_fts(memories_fts) VALUES('integrity-check')").run()).not.toThrow();
+    expect(repairMemoryIndex(t.db)).toEqual({ vectorsDeleted: 0, ftsRebuilt: false, ftsRowsRemoved: 0 });
+  });
+});

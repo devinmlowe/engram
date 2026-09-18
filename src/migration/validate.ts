@@ -1,12 +1,13 @@
 /**
  * Migration validation framework.
  *
- * Five checks to verify data integrity after migration:
+ * Six checks to verify data integrity after migration:
  * 1. Row counts match (with exclusion filter)
  * 2. Embeddings have correct dimensions and norms
  * 3. Content matches between source and target
  * 4. FTS5 integrity and hit rate
  * 5. Search quality for reference queries
+ * 6. Memory index integrity — no vector/FTS rows for forgotten or missing memories (#55)
  */
 
 import Database from "better-sqlite3";
@@ -14,6 +15,7 @@ import { initDatabase } from "../_core/db/index.js";
 import { loadConfig } from "../_core/config/index.js";
 import type { ValidationResult } from "./types.js";
 import { EXCLUDED_PROJECT } from "./types.js";
+import { auditMemoryIndex, repairMemoryIndex, type IndexRepair } from "../semantic/index-integrity.js";
 
 // ─── Check 1: Row Counts ────────────────────────────────────────
 
@@ -434,16 +436,76 @@ export function validateSearchQuality(
   return results;
 }
 
+// ─── Check 6: Memory index integrity (#55) ──────────────────────
+
+/**
+ * vec_memories / memories_fts rows for forgotten (deleted_at set) or missing
+ * memories are a failure: `forget` removes them in the same transaction, so
+ * a leftover means something bypassed it. With `fix`, orphans are removed
+ * (vectors by id; FTS by rebuilding the index and re-unindexing every
+ * forgotten memory) and the check re-runs so the report shows the repaired
+ * state.
+ */
+export function validateMemoryIndex(
+  targetDb: Database.Database,
+  options: { fix?: boolean } = {},
+): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  let audit = auditMemoryIndex(targetDb);
+  let repair: IndexRepair | undefined;
+  const orphanVectors = audit.orphanVectorsForgotten.length + audit.orphanVectorsMissing.length;
+  const orphanFts = audit.orphanFtsForgotten.length + audit.orphanFtsMissing.length;
+
+  if (options.fix && (orphanVectors > 0 || orphanFts > 0)) {
+    repair = repairMemoryIndex(targetDb, audit);
+    audit = auditMemoryIndex(targetDb);
+  }
+
+  const vecNow = audit.orphanVectorsForgotten.length + audit.orphanVectorsMissing.length;
+  results.push({
+    check: "No vector rows for forgotten or missing memories",
+    passed: vecNow === 0,
+    expected: 0,
+    actual: vecNow,
+    details:
+      repair && orphanVectors > 0
+        ? `Removed ${repair.vectorsDeleted} orphaned vector row(s)`
+        : vecNow > 0
+          ? `${audit.orphanVectorsForgotten.length} for forgotten memories, ${audit.orphanVectorsMissing.length} for missing memories — run \`engram validate --fix\``
+          : undefined,
+  });
+
+  const ftsNow = audit.orphanFtsForgotten.length + audit.orphanFtsMissing.length;
+  results.push({
+    check: "No FTS rows for forgotten or missing memories",
+    passed: ftsNow === 0,
+    expected: 0,
+    actual: ftsNow,
+    details:
+      repair && orphanFts > 0
+        ? `Rebuilt memories_fts and re-removed ${repair.ftsRowsRemoved} forgotten memor${repair.ftsRowsRemoved === 1 ? "y" : "ies"}`
+        : ftsNow > 0
+          ? `${audit.orphanFtsForgotten.length} for forgotten memories, ${audit.orphanFtsMissing.length} for missing memories — run \`engram validate --fix\``
+          : undefined,
+  });
+
+  return results;
+}
+
 // ─── Orchestrator ───────────────────────────────────────────────
 
 /**
- * Run all validation checks.
+ * Run all validation checks. Without `sourcePath` only the target-side
+ * integrity checks run (embeddings, FTS, search quality, memory index);
+ * with it the legacy migration comparison checks run as well.
  */
 export async function runValidation(options: {
-  sourcePath: string;
+  sourcePath?: string;
   targetPath?: string;
+  /** Repair memory-index orphans (#55) before reporting. */
+  fix?: boolean;
 }): Promise<ValidationResult[]> {
-  const sourceDb = new Database(options.sourcePath, { readonly: true });
+  const sourceDb = options.sourcePath ? new Database(options.sourcePath, { readonly: true }) : null;
 
   const config = loadConfig();
   const targetDb = options.targetPath
@@ -453,13 +515,14 @@ export async function runValidation(options: {
   const results: ValidationResult[] = [];
 
   try {
-    results.push(...validateRowCounts(sourceDb, targetDb));
+    if (sourceDb) results.push(...validateRowCounts(sourceDb, targetDb));
     results.push(...validateEmbeddings(targetDb));
-    results.push(...validateContent(sourceDb, targetDb));
+    if (sourceDb) results.push(...validateContent(sourceDb, targetDb));
     results.push(...validateFTS(targetDb));
     results.push(...validateSearchQuality(targetDb));
+    results.push(...validateMemoryIndex(targetDb, { fix: options.fix }));
   } finally {
-    sourceDb.close();
+    sourceDb?.close();
     targetDb.close();
   }
 

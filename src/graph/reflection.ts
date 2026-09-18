@@ -17,6 +17,7 @@ import type {
   TemporalPattern,
   GraphAnalysisResult,
   ObservationType,
+  EntityType,
 } from "./types.js";
 import type { IntelligenceConfig } from "../_core/llm/index.js";
 import { analyzeGraph, persistAnalysis, persistBridgeScores, getBridgeScores } from "./analyzer.js";
@@ -593,6 +594,7 @@ export async function runReflection(
     )
     .get() as { cnt: number };
 
+  const stale = staleEntitySummary(db);
   const partialResult: Partial<ReflectResult> = {
     communities: communityResults,
     bridges: bridgeResults,
@@ -603,9 +605,11 @@ export async function runReflection(
       modularity: analysis.modularity,
       communityCount: analysis.communities.length,
       orphanNodes: orphanCount,
+      staleNodes: stale.count,
       averageCoherence: avgCoherence,
       generationCount: genCountRow.cnt,
     },
+    staleEntities: stale.entities,
     generation,
     generatedAt: Math.floor(Date.now() / 1000),
   };
@@ -767,6 +771,8 @@ export function buildReflectResultFromCache(
     )
     .get() as { cnt: number };
 
+  const stale = staleEntitySummary(db);
+
   return {
     communities,
     bridges,
@@ -777,12 +783,37 @@ export function buildReflectResultFromCache(
       modularity: 0, // Not stored in cache; would need to re-analyze
       communityCount: communities.length,
       orphanNodes,
+      staleNodes: stale.count,
       averageCoherence: avgCoherence,
       generationCount: genCountRow.cnt,
     },
+    staleEntities: stale.entities,
     observations,
     generation,
     generatedAt: Math.floor(Date.now() / 1000),
+  };
+}
+
+/**
+ * Entities a forget flagged `stale_since` (#57): the count plus the ten most
+ * recently flagged, for `reflect` output. Cleared by fresh evidence, deleted
+ * by the next dream prune when nothing evidences them any more.
+ */
+export function staleEntitySummary(
+  db: Database.Database,
+): { count: number; entities: ReflectResult["staleEntities"] } {
+  const count = (
+    db.prepare("SELECT COUNT(*) as cnt FROM entities WHERE stale_since IS NOT NULL").get() as { cnt: number }
+  ).cnt;
+  if (count === 0) return { count: 0, entities: [] };
+  const rows = db
+    .prepare(
+      "SELECT name, type, stale_since FROM entities WHERE stale_since IS NOT NULL ORDER BY stale_since DESC, name LIMIT 10",
+    )
+    .all() as Array<{ name: string; type: string; stale_since: string }>;
+  return {
+    count,
+    entities: rows.map((r) => ({ name: r.name, type: r.type as EntityType, staleSince: r.stale_since })),
   };
 }
 

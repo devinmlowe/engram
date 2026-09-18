@@ -2068,7 +2068,16 @@ function formatReflectXml(result: ReflectResult, mode: string): string {
     lines.push(`    <stat name="modularity" value="${result.health.modularity.toFixed(2)}" />`);
     lines.push(`    <stat name="communities" value="${result.health.communityCount}" />`);
     lines.push(`    <stat name="orphan_nodes" value="${result.health.orphanNodes}" />`);
+    lines.push(`    <stat name="stale_nodes" value="${result.health.staleNodes ?? 0}" />`);
     lines.push(`    <stat name="average_coherence" value="${result.health.averageCoherence.toFixed(2)}" />`);
+    if (result.staleEntities && result.staleEntities.length > 0) {
+      // #57: flagged by forget, deleted by the next dream prune once no evidence remains
+      lines.push("    <stale_entities>");
+      for (const e of result.staleEntities) {
+        lines.push(`      <entity name="${escapeXml(e.name)}" type="${escapeXml(e.type)}" stale_since="${escapeXml(e.staleSince)}" />`);
+      }
+      lines.push("    </stale_entities>");
+    }
     lines.push("  </health>");
   }
 
