@@ -39,6 +39,10 @@ export interface Memory {
   eventTs?: number;
   /** How this memory was extracted; defaults to 'observed' when unset. */
   extractionBasis?: "explicit" | "inferred" | "observed";
+  /** ISO-8601 time the memory was forgotten (#55, soft delete); undefined while live. */
+  deletedAt?: string;
+  /** Who forgot it: the MCP client name or `cli`. */
+  deletedBy?: string;
 }
 
 export interface Conflict {

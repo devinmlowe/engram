@@ -137,10 +137,17 @@ function drillEpisodic(result: SearchResult, db: Database.Database): DrillResult
 // ─── Semantic Drill ─────────────────────────────────────────────
 
 function drillSemantic(result: SearchResult, db: Database.Database): DrillResult {
-  // Get the full memory record
+  // Get the full memory record. A memory forgotten (#55) or superseded since
+  // the session was created must not be expanded from the stale session copy.
   const memory = db.prepare(
-    "SELECT * FROM memories WHERE id = ?",
+    "SELECT * FROM memories WHERE id = ? AND is_active = 1",
   ).get(result.id) as MemoryRow | undefined;
+
+  if (!memory) {
+    const gone = inactiveState(db, result.id);
+    if (gone === "forgotten") throw new Error(`Memory ${result.id} has been forgotten since this session was created`);
+    if (gone === "inactive") throw new Error(`Memory ${result.id} is no longer active (superseded or pruned)`);
+  }
 
   if (!memory) {
     return {
@@ -278,6 +285,14 @@ function drillGraph(result: SearchResult, db: Database.Database): DrillResult {
 }
 
 // ─── Helpers ────────────────────────────────────────────────────
+
+function inactiveState(db: Database.Database, memoryId: string): "forgotten" | "inactive" | null {
+  const row = db
+    .prepare("SELECT deleted_at FROM memories WHERE id = ? AND is_active = 0")
+    .get(memoryId) as { deleted_at: string | null } | undefined;
+  if (!row) return null;
+  return row.deleted_at ? "forgotten" : "inactive";
+}
 
 function formatExchange(exch: ExchangeRow): string {
   const user = exch.user_message?.substring(0, 500) ?? "";

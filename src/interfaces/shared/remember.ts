@@ -17,6 +17,7 @@ import {
   recordAccess,
 } from "../../semantic/memory.js";
 import { insertVector } from "../../_core/db/index.js";
+import { clearSuppression } from "../../semantic/forget.js";
 import { generateStructured } from "../../_core/llm/index.js";
 import type { IntelligenceConfig } from "../../_core/llm/index.js";
 
@@ -153,9 +154,11 @@ export async function rememberFact(
     }
   }
 
-  // 3. No duplicate — insert new memory
+  // 3. No duplicate — insert new memory. An explicit remember of a
+  // statement the user once forgot lifts its extraction suppression (#55).
   const newId = crypto.randomUUID();
   const now = Math.floor(Date.now() / 1000);
+  clearSuppression(db, params.content);
 
   insertMemory(
     db,
@@ -292,6 +295,7 @@ export async function storeMemoryBatch(
         if (!isDuplicate) {
           const newId = crypto.randomUUID();
           const now = Math.floor(Date.now() / 1000);
+          clearSuppression(db, input.content);
 
           insertMemory(
             db,
@@ -387,9 +391,9 @@ export function linkMemoryToEntities(
 
   if (entities.length === 0) return 0;
 
-  // Bump mention_count on each entity
+  // Bump mention_count on each entity (fresh evidence clears a #57 stale flag)
   const bumpStmt = db.prepare(
-    "UPDATE entities SET mention_count = mention_count + 1, last_seen = unixepoch() WHERE id = ?",
+    "UPDATE entities SET mention_count = mention_count + 1, last_seen = unixepoch(), stale_since = NULL WHERE id = ?",
   );
   for (const entity of entities) {
     bumpStmt.run(entity.id);
@@ -412,7 +416,7 @@ export function linkMemoryToEntities(
           : [];
         memories.push(memoryId);
         db.prepare(
-          "UPDATE relationships SET source_memories = ?, weight = weight + 0.5, updated_at = unixepoch() WHERE id = ?",
+          "UPDATE relationships SET source_memories = ?, weight = weight + 0.5, updated_at = unixepoch(), stale_since = NULL WHERE id = ?",
         ).run(JSON.stringify(memories), existing.id);
       } else {
         // Create new relationship

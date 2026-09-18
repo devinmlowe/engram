@@ -44,6 +44,10 @@ def test_tool_schemas_are_namespaced_openai_format(tmp_path):
         assert schema["name"].startswith("engram_")
         assert "description" in schema
         assert schema["parameters"]["type"] == "object"
+    # #55: forget is exposed alongside remember and maps to the MCP forget tool
+    import provider as provider_module
+    assert {s["name"] for s in schemas} >= {"engram_remember", "engram_forget"}
+    assert provider_module._TOOL_MAP["engram_forget"] == "forget"
 
 
 def test_non_primary_context_never_spawns(tmp_path):

@@ -6,7 +6,7 @@ Complete reference for MCP tools, CLI commands, and configuration.
 
 ## MCP Tools
 
-Engram exposes 15 tools via the Model Context Protocol (the canonical list is `src/interfaces/mcp/tool-names.ts`; `tools/list` on a running server is authoritative). The five core tools are documented below. The Phase 6 session tools (`recall_session`, `recall_drill`, `explore_selective`, `remember_batch`) and Phase 7 file tools (`index_file_structure`, `fetch_snippets`, `scan_file`) are summarized in [CLAUDE.md](../CLAUDE.md) and [integrate-your-agent.md](./integrate-your-agent.md); the commitments ledger tools (`commitments`, `commitments_update`) are documented below. The rest are summarized in [CLAUDE.md](../CLAUDE.md) and [integrate-your-agent.md](./integrate-your-agent.md).
+Engram exposes 16 tools via the Model Context Protocol (the canonical list is `src/interfaces/mcp/tool-names.ts`; `tools/list` on a running server is authoritative). The five core tools are documented below, as are `forget` and the commitments ledger tools (`commitments`, `commitments_update`). The Phase 6 session tools (`recall_session`, `recall_drill`, `explore_selective`, `remember_batch`) and Phase 7 file tools (`index_file_structure`, `fetch_snippets`, `scan_file`) are summarized in [CLAUDE.md](../CLAUDE.md) and [integrate-your-agent.md](./integrate-your-agent.md). The rest are summarized in [CLAUDE.md](../CLAUDE.md) and [integrate-your-agent.md](./integrate-your-agent.md).
 
 ### recall
 
@@ -40,15 +40,17 @@ Temporal semantics: all boundaries are UTC; `after` is inclusive of the day's st
 ```
 
 ```xml
-<engram_recall query="database setup" results="3" tokens="842">
-  <memory type="decision" confidence="0.85" importance="0.7">
+<engram_memory query="database setup" tokens_used="842" total_results="3">
+  <semantic id="3f9c1c2e-…" type="decision" confidence="85%" importance="high" relevance="100%" date="2026-02-15">
     The project uses better-sqlite3 with sqlite-vec for the database layer, with no ORM.
-  </memory>
-  <exchange project="engram" date="2026-02-15" score="0.72">
+  </semantic>
+  <episodic date="2026-02-15" project="engram" relevance="72%">
     User: Let's use SQLite with WAL mode...
-  </exchange>
-</engram_recall>
+  </episodic>
+</engram_memory>
 ```
+
+Every `<semantic>` element carries the memory's `id` — pass it to `forget` (or `engram memories show <id>`) when the user says a recalled memory is wrong.
 
 **Example:**
 
@@ -222,6 +224,25 @@ Record one user/assistant turn of an external agent conversation (e.g. a Hermes 
 
 **Output:** JSON `{ "conversationId", "exchangeId", "created": true|false }` (`created` is false on an update).
 
+### forget
+
+Remove a memory the user says is wrong or stale (#55). Annotated `readOnlyHint: false`, `destructiveHint: true`.
+
+**Input Schema:**
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `memory_id` | string | one of | — | The `id` attribute of a recalled `<semantic>` (or a unique prefix of 6+ characters). Acts in one call. |
+| `query` | string | one of | — | Search for candidates instead of naming one. Returns `<forget_candidates>` with ids; deletes nothing unless `confirm` is true **and** exactly one memory matches — a single result, or a single result whose normalised content equals the normalised query. |
+| `confirm` | boolean | no | `false` | Query mode only: act on an unambiguous single match. |
+| `hard` | boolean | no | `false` | Delete the row outright instead of the soft delete + retention window. |
+| `scope` | string | no | `ENGRAM_SCOPE` | Tenant identity for this call; `"global"` acts on a memory in any scope. |
+| `read_scopes` | string[] | no | `ENGRAM_READ_SCOPES` | Scopes this call may act on; a memory outside them is refused (#25). |
+
+**What happens (decisions #56, #57):** in one transaction the memory is soft-deleted (`is_active = 0`, `deleted_at`, `deleted_by`), its sqlite-vec and FTS5 rows are removed so no recall path can return it, a `memory_changes` row is written (`op = forget`, `before` = content, `actor` = the MCP client's `clientInfo.name`, or `cli`), its content hash is added to `memory_suppressions` so the next dream extract does not re-extract it from the same exchanges, and every relationship listing it as evidence loses it — endpoint entities' `mention_count` is decremented and rows that reach zero evidence are stamped `stale_since`. `forget` never deletes graph rows; the dream prune phase removes flagged rows with no remaining evidence on its next run, and hard-deletes soft-deleted memories older than `ENGRAM_FORGET_RETENTION_DAYS` (default 30; `0` = next run). `engram memories restore <id>` undoes a soft delete inside that window.
+
+**Output:** `<forgotten id scope hard deleted_at actor><content/><graph entities_touched stale_entities relationships_touched stale_relationships/><note/></forgotten>`, or in query mode `<forget_candidates query count forgotten="none" reason><candidate id type relevance [exact]>…</candidate><hint/></forget_candidates>`. Forgetting an already-forgotten memory is an error (use `hard: true` to purge it early).
+
 ## CLI Commands
 
 All commands are invoked as `engram <command> [options]`.
@@ -291,7 +312,25 @@ engram remember "The project uses ESM modules" [options]
 | `-t, --type <type>` | Memory type: `preference`, `decision`, `pattern`, `fact`, `solution`, `convention` (default: `fact`) |
 | `-i, --importance <n>` | Importance score 0-1 (default: `0.7`) |
 
-Near-duplicate detection: if an existing memory has >= 0.95 cosine similarity, the existing memory is updated instead.
+Near-duplicate detection: if an existing memory has >= 0.95 cosine similarity, the existing memory is updated instead. Remembering a statement that was forgotten earlier lifts its extraction suppression.
+
+---
+
+### engram memories
+
+Inspect and curate the semantic store (#55). Every write records `cli` as the actor in the change log.
+
+```bash
+engram memories list [--type t] [--scope a,b] [--since 2026-09-01] [--query text] [--deleted] [--inactive] [--limit n] [--json]
+engram memories show <id>                       # full provenance; <id> may be a unique 6+ char prefix
+engram memories edit <id> --content "<text>"    # re-embedded and re-indexed; before/after logged
+engram memories delete <id> [--hard]            # alias: forget. Soft delete + retention; --hard purges
+engram memories restore <id>                    # undo a forget inside the retention window
+engram memories purge --conversation <id> [--hard]
+engram memories log [--memory <id>] [--op forget|edit|purge|restore] [--limit n] [--json]
+```
+
+`show` prints the content, type, scope, `source` (extractor tier: `user`, `dream`, `rlm`, `import`, `hermes-mirror`), `extraction_basis`, status (active / forgotten by whom / superseded), FSRS stats (stored and composite confidence, importance, stability, retrievability, access count, whether an embedding is indexed), the source conversation(s) — id, title (summary), project, archive path usable as the `show` MCP tool's `path`, and each source exchange — the graph entities the memory evidences (with `stale_since` when flagged), and the memory's change log.
 
 ---
 
@@ -477,7 +516,7 @@ engram import-legacy --source <path> [options]
 
 ### engram validate
 
-Validate migration integrity by comparing source and target databases.
+Validate store integrity: embedding dimensions/norms, FTS5 integrity, reference-query search quality, and (#55) that no `vec_memories` / `memories_fts` rows exist for forgotten or missing memories. With `--source`, the row-count and content checks against a legacy conversation-index database run as well.
 
 ```bash
 engram validate [options]
@@ -485,7 +524,10 @@ engram validate [options]
 
 | Flag | Description |
 |------|-------------|
-| `-s, --source <path>` | Source database path (required; no default) |
+| `-s, --source <path>` | Legacy source database to compare against (optional) |
+| `--fix` | Repair orphaned memory index rows: vectors are deleted by id; the FTS index is rebuilt and every forgotten memory re-unindexed. The report then shows the repaired state |
+
+Exit status 1 when any check fails.
 
 ---
 
@@ -621,6 +663,11 @@ interface EngramConfig {
     pattern: number;            // 0.005
     solution: number;           // 0.03
     convention: number;         // 0.015
+  };
+
+  // Forget tool (#55 / #56)
+  forget: {
+    retentionDays: number;      // ENGRAM_FORGET_RETENTION_DAYS, default 30; 0 = purge on the next prune
   };
 }
 ```

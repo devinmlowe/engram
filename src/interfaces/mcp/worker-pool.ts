@@ -37,6 +37,8 @@ export interface WorkerRequest {
   id: number;
   tool: string;
   args: unknown;
+  /** Transport-level call context (e.g. the MCP client name); optional, cloned as-is. */
+  context?: Record<string, unknown>;
 }
 
 export type WorkerResponse =
@@ -64,6 +66,8 @@ export interface RunOptions {
   timeoutMs?: number;
   /** Pin the call to a specific worker slot (e.g. for in-memory session state). */
   affinity?: number;
+  /** Transport-level call context forwarded to the worker unchanged. */
+  context?: Record<string, unknown>;
 }
 
 export interface RunResult<T = unknown> {
@@ -118,6 +122,7 @@ interface Inflight {
 interface Queued {
   tool: string;
   args: unknown;
+  context?: Record<string, unknown>;
   timeoutMs: number;
   affinity?: number;
   resolve: (value: RunResult) => void;
@@ -218,6 +223,7 @@ export class WorkerPool {
       this.queue.push({
         tool,
         args,
+        context: options.context,
         timeoutMs: options.timeoutMs ?? this.timeoutMs,
         affinity: options.affinity,
         resolve: resolve as (value: RunResult) => void,
@@ -295,6 +301,7 @@ export class WorkerPool {
     };
     slot.inflight = inflight;
     const request: WorkerRequest = { id, tool: item.tool, args: item.args };
+    if (item.context !== undefined) request.context = item.context;
     try {
       worker.postMessage(request);
     } catch (error) {

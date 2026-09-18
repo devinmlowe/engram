@@ -4,8 +4,8 @@ Architecture (see decisions/010-memory-provider-integration.md):
 - Spawns engram's MCP server as a persistent stdio child, lazily, and only for
   primary agent contexts (cron/subagent/flush never pay the ~300MB Node cost).
 - Reads recall from the shared knowledge graph (scopes: global + own profile).
-- Writes are curated only: explicit engram_remember tool calls and mirrors of
-  Hermes's built-in MEMORY.md writes (on_memory_write). Raw turns are never
+- Writes are curated only: explicit engram_remember / engram_forget tool calls
+  and mirrors of Hermes's built-in MEMORY.md writes (on_memory_write). Raw turns are never
   dumped into the graph; nightly dream consolidation handles distillation.
 - The child is scoped via env (ENGRAM_SCOPE / ENGRAM_READ_SCOPES) so no tool
   argument can write outside this profile's scope.
@@ -79,6 +79,7 @@ _TOOL_MAP = {
     "engram_explore": "explore",
     "engram_reflect": "reflect",
     "engram_remember": "remember",
+    "engram_forget": "forget",
 }
 
 _TOOL_SCHEMAS: List[Dict[str, Any]] = [
@@ -149,6 +150,24 @@ _TOOL_SCHEMAS: List[Dict[str, Any]] = [
                 "importance": {"type": "number"},
             },
             "required": ["content"],
+        },
+    },
+    {
+        "name": "engram_forget",
+        "description": (
+            "Forget a stored memory the user says is wrong or stale. Pass"
+            " memory_id (the id of a recalled <semantic> element) to remove it"
+            " in one call, or query to list candidates; query mode removes"
+            " nothing unless confirm is true and exactly one memory matches."
+            " Only memories this profile can read are affected."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "memory_id": {"type": "string"},
+                "query": {"type": "string"},
+                "confirm": {"type": "boolean"},
+            },
         },
     },
 ]
@@ -472,8 +491,9 @@ class EngramMemoryProvider(MemoryProviderBase):  # type: ignore[misc,valid-type]
             return ""
         return (
             "Long-term memory: the engram knowledge graph is available via "
-            "engram_recall / engram_explore / engram_reflect, and engram_remember "
-            "stores durable facts scoped to this profile."
+            "engram_recall / engram_explore / engram_reflect, engram_remember "
+            "stores durable facts scoped to this profile, and engram_forget "
+            "removes a recalled memory the user says is wrong."
         )
 
     def backup_paths(self) -> List[str]:

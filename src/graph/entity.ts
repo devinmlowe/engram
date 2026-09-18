@@ -307,13 +307,14 @@ export function getAllEntities(
 
 /**
  * Record an entity mention — increments mention_count and updates last_seen.
+ * Fresh evidence clears a `stale_since` flag left by a forget (#57).
  */
 export function recordEntityMention(
   db: Database.Database,
   id: string,
 ): void {
   db.prepare(
-    "UPDATE entities SET mention_count = mention_count + 1, last_seen = unixepoch() WHERE id = ?",
+    "UPDATE entities SET mention_count = mention_count + 1, last_seen = unixepoch(), stale_since = NULL WHERE id = ?",
   ).run(id);
 }
 

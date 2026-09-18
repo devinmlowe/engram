@@ -22,6 +22,7 @@ import type { EngramConfig } from "../_core/types/index.js";
 import { loadConfig } from "../_core/config/index.js";
 import { acquireDreamLock } from "./lock.js";
 import type { ExtractedFact } from "../semantic/types.js";
+import { filterSuppressedFacts, purgeForgottenMemories } from "../semantic/forget.js";
 import { OpenRouterError } from "../_core/llm/providers/openrouter.js";
 import { CascadeError } from "../_core/llm/index.js";
 import {
@@ -242,6 +243,8 @@ async function runDreamLocked(
       memoriesPruned: report.memoriesPruned,
       skippedUnchanged: report.skippedUnchanged ?? 0,
       collapsedCandidates: report.collapsedCandidates ?? 0,
+      suppressedFacts: report.suppressedFacts ?? 0,
+      forgottenPurged: report.forgottenPurged ?? 0,
       commitmentsExtracted: report.commitmentsExtracted ?? 0,
     });
 
@@ -403,7 +406,7 @@ async function runExtractPhase(
         findOrCreateRelationship,
       );
 
-      allFacts.push({ conversationId: convId, facts: result.facts });
+      allFacts.push({ conversationId: convId, facts: dropSuppressed(db, convId, result.facts, logPath, report) });
 
       report.newMemories += result.memoriesCreated;
       report.newEntities += result.entitiesCreated;
@@ -452,7 +455,7 @@ async function runExtractPhase(
             findOrCreateRelationship,
           );
 
-          allFacts.push({ conversationId: item.itemId, facts: result.facts });
+          allFacts.push({ conversationId: item.itemId, facts: dropSuppressed(db, item.itemId, result.facts, logPath, report) });
 
           report.newMemories += result.memoriesCreated;
           report.newEntities += result.entitiesCreated;
@@ -763,6 +766,20 @@ async function runPrunePhase(
 
   logEntry(logPath, "prune", `Memory pruning complete: ${pruned} of ${memRows.length} memories pruned`);
 
+  // #56: retention purge — forgotten memories older than
+  // ENGRAM_FORGET_RETENTION_DAYS lose their row (their vector/FTS rows went
+  // at forget time). Never breaks the run.
+  try {
+    const purge = purgeForgottenMemories(db, { retentionDays: config.forget.retentionDays });
+    report.forgottenPurged = purge.purged.length;
+    logEntry(logPath, "prune", `Purged ${purge.purged.length} forgotten memories older than ${config.forget.retentionDays} day(s)`, {
+      cutoff: purge.cutoff,
+    });
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    logEntry(logPath, "prune", `Retention purge error (non-fatal): ${errorMsg}`);
+  }
+
   // Phase 6 entity cleanup
   try {
     const { mergeRedundantEntities, pruneOrphanEntities, pruneStaleGenerations } = await import("../graph/reflection.js");
@@ -773,7 +790,12 @@ async function runPrunePhase(
 
     const orphanResult = pruneOrphanEntities(db, { minMentions: 2, maxAgeDays: 90 });
     report.orphansPruned = orphanResult.pruned;
-    logEntry(logPath, "prune", `Pruned ${orphanResult.pruned} orphan entities`);
+    report.staleRelationshipsPruned = orphanResult.staleRelationshipsPruned;
+    report.staleEntitiesPruned = orphanResult.staleEntitiesPruned;
+    logEntry(logPath, "prune", `Pruned ${orphanResult.pruned} orphan entities`, {
+      staleEntities: orphanResult.staleEntitiesPruned,
+      staleRelationships: orphanResult.staleRelationshipsPruned,
+    });
 
     const clusterResult = pruneStaleGenerations(db, { keepGenerations: 3 });
     report.clustersPruned = clusterResult.pruned;
@@ -946,6 +968,29 @@ function getConversationScope(db: Database.Database, conversationId: string): st
   return row?.scope ?? "global";
 }
 
+/**
+ * #55: drop extracted facts whose content hash is in memory_suppressions — a
+ * statement the user forgot must not come back from the same exchanges on
+ * the next run. Counted in the report as `suppressedFacts`.
+ */
+function dropSuppressed(
+  db: Database.Database,
+  conversationId: string,
+  facts: ExtractedFact[],
+  logPath: string,
+  report: DreamReport,
+): ExtractedFact[] {
+  const { kept, suppressed } = filterSuppressedFacts(db, facts);
+  if (suppressed.length > 0) {
+    report.suppressedFacts = (report.suppressedFacts ?? 0) + suppressed.length;
+    logEntry(logPath, "extract", `Suppressed ${suppressed.length} forgotten fact(s) re-extracted from ${conversationId}`, {
+      conversationId,
+      suppressed: suppressed.length,
+    });
+  }
+  return kept;
+}
+
 // ─── Pending Facts Storage ───────────────────────────────────────
 
 /**
@@ -1021,6 +1066,11 @@ export function formatDreamSummary(report: DreamReport): string[] {
   lines.push(`  Pruned:            ${report.memoriesPruned}`);
   lines.push(`  Skipped unchanged: ${report.skippedUnchanged ?? 0}`);
   lines.push(`  Collapsed dupes:   ${report.collapsedCandidates ?? 0}`);
+  lines.push(`  Suppressed:        ${report.suppressedFacts ?? 0} (forgotten facts not re-extracted)`);
+  lines.push(
+    `  Forgotten purged:  ${report.forgottenPurged ?? 0} ` +
+      `(stale graph rows: ${report.staleEntitiesPruned ?? 0} entities, ${report.staleRelationshipsPruned ?? 0} relationships)`,
+  );
   lines.push(
     `  Commitments:       ${report.commitmentsExtracted ?? 0} new ` +
       `(${report.commitmentCandidates ?? 0} candidates, ${report.commitmentRejected ?? 0} rejected, ${report.commitmentDuplicates ?? 0} duplicates)`,

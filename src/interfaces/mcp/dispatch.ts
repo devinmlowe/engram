@@ -24,7 +24,16 @@ export interface ToolResult {
   [key: string]: unknown;
 }
 
-export type ToolHandler = (name: string, args: unknown) => Promise<ToolResult>;
+/**
+ * Per-call context the transport knows and the handler needs. Carried through
+ * the worker pool untouched (structured-clone safe).
+ */
+export interface ToolCallContext {
+  /** `clientInfo.name` from the MCP session's initialize handshake (#55 forget actor). */
+  clientName?: string;
+}
+
+export type ToolHandler = (name: string, args: unknown, context?: ToolCallContext) => Promise<ToolResult>;
 
 export interface DispatcherOptions {
   /** Number of workers (0 = run everything inline on this thread). */
@@ -74,6 +83,7 @@ export const WORKER_TOOLS: ReadonlySet<string> = new Set([
   "commitments",
   "commitments_update",
   "ingest_turn",
+  "forget",
 ]);
 
 /** Tools whose results reference an in-memory recall session. */
@@ -197,9 +207,9 @@ export function createToolDispatcher(options: DispatcherOptions): ToolDispatcher
     affinity.set(sid, slot);
   };
 
-  const call: ToolHandler = async (name, args) => {
+  const call: ToolHandler = async (name, args, context) => {
     if (!WORKER_TOOLS.has(name)) {
-      return options.direct(name, args);
+      return options.direct(name, args, context);
     }
     const sid = SESSION_TOOLS.has(name) ? sessionIdOf(args) : undefined;
     const pinned = sid !== undefined ? affinity.get(sid) : undefined;
@@ -208,6 +218,7 @@ export function createToolDispatcher(options: DispatcherOptions): ToolDispatcher
       const { result, slot } = await pool.runWithSlot<ToolResult>(name, args, {
         timeoutMs: toolTimeoutMs(name, args, timeoutMs),
         affinity: pinned,
+        context: context as Record<string, unknown> | undefined,
       });
       if (name === "recall_session") {
         const created = extractSessionId(result);

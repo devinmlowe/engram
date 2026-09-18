@@ -5,6 +5,7 @@ import { loadConfig } from "../../_core/config/index.js";
 import { getDatabase, closeDatabase } from "../../_core/db/index.js";
 import { ENGRAM_VERSION } from "../../_core/version/index.js";
 import { loadPreflight } from "./preflight.js";
+import { registerMemoriesCommand } from "./memories.js";
 
 const program = new Command();
 
@@ -184,6 +185,11 @@ program
       closeDatabase();
     }
   });
+
+// ─── memories ──────────────────────────────────────────────────
+
+// `engram memories list|show|edit|delete|restore|purge|log` (#55)
+registerMemoriesCommand(program);
 
 // ─── extract ───────────────────────────────────────────────────
 
@@ -728,11 +734,14 @@ program
 
 program
   .command("validate")
-  .description("Validate migration integrity against the source database")
-  .requiredOption(
-    "-s, --source <path>",
-    "Path to the source conversation-index SQLite database (no default)",
+  .description(
+    "Validate store integrity: embeddings, FTS, search quality, and no vector/FTS rows for forgotten or missing memories (#55). With --source, also compare against a legacy conversation-index database",
   )
+  .option(
+    "-s, --source <path>",
+    "Path to a legacy conversation-index SQLite database to compare row counts and content against",
+  )
+  .option("--fix", "Repair orphaned memory vector/FTS rows before reporting")
   .action(async (opts) => {
     const { runValidation } = await import("../../migration/validate.js");
 
@@ -740,6 +749,7 @@ program
       console.log("Running validation checks...\n");
       const results = await runValidation({
         sourcePath: opts.source,
+        fix: Boolean(opts.fix),
       });
 
       let passed = 0;
@@ -1438,8 +1448,15 @@ function printReflectResult(
     console.log(`  Modularity:       ${result.health.modularity.toFixed(2)}`);
     console.log(`  Communities:      ${result.health.communityCount}`);
     console.log(`  Orphan nodes:     ${result.health.orphanNodes}`);
+    console.log(`  Stale nodes:      ${result.health.staleNodes} (flagged by forget; pruned on the next dream run)`);
     console.log(`  Avg coherence:    ${result.health.averageCoherence.toFixed(2)}`);
     console.log(`  Generations:      ${result.health.generationCount}`);
+    if (result.staleEntities.length > 0) {
+      console.log("  Stale entities:");
+      for (const e of result.staleEntities) {
+        console.log(`    ${e.name} (${e.type}) since ${e.staleSince}`);
+      }
+    }
     console.log("");
   }
 

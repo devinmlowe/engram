@@ -16,6 +16,7 @@ import {
   parseTimeoutMs,
   parseWorkerCount,
   DEFAULT_WORKER_TIMEOUT_MS,
+  type ToolCallContext,
   type ToolHandler,
   type ToolResult,
 } from "./dispatch.js";
@@ -29,6 +30,13 @@ import { initEmbeddings } from "../../_core/embeddings/index.js";
 import { rememberFact, storeMemoryBatch } from "../shared/remember.js";
 import { resolveCallScoping } from "./scoping.js";
 import { ingestTurn, DEFAULT_TURN_SOURCE } from "../../episodic/ingest-turn.js";
+import {
+  forgetMemory,
+  UNKNOWN_MCP_ACTOR,
+  type ForgetResult,
+} from "../../semantic/forget.js";
+import { resolveMemoryId } from "../../semantic/inspect.js";
+import { normalizeContent } from "../../semantic/collapse.js";
 import { sliceShowLines, formatShowOutput } from "./show-format.js";
 import { buildIntelligenceConfig } from "../../_core/llm/index.js";
 import type { MemorySource } from "../../_core/types/index.js";
@@ -330,6 +338,25 @@ const ScanFileInputSchema = z.object({
 const IndexFileStructureInputSchema = z.object({
   path: z.string().min(1, "Path is required"),
 });
+
+// #55: exactly one of memory_id / query. Query mode only acts with
+// confirm: true AND an unambiguous single match (see handleForget).
+const ForgetInputSchema = z
+  .object({
+    memory_id: z.string().trim().min(6, "memory_id must be a memory id (or a unique prefix of at least 6 characters)").optional(),
+    query: z.string().trim().min(2, "query must be at least 2 characters").optional(),
+    confirm: z.boolean().optional().default(false),
+    hard: z.boolean().optional().default(false),
+    scope: ScopeParamSchema.optional(),
+    read_scopes: ReadScopesParamSchema.optional(),
+  })
+  .strict()
+  .refine((v) => (v.memory_id !== undefined) !== (v.query !== undefined), {
+    message: "Pass exactly one of memory_id or query",
+  });
+
+/** Candidates returned by forget's query mode before anything is deleted. */
+const FORGET_CANDIDATE_LIMIT = 10;
 
 // ─── Server Setup ──────────────────────────────────────────────
 
@@ -1250,9 +1277,74 @@ export const MCP_TOOL_DEFINITIONS: Tool[] = [
       openWorldHint: false,
     },
   },
+  {
+    name: "forget",
+    description:
+      "Remove a memory the user says is wrong or stale. Pass the memory_id " +
+      "from a recall result (<semantic id=\"…\">) to forget it in one call. " +
+      "Pass query instead to search for candidates: the tool returns matching " +
+      "memories with their ids and forgets nothing unless confirm is true AND " +
+      "exactly one memory matches (a single result, or a single result whose " +
+      "content equals the query). The memory is soft-deleted (kept for " +
+      "ENGRAM_FORGET_RETENTION_DAYS, then purged by the dream pipeline), drops " +
+      "out of every recall path immediately, is logged in the change log with " +
+      "this client's name, and will not be re-extracted from the same " +
+      "conversation. hard: true deletes it outright. Only memories within " +
+      "read_scopes can be forgotten unless scope is \"global\".",
+    inputSchema: {
+      type: "object",
+      properties: {
+        memory_id: {
+          type: "string",
+          minLength: 6,
+          description: "Id of the memory to forget (from recall's <semantic id>), or a unique prefix of 6+ characters",
+        },
+        query: {
+          type: "string",
+          minLength: 2,
+          description: "Find candidate memories instead of naming one; returns ids, deletes nothing unless confirm + a single match",
+        },
+        confirm: {
+          type: "boolean",
+          default: false,
+          description: "In query mode: forget the match when exactly one memory matches",
+        },
+        hard: {
+          type: "boolean",
+          default: false,
+          description: "Delete the row outright instead of the soft delete + retention purge",
+        },
+        scope: {
+          type: "string",
+          minLength: 1,
+          description:
+            "Tenant identity for this call (e.g. \"hermes:career\"); reads default to " +
+            "global + this scope. \"global\" acts on a memory in any scope.",
+        },
+        read_scopes: {
+          type: "array",
+          items: { type: "string", minLength: 1 },
+          minItems: 1,
+          description: "Scopes this call may act on (e.g. [\"global\", \"hermes:career\"]). Overrides ENGRAM_READ_SCOPES for this call only.",
+        },
+      },
+      additionalProperties: false,
+    },
+    annotations: {
+      title: "Forget Memory",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
+  },
 ];
 
-function registerToolHandlers(srv: Server, callTool: ToolHandler = handleToolCall) {
+/**
+ * Exported so tests can drive a real `Server` over an in-memory transport
+ * (stdio-equivalent) and over the HTTP front end.
+ */
+export function registerToolHandlers(srv: Server, callTool: ToolHandler = handleToolCall) {
   srv.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: MCP_TOOL_DEFINITIONS,
   }));
@@ -1261,7 +1353,11 @@ function registerToolHandlers(srv: Server, callTool: ToolHandler = handleToolCal
 
   srv.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
-    return callTool(name, args);
+    // The client's `clientInfo.name` from the initialize handshake is the
+    // actor recorded by `forget` (#55). Read per call: each HTTP session has
+    // its own Server, and stdio has exactly one client.
+    const clientName = srv.getClientVersion()?.name?.trim() || undefined;
+    return callTool(name, args, clientName ? { clientName } : undefined);
   });
 }  // end registerToolHandlers
 
@@ -1270,8 +1366,12 @@ function registerToolHandlers(srv: Server, callTool: ToolHandler = handleToolCal
  * Never throws: every failure is reported as an `isError` result. This is
  * the unit of work the worker pool ships to worker threads.
  */
-export async function handleToolCall(name: string, args: unknown): Promise<ToolResult> {
+export async function handleToolCall(name: string, args: unknown, context?: ToolCallContext): Promise<ToolResult> {
   try {
+    if (name === "forget") {
+      return await handleForget(ForgetInputSchema.parse(args ?? {}), context);
+    }
+
     if (name === "recall") {
       const params = RecallInputSchema.parse(args);
       await ensureEmbeddings();
@@ -1777,6 +1877,112 @@ export async function handleToolCall(name: string, args: unknown): Promise<ToolR
   }
 }  // end handleToolCall
 
+// ─── Forget (#55) ───────────────────────────────────────────────
+
+type ForgetParams = z.infer<typeof ForgetInputSchema>;
+
+/**
+ * `forget` handler. `memory_id` acts directly. `query` runs the same semantic
+ * search recall uses (no reinforcement) and returns candidates; it acts only
+ * when `confirm` is set and the query is unambiguous — one result, or one
+ * result whose normalised content equals the normalised query — so an agent
+ * can never delete on a weak match.
+ */
+async function handleForget(params: ForgetParams, context?: ToolCallContext): Promise<ToolResult> {
+  const actor = context?.clientName ?? UNKNOWN_MCP_ACTOR;
+  const scoping = resolveCallScoping(process.env, params);
+  const db = getDb();
+
+  const act = (memoryId: string): ToolResult => {
+    const result = forgetMemory(db, {
+      memoryId,
+      actor,
+      hard: params.hard,
+      readScopes: scoping.readScopes,
+      scope: params.scope,
+    });
+    return { content: [{ type: "text", text: formatForgottenXml(result, actor) }] };
+  };
+
+  if (params.memory_id !== undefined) {
+    const id = resolveMemoryId(db, params.memory_id);
+    if (!id) throw new Error(`Memory not found: ${params.memory_id}`);
+    return act(id);
+  }
+
+  const query = params.query as string;
+  await ensureEmbeddings();
+  if (!config) config = loadConfig();
+  const response = await unifiedSearch(
+    db,
+    {
+      query,
+      sources: ["semantic"],
+      mode: "hybrid",
+      limit: FORGET_CANDIDATE_LIMIT,
+      budget: 4000,
+      scopes: params.scope === "global" ? undefined : scoping.readScopes,
+      reinforce: false,
+    },
+    config,
+  );
+  const candidates = response.results.filter((r) => r.source === "semantic");
+  const wanted = normalizeContent(query);
+  const exact = candidates.filter((c) => normalizeContent(c.content) === wanted);
+  const match = candidates.length === 1 ? candidates[0] : exact.length === 1 ? exact[0] : undefined;
+
+  if (params.confirm && match) {
+    return act(match.id);
+  }
+
+  const lines: string[] = [];
+  const reason = !params.confirm
+    ? "confirm was not set"
+    : candidates.length === 0
+      ? "no memory matched"
+      : "the query is ambiguous (several candidates, none equal to the query)";
+  lines.push(
+    `<forget_candidates query="${escapeXml(query)}" count="${candidates.length}" forgotten="none" reason="${escapeXml(reason)}">`,
+  );
+  for (const c of candidates) {
+    const meta = c.metadata as Record<string, unknown>;
+    const type = typeof meta.type === "string" ? meta.type : "fact";
+    const relevance = Math.round(c.score * 100);
+    const exactAttr = exact.includes(c) ? ` exact="true"` : "";
+    lines.push(`  <candidate id="${escapeXml(c.id)}" type="${escapeXml(type)}" relevance="${relevance}%"${exactAttr}>`);
+    lines.push(`    ${escapeXml(c.content)}`);
+    lines.push("  </candidate>");
+  }
+  lines.push(
+    candidates.length > 0
+      ? "  <hint>Nothing was forgotten. Call forget again with memory_id set to the candidate to remove.</hint>"
+      : "  <hint>Nothing was forgotten. No memory matched this query.</hint>",
+  );
+  lines.push("</forget_candidates>");
+  return { content: [{ type: "text", text: lines.join("\n") }] };
+}
+
+function formatForgottenXml(result: ForgetResult, actor: string): string {
+  const g = result.graph;
+  const staleEntities = g.entities.filter((e) => e.stale).length;
+  const staleRelationships = g.relationships.filter((r) => r.stale).length;
+  const lines: string[] = [];
+  lines.push(
+    `<forgotten id="${escapeXml(result.memoryId)}" scope="${escapeXml(result.scope)}" hard="${result.hard}" deleted_at="${escapeXml(result.deletedAt)}" actor="${escapeXml(actor)}">`,
+  );
+  lines.push(`  <content>${escapeXml(result.content)}</content>`);
+  lines.push(
+    `  <graph entities_touched="${g.entities.length}" stale_entities="${staleEntities}" relationships_touched="${g.relationships.length}" stale_relationships="${staleRelationships}" />`,
+  );
+  lines.push(
+    result.hard
+      ? "  <note>Deleted outright. The content hash stays suppressed so the dream pipeline will not re-extract it.</note>"
+      : "  <note>Soft-deleted: out of every recall path now; purged by the dream prune phase after the retention window. `engram memories restore <id>` undoes it until then.</note>",
+  );
+  lines.push("</forgotten>");
+  return lines.join("\n");
+}
+
 // Register handlers on the stdio server (used when --http is not passed)
 registerToolHandlers(server);
 
@@ -1862,7 +2068,16 @@ function formatReflectXml(result: ReflectResult, mode: string): string {
     lines.push(`    <stat name="modularity" value="${result.health.modularity.toFixed(2)}" />`);
     lines.push(`    <stat name="communities" value="${result.health.communityCount}" />`);
     lines.push(`    <stat name="orphan_nodes" value="${result.health.orphanNodes}" />`);
+    lines.push(`    <stat name="stale_nodes" value="${result.health.staleNodes ?? 0}" />`);
     lines.push(`    <stat name="average_coherence" value="${result.health.averageCoherence.toFixed(2)}" />`);
+    if (result.staleEntities && result.staleEntities.length > 0) {
+      // #57: flagged by forget, deleted by the next dream prune once no evidence remains
+      lines.push("    <stale_entities>");
+      for (const e of result.staleEntities) {
+        lines.push(`      <entity name="${escapeXml(e.name)}" type="${escapeXml(e.type)}" stale_since="${escapeXml(e.staleSince)}" />`);
+      }
+      lines.push("    </stale_entities>");
+    }
     lines.push("  </health>");
   }
 

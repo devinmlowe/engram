@@ -26,7 +26,7 @@ Manages the knowledge graph — entities, relationships, topic clusters, communi
 - `analyzer` — Community detection and bridge scoring via graphology
 - `naming` — LLM-powered community naming
 - `temporal` — Temporal pattern analysis
-- `reflection` — Reflection pipeline orchestration
+- `reflection` — Reflection pipeline orchestration; `pruneOrphanEntities` also removes `stale_since` rows with zero remaining evidence on the next run (#57), and `staleEntitySummary` feeds `reflect`'s `stale_nodes` health stat
 - `search` — Graph search and entity exploration
 - `file-indexer` — Source file structure parsing into graph entities (Phase 7B)
 - `types` — Graph-specific type definitions

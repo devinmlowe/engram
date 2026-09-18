@@ -56,7 +56,10 @@ runs for the contexts in ``prefetch_contexts`` (default ``["primary"]``, so
 a user can opt cron in). An absent/empty context counts as primary. The
 explicit ``engram_memory_save`` tool keeps working in every context: a cron
 job deciding to store a fact is a deliberate, cheap, one-off write, unlike
-per-turn ingestion, and refusing it would silently lose the fact.
+per-turn ingestion, and refusing it would silently lose the fact. The
+``engram_memory_forget`` tool (#55) calls engram's ``forget`` under the
+profile scope — by ``memory_id`` from recalled context, or by ``query`` which
+lists candidates and only acts with ``confirm`` and a single match.
 
 Availability: ``is_available`` is config-only per the MemoryProvider
 contract (engram.json parses, ``base_url`` is an http(s) URL) — never the
@@ -184,6 +187,7 @@ _BREAKER_PROBE_TTL_SECS = _TOOL_CALL_TIMEOUT_SECS + 5.0
 MEMORY_TYPES = ("fact", "preference", "decision", "pattern", "solution", "convention")
 
 SAVE_TOOL_NAME = "engram_memory_save"
+FORGET_TOOL_NAME = "engram_memory_forget"
 
 _TOTAL_RESULTS_RE = re.compile(r'total_results="(\d+)"')
 
@@ -196,7 +200,10 @@ _SYSTEM_PROMPT_BLOCK = (
     "each turn — you do not need to search for them.\n"
     "When the user states a lasting preference, decision, convention, or "
     "fact worth keeping, store it with engram_memory_save (verbatim, one "
-    "fact per call). Skip transient chit-chat and things already stored."
+    "fact per call). Skip transient chit-chat and things already stored. "
+    "When the user says a recalled memory is wrong or stale, remove it with "
+    "engram_memory_forget (pass the memory id from the recalled context, or "
+    "a query to list candidates first)."
 )
 
 SAVE_SCHEMA: Dict[str, Any] = {
@@ -227,6 +234,36 @@ SAVE_SCHEMA: Dict[str, Any] = {
             },
         },
         "required": ["content"],
+    },
+}
+
+FORGET_SCHEMA: Dict[str, Any] = {
+    "name": FORGET_TOOL_NAME,
+    "description": (
+        "Forget a stored memory the user says is wrong or stale. Pass memory_id "
+        "(the id attribute of a recalled <semantic> element) to remove it in one "
+        "call. Pass query instead to list matching memories with their ids; "
+        "nothing is removed unless confirm is true and exactly one memory "
+        "matches. Forgotten memories leave recall immediately, are kept for a "
+        "retention window (restorable by the operator), and are not "
+        "re-extracted from the same conversation."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "memory_id": {
+                "type": "string",
+                "description": "Id of the memory to forget (from recalled context).",
+            },
+            "query": {
+                "type": "string",
+                "description": "Find candidate memories instead of naming one.",
+            },
+            "confirm": {
+                "type": "boolean",
+                "description": "In query mode: forget the match when exactly one memory matches.",
+            },
+        },
     },
 }
 
@@ -936,9 +973,11 @@ class EngramMemoryProvider(MemoryProvider):
     # -- tools ----------------------------------------------------------
 
     def get_tool_schemas(self) -> List[Dict[str, Any]]:
-        return [SAVE_SCHEMA]
+        return [SAVE_SCHEMA, FORGET_SCHEMA]
 
     def handle_tool_call(self, tool_name: str, args: Dict[str, Any], **kwargs) -> str:
+        if tool_name == FORGET_TOOL_NAME:
+            return self._handle_forget(args or {})
         if tool_name != SAVE_TOOL_NAME:
             return tool_error(f"Unknown tool: {tool_name}")
         args = args or {}
@@ -974,6 +1013,36 @@ class EngramMemoryProvider(MemoryProvider):
             self._record_failure()
             return tool_error(f"engram remember failed: {exc}")
         return json.dumps({"result": text or "Stored."}, ensure_ascii=False)
+
+    def _handle_forget(self, args: Dict[str, Any]) -> str:
+        """``engram_memory_forget`` -> engram ``forget`` (#55), scoped to this
+        profile: the daemon may act on global memories and this profile's own,
+        never another profile's. Validation happens before any HTTP."""
+        memory_id = args.get("memory_id")
+        query = args.get("query")
+        has_id = isinstance(memory_id, str) and memory_id.strip() != ""
+        has_query = isinstance(query, str) and query.strip() != ""
+        if has_id == has_query:
+            return tool_error("Pass exactly one of memory_id or query")
+        arguments: Dict[str, Any] = {"scope": self._write_scope()}
+        if has_id:
+            arguments["memory_id"] = memory_id.strip()
+        else:
+            arguments["query"] = query.strip()
+            arguments["confirm"] = bool(args.get("confirm"))
+
+        if not self._breaker_permits_call():
+            return tool_error(
+                "engram temporarily unavailable (multiple consecutive failures). "
+                "Will retry automatically."
+            )
+        try:
+            text = self._get_client().call_tool("forget", arguments, _TOOL_CALL_TIMEOUT_SECS)
+            self._record_success()
+        except Exception as exc:
+            self._record_failure()
+            return tool_error(f"engram forget failed: {exc}")
+        return json.dumps({"result": text or "Forgotten."}, ensure_ascii=False)
 
     # -- turn ingestion (sync_turn) -------------------------------------
 

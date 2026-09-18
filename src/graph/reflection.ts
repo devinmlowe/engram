@@ -17,6 +17,7 @@ import type {
   TemporalPattern,
   GraphAnalysisResult,
   ObservationType,
+  EntityType,
 } from "./types.js";
 import type { IntelligenceConfig } from "../_core/llm/index.js";
 import { analyzeGraph, persistAnalysis, persistBridgeScores, getBridgeScores } from "./analyzer.js";
@@ -593,6 +594,7 @@ export async function runReflection(
     )
     .get() as { cnt: number };
 
+  const stale = staleEntitySummary(db);
   const partialResult: Partial<ReflectResult> = {
     communities: communityResults,
     bridges: bridgeResults,
@@ -603,9 +605,11 @@ export async function runReflection(
       modularity: analysis.modularity,
       communityCount: analysis.communities.length,
       orphanNodes: orphanCount,
+      staleNodes: stale.count,
       averageCoherence: avgCoherence,
       generationCount: genCountRow.cnt,
     },
+    staleEntities: stale.entities,
     generation,
     generatedAt: Math.floor(Date.now() / 1000),
   };
@@ -767,6 +771,8 @@ export function buildReflectResultFromCache(
     )
     .get() as { cnt: number };
 
+  const stale = staleEntitySummary(db);
+
   return {
     communities,
     bridges,
@@ -777,12 +783,37 @@ export function buildReflectResultFromCache(
       modularity: 0, // Not stored in cache; would need to re-analyze
       communityCount: communities.length,
       orphanNodes,
+      staleNodes: stale.count,
       averageCoherence: avgCoherence,
       generationCount: genCountRow.cnt,
     },
+    staleEntities: stale.entities,
     observations,
     generation,
     generatedAt: Math.floor(Date.now() / 1000),
+  };
+}
+
+/**
+ * Entities a forget flagged `stale_since` (#57): the count plus the ten most
+ * recently flagged, for `reflect` output. Cleared by fresh evidence, deleted
+ * by the next dream prune when nothing evidences them any more.
+ */
+export function staleEntitySummary(
+  db: Database.Database,
+): { count: number; entities: ReflectResult["staleEntities"] } {
+  const count = (
+    db.prepare("SELECT COUNT(*) as cnt FROM entities WHERE stale_since IS NOT NULL").get() as { cnt: number }
+  ).cnt;
+  if (count === 0) return { count: 0, entities: [] };
+  const rows = db
+    .prepare(
+      "SELECT name, type, stale_since FROM entities WHERE stale_since IS NOT NULL ORDER BY stale_since DESC, name LIMIT 10",
+    )
+    .all() as Array<{ name: string; type: string; stale_since: string }>;
+  return {
+    count,
+    entities: rows.map((r) => ({ name: r.name, type: r.type as EntityType, staleSince: r.stale_since })),
   };
 }
 
@@ -847,38 +878,95 @@ export function mergeRedundantEntities(
  * counts, and old last_seen timestamps.
  *
  * Preserves entities that have any relationships.
+ *
+ * #57 fast path: rows a `forget` flagged `stale_since` are removed on the
+ * next run regardless of age — first relationships whose evidence list is
+ * empty, then entities with `mention_count = 0` and no remaining
+ * relationships. A flagged row that gained fresh evidence has its flag
+ * cleared by the write path and is left alone. `forget` itself never
+ * deletes graph rows; this is the one deletion path.
  */
 export function pruneOrphanEntities(
   db: Database.Database,
   options: { minMentions?: number; maxAgeDays?: number } = {},
-): { pruned: number } {
+): { pruned: number; staleRelationshipsPruned: number; staleEntitiesPruned: number } {
   const minMentions = options.minMentions ?? 2;
   const maxAgeDays = options.maxAgeDays ?? 90;
   const cutoff = Math.floor(Date.now() / 1000) - maxAgeDays * 86400;
 
-  const orphanIds = (
-    db
-      .prepare(
-        `SELECT id FROM entities
-         WHERE mention_count < ?
-           AND last_seen < ?
-           AND NOT EXISTS (
-             SELECT 1 FROM relationships r
-             WHERE r.source_entity_id = entities.id OR r.target_entity_id = entities.id
-           )`,
-      )
-      .all(minMentions, cutoff) as Array<{ id: string }>
-  ).map((r) => r.id);
-
   let pruned = 0;
+  let staleRelationshipsPruned = 0;
+  let staleEntitiesPruned = 0;
   const run = db.transaction(() => {
+    // Stale relationships: flagged and no evidence left
+    const staleRels = db
+      .prepare(
+        `SELECT id, source_memories FROM relationships WHERE stale_since IS NOT NULL`,
+      )
+      .all() as Array<{ id: string; source_memories: string | null }>;
+    const delRel = db.prepare("DELETE FROM relationships WHERE id = ?");
+    for (const rel of staleRels) {
+      if (evidenceCount(rel.source_memories) > 0) continue;
+      delRel.run(rel.id);
+      staleRelationshipsPruned++;
+    }
+
+    // Stale entities: flagged, zero mentions, and no relationships remain
+    const staleEntities = (
+      db
+        .prepare(
+          `SELECT id FROM entities
+           WHERE stale_since IS NOT NULL
+             AND mention_count <= 0
+             AND NOT EXISTS (
+               SELECT 1 FROM relationships r
+               WHERE r.source_entity_id = entities.id OR r.target_entity_id = entities.id
+             )`,
+        )
+        .all() as Array<{ id: string }>
+    ).map((r) => r.id);
+    for (const id of staleEntities) {
+      if (deleteEntityCascade(db, id)) staleEntitiesPruned++;
+    }
+
+    // Age-based orphans (the historical rule)
+    const orphanIds = (
+      db
+        .prepare(
+          `SELECT id FROM entities
+           WHERE mention_count < ?
+             AND last_seen < ?
+             AND NOT EXISTS (
+               SELECT 1 FROM relationships r
+               WHERE r.source_entity_id = entities.id OR r.target_entity_id = entities.id
+             )`,
+        )
+        .all(minMentions, cutoff) as Array<{ id: string }>
+    ).map((r) => r.id);
     for (const id of orphanIds) {
       if (deleteEntityCascade(db, id)) pruned++;
     }
   });
   run();
 
-  return { pruned };
+  return { pruned: pruned + staleEntitiesPruned, staleRelationshipsPruned, staleEntitiesPruned };
+}
+
+/** Number of evidence ids in a `relationships.source_memories` JSON array (flat or nested). */
+function evidenceCount(raw: string | null): number {
+  if (!raw) return 0;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return 0;
+    let n = 0;
+    for (const item of parsed) {
+      if (typeof item === "string") n++;
+      else if (Array.isArray(item)) n += item.filter((x) => typeof x === "string").length;
+    }
+    return n;
+  } catch {
+    return 0;
+  }
 }
 
 /**

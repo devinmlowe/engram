@@ -230,9 +230,13 @@ export interface ReflectResult {
     modularity: number;
     communityCount: number;
     orphanNodes: number;
+    /** Entities flagged `stale_since` by a forget (#57); removed by the next dream prune when no evidence remains. */
+    staleNodes: number;
     averageCoherence: number;
     generationCount: number;
   };
+  /** Up to 10 stale entities (name, type, stale_since), most recently flagged first. */
+  staleEntities: Array<{ name: string; type: EntityType; staleSince: string }>;
   observations: ReflectionObservation[];
   generation: number;
   generatedAt: number;

@@ -21,6 +21,7 @@ Database connection management, schema ownership, and thin data access layer. Pr
 - **REQ-3**: The module shall provide typed helpers for common patterns: getById, search, upsert, transaction wrapping. *(traces to ADR-004)*
 - **REQ-4**: The module shall expose the raw database connection for complex domain queries. *(traces to ADR-004)*
 - **REQ-5**: The module shall let several processes write one WAL database without surfacing `SQLITE_BUSY` on the recall hot path: `busy_timeout = 5000` on every connection, read-then-write transactions opened as `BEGIN IMMEDIATE`, and `withBusyRetry` (`busy.ts`) for best-effort writes. *(#26)*
+- **REQ-6**: The schema shall carry the memory lifecycle surface (#55, checkpoint `forget_v1`): nullable `memories.deleted_at` (ISO-8601) and `deleted_by`; `memory_changes(id, memory_id, op ∈ forget|edit|purge|restore, before, after, actor, at)`; `memory_suppressions(content_hash PRIMARY KEY, memory_id, scope, created_at)`; and nullable `entities.stale_since` / `relationships.stale_since`. The migration is idempotent and runs after the entities/relationships rebuild.
 
 ## Concurrency model
 

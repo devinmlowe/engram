@@ -37,8 +37,10 @@ export function formatSemanticXml(result: SearchResult): string {
   const date = typeof meta.date === "string" && meta.date ? ` date="${escapeXml(meta.date)}"` : "";
 
   const lines: string[] = [];
+  // `id` is the memory id — what `forget` / `recall_drill` / `engram memories
+  // show` take back (#55). Attribute order is pinned by tests.
   lines.push(
-    `  <semantic type="${escapeXml(type)}" confidence="${confidence}%" importance="${escapeXml(importanceLabel)}" relevance="${score}%"${date}>`,
+    `  <semantic id="${escapeXml(result.id)}" type="${escapeXml(type)}" confidence="${confidence}%" importance="${escapeXml(importanceLabel)}" relevance="${score}%"${date}>`,
   );
   lines.push(`    ${escapeXml(result.content)}`);
   lines.push("  </semantic>");
