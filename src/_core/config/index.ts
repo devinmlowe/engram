@@ -56,7 +56,7 @@ export function defaultModelCacheDir(dataDir: string): string {
  * The library's own default (`node_modules/@xenova/transformers/.cache/`) is
  * never used: every `npm install` / `npm ci` / global upgrade wipes it. Pure.
  */
-export function resolveModelCacheDir(
+export function resolveModelCacheLocation(
   dataDir: string,
   env: Record<string, string | undefined> = process.env,
   override?: string,
@@ -72,7 +72,7 @@ export function resolveModelCacheDir(
 
 /**
  * Recover how an already-loaded config's `modelCacheDir` was chosen, for
- * `engram doctor` / `engram migrate` output. Mirrors resolveModelCacheDir().
+ * `engram doctor` / `engram migrate` output. Mirrors resolveModelCacheLocation().
  */
 export function describeModelCacheDir(
   config: Pick<EngramConfig, "dataDir" | "modelCacheDir">,
@@ -157,7 +157,7 @@ export function loadConfig(overrides?: Partial<EngramConfig>): EngramConfig {
       env.ENGRAM_CLAUDE_PROJECTS_DIR ??
       overrides?.claudeProjectsDir ??
       defaults.claudeProjectsDir,
-    modelCacheDir: resolveModelCacheDir(dataDir, env, overrides?.modelCacheDir).dir,
+    modelCacheDir: resolveModelCacheLocation(dataDir, env, overrides?.modelCacheDir).dir,
 
     embedding: {
       ...defaults.embedding,

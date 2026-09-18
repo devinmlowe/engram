@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { describeModelCacheDir, loadConfig, resolveDefaultDataDir, resolveModelCacheDir } from "../../src/_core/config/index.js";
+import { describeModelCacheDir, loadConfig, resolveDefaultDataDir, resolveModelCacheLocation } from "../../src/_core/config/index.js";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -250,14 +250,14 @@ describe("Config Defaults Contract", () => {
     expect(loadConfig({ modelCacheDir: "/from/overrides" }).modelCacheDir).toBe("/from/overrides");
   });
 
-  it("resolveModelCacheDir names the winning tier in precedence order", () => {
+  it("resolveModelCacheLocation names the winning tier in precedence order", () => {
     const data = "/data";
-    expect(resolveModelCacheDir(data, {})).toEqual({ dir: join(data, "models"), source: "default" });
-    expect(resolveModelCacheDir(data, { HF_HOME: "/hf" })).toEqual({ dir: join("/hf", "hub"), source: "HF_HOME" });
-    expect(resolveModelCacheDir(data, { HF_HOME: "/hf" }, "/ovr")).toEqual({ dir: "/ovr", source: "override" });
-    expect(resolveModelCacheDir(data, { HF_HOME: "/hf", ENGRAM_MODEL_CACHE_DIR: "/explicit" }, "/ovr"))
+    expect(resolveModelCacheLocation(data, {})).toEqual({ dir: join(data, "models"), source: "default" });
+    expect(resolveModelCacheLocation(data, { HF_HOME: "/hf" })).toEqual({ dir: join("/hf", "hub"), source: "HF_HOME" });
+    expect(resolveModelCacheLocation(data, { HF_HOME: "/hf" }, "/ovr")).toEqual({ dir: "/ovr", source: "override" });
+    expect(resolveModelCacheLocation(data, { HF_HOME: "/hf", ENGRAM_MODEL_CACHE_DIR: "/explicit" }, "/ovr"))
       .toEqual({ dir: "/explicit", source: "ENGRAM_MODEL_CACHE_DIR" });
-    expect(resolveModelCacheDir(data, { ENGRAM_MODEL_CACHE_DIR: " " }, "  ")).toEqual({ dir: join(data, "models"), source: "default" });
+    expect(resolveModelCacheLocation(data, { ENGRAM_MODEL_CACHE_DIR: " " }, "  ")).toEqual({ dir: join(data, "models"), source: "default" });
   });
 
   it("describeModelCacheDir recovers the tier from a loaded config", () => {

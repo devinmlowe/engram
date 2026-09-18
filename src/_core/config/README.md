@@ -7,7 +7,7 @@ System-wide configuration with sensible defaults and environment variable overri
 - Default configuration values for all engram subsystems
 - Environment variable override mapping (`ENGRAM_*` prefix)
 - Configuration type definitions
-- Platform data-dir default (`resolveDefaultDataDir`) and the durable model-cache location (`resolveModelCacheDir`: `ENGRAM_MODEL_CACHE_DIR` → override → `$HF_HOME/hub` → `<data dir>/models`, #53)
+- Platform data-dir default (`resolveDefaultDataDir`) and the durable model-cache location (`resolveModelCacheLocation`: `ENGRAM_MODEL_CACHE_DIR` → override → `$HF_HOME/hub` → `<data dir>/models`, #53)
 
 ## Out of Scope
 
@@ -16,7 +16,7 @@ System-wide configuration with sensible defaults and environment variable overri
 
 ## Contains
 
-- `index.ts` — Configuration loader with env var overrides, exports `EngramConfig`; `resolveModelCacheDir` / `describeModelCacheDir` name the winning tier for `engram doctor` and `engram migrate`
+- `index.ts` — Configuration loader with env var overrides, exports `EngramConfig`; `resolveModelCacheLocation` / `describeModelCacheDir` name the winning tier for `engram doctor` and `engram migrate`
 
 ## See Also
 
