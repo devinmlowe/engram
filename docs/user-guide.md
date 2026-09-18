@@ -16,16 +16,23 @@ For the full vision and technical specification, see [SPEC.md](../SPEC.md).
 ### Via npm
 
 ```bash
+npx @devinmlowe/engram preflight   # prebuilt native modules for this node/platform/arch/libc? prints the fix if not
 npm install -g @devinmlowe/engram
-# `engram` is now on your PATH
+# `engram` is now on your PATH; `engram preflight` repeats the check on the installed copy
 ```
+
+The preflight reports, per native module (`better-sqlite3`, `sqlite-vec`, `onnxruntime-node`),
+`prebuilt`, `compiled locally`, `will compile (needs python3 + C++ toolchain)`, `unsupported` or
+`unknown`, followed by the exact fix for your OS. See the README's "Supported platform/arch set"
+table for what each target gets.
 
 ### From Source
 
 ```bash
 git clone https://github.com/devinmlowe/engram.git
 cd engram
-npm install
+node scripts/preflight.cjs   # optional: the same native-module check before anything is installed
+npm install                  # runs it again as the postinstall hook
 npm run build
 ```
 

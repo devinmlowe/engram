@@ -1,0 +1,38 @@
+# Dependabot version updates (#63).
+#
+# Native modules get their own group so a bump that could drop a prebuild
+# (see README "Supported platform/arch set") never hides inside a routine
+# batch. Dependabot applies `labels` per update entry, not per group, and
+# rejects two npm entries for the same directory on one branch, so the
+# `native-dep` label is added by .github/workflows/dependabot-native-label.yml
+# when a Dependabot PR touches one of these packages.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    groups:
+      native-modules:
+        # Everything with a compiled or prebuilt binary: CI's preflight
+        # --expect prebuilt is the gate; review the release assets by hand.
+        patterns:
+          - better-sqlite3
+          - sqlite-vec
+          - "@xenova/transformers"
+          - onnxruntime-node
+      npm-dependencies:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - better-sqlite3
+          - sqlite-vec
+          - "@xenova/transformers"
+          - onnxruntime-node
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday

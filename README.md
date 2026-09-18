@@ -26,7 +26,8 @@ Designed as an MCP server for Claude Code and other LLM agents, with CLI and web
 **From npm**
 
 ```bash
-npm install -g @devinmlowe/engram   # puts `engram` on your PATH; prints a platform preflight verdict
+npx @devinmlowe/engram preflight    # is this node/platform/arch/libc covered by prebuilt native modules? (fix per OS if not)
+npm install -g @devinmlowe/engram   # puts `engram` on your PATH; the postinstall hook runs the same preflight
 ```
 
 **From source**
@@ -34,13 +35,15 @@ npm install -g @devinmlowe/engram   # puts `engram` on your PATH; prints a platf
 ```bash
 git clone https://github.com/devinmlowe/engram.git
 cd engram
-npm install          # prints a platform preflight verdict, then builds via the "prepare" script
+node scripts/preflight.cjs   # optional: the native-dependency verdict before anything is installed
+npm install          # runs the same preflight as postinstall, then builds via the "prepare" script
 npm link             # puts `engram` on your PATH (or run `node dist/interfaces/cli/index.js` directly)
 ```
 
 Either way, continue with:
 
 ```bash
+engram preflight     # prebuilt / compiled locally / unsupported per native module, with the fix for this OS
 engram doctor        # node version, platform/arch, native modules, model cache, ollama tier, data dir, mcp daemon — all [ok]?
 engram init          # creates engram.db in the data dir (default ~/.local/share/engram; see Configuration) and downloads the embedding model
 engram sync          # index conversations from ~/.claude/projects (optional)
@@ -229,44 +232,80 @@ or `python3`.
 
 Engram depends on three native/prebuilt chains: `better-sqlite3`, `sqlite-vec` (alpha; ships
 platform packages only), and `onnxruntime-node` (pulled in by `@xenova/transformers`). Engram
-works where all three have prebuilt binaries:
+works where all three have prebuilt binaries for your `process.platform`, `process.arch`, libc
+(glibc vs musl on Linux) and — for `better-sqlite3` only — Node ABI (`process.versions.modules`).
+The table is generated from `scripts/preflight.cjs`, the same table the preflight and `engram
+doctor` consult, and a test fails when the two drift:
 
-| `process.platform`-`process.arch` | Machines | Status |
-|---|---|---|
-| `darwin-arm64` | Apple silicon Macs | supported (CI) |
-| `darwin-x64` | Intel Macs | supported |
-| `linux-x64` | x86-64 Linux (glibc) | supported (CI) |
-| `linux-arm64` | 64-bit ARM Linux (glibc): Graviton, Raspberry Pi OS 64-bit, Apple-silicon VMs | supported |
-| `win32-x64` | x86-64 Windows 10/11 | supported (CI, experimental) |
-| `win32-arm64` | Windows on ARM (Snapdragon, Apple-silicon VMs running Windows 11 ARM) | **not supported** — see caveats |
-| `linux-arm` | 32-bit ARM Linux (armv7: Raspberry Pi OS 32-bit, older SBCs) | **not supported** — see caveats |
+<!-- supported-platforms:start -->
+| Target | Machines | better-sqlite3 (Node 22 · 24 · 26) | sqlite-vec | onnxruntime-node | Engram |
+|---|---|---|---|---|---|
+| `darwin-arm64` | Apple silicon Macs | prebuilt · prebuilt · prebuilt | prebuilt | prebuilt | **supported** (CI: macos-latest) |
+| `darwin-x64` | Intel Macs | prebuilt · prebuilt · prebuilt | prebuilt | prebuilt | **supported** |
+| `linux-arm` | 32-bit ARM Linux (armv7: Raspberry Pi OS 32-bit, older SBCs) | prebuilt · prebuilt · prebuilt | — | — | **not supported** |
+| `linux-arm64` | 64-bit ARM Linux (glibc): Graviton, Raspberry Pi OS 64-bit, Apple-silicon VMs | prebuilt · prebuilt · prebuilt | prebuilt | prebuilt | **supported** (CI: ubuntu-24.04-arm) |
+| `linux-x64` | x86-64 Linux (glibc: Debian, Ubuntu, Fedora, …) | prebuilt · prebuilt · prebuilt | prebuilt | prebuilt | **supported** (CI: ubuntu-latest) |
+| `linuxmusl-arm` | 32-bit ARM Alpine / musl | prebuilt · prebuilt · prebuilt | — | — | **not supported** |
+| `linuxmusl-arm64` | 64-bit ARM Alpine / musl | prebuilt · prebuilt · prebuilt | — | — | **not supported** |
+| `linuxmusl-x64` | x86-64 Alpine / musl (`node:*-alpine` images) | prebuilt · prebuilt · prebuilt | — | — | **not supported** (CI: node:22-alpine container asserts this verdict) |
+| `win32-arm64` | Windows on ARM (Snapdragon, Apple-silicon VMs running Windows 11 ARM) | prebuilt · prebuilt · prebuilt | — | prebuilt | **not supported** (CI: windows-11-arm asserts this verdict) |
+| `win32-x64` | x86-64 Windows 10/11 | prebuilt · prebuilt · prebuilt | prebuilt | prebuilt | **supported** (CI: windows-latest, experimental) |
+| any other target | FreeBSD, 32-bit x86, … | compiles · compiles · compiles | — | — | **not supported** |
 
-Two things tell you where you stand: `npm install` runs a non-fatal **postinstall preflight**
-(`scripts/preflight.cjs`) that prints `[ok]`/`[FAIL]` lines for node, platform/arch,
-better-sqlite3 and sqlite-vec without ever failing the install (`ENGRAM_SKIP_PREFLIGHT=1` silences
-it; `node scripts/preflight.cjs --strict` exits non-zero for CI), and `engram doctor` runs the full
-post-build version of the same checks plus the model cache. `package.json` deliberately does not
-declare hard `os`/`cpu` fields: those would refuse to install for anyone with a working toolchain
-on an unlisted target.
+Node ABIs with prebuilts: better-sqlite3 node-v127/137/141/147 (Node 22, 24, 25, 26). Odd (non-LTS) majors — Node 23: better-sqlite3 compiles; Node 25: better-sqlite3 prebuilt. sqlite-vec and onnxruntime-node are Node-version independent. Generated from `scripts/preflight.cjs` by `node scripts/supported-platforms.cjs --write`; `--check` runs in the test suite.
+<!-- supported-platforms:end -->
 
-**Caveats: Windows on ARM and armv7.** `sqlite-vec` publishes no binary for `win32-arm64` or
-`linux-arm` (armv7), and the `onnxruntime-node` version pinned by `@xenova/transformers` 2.x has
-no build for them either, so even a successful source build of `better-sqlite3` leaves
-`engram init` failing on the sqlite-vec load. On Windows on ARM the practical workaround is to
-install the **x64** Node.js build: Windows 11 runs it under emulation and the `win32-x64` prebuilts
-load (slower, not covered by CI). On armv7 boards, use a 64-bit OS image (`linux-arm64`).
+Three things tell you where you stand:
 
-**Toolchain needed elsewhere.** On any target without prebuilts, `npm install` compiles
-`better-sqlite3` from source with node-gyp, which needs a C++ toolchain and Python 3:
+- `npx @devinmlowe/engram preflight` (or `engram preflight` once installed, `node
+  scripts/preflight.cjs` in a checkout) prints one line per native module — `[ok] prebuilt`,
+  `[warn] compiled locally` / `will compile (needs python3 + C++ toolchain)`, `[FAIL]
+  unsupported`, `[--] unknown (<reason>)` — followed by the exact fix for your OS
+  (`xcode-select --install`, `sudo apt install build-essential python3`, `sudo dnf install
+  gcc-c++ make python3`, `apk add build-base python3`, Visual Studio Build Tools with the
+  "Desktop development with C++" workload) and `nvm use <major>` when the gap is a Node major
+  without prebuilds. After an install it inspects `node_modules` (a `build/Release` binary with
+  no node-gyp artefacts is a prebuild; `config.gypi` / `Makefile` / `*.vcxproj` next to it mean
+  it was compiled locally); before one, or offline, it answers from the static table. `--json`
+  prints the structured result; `--strict` exits 1 on any `[FAIL]`; `--expect prebuilt` (or
+  `--expect better-sqlite3=prebuilt,sqlite-vec=unsupported`) exits 1 unless the verdicts match,
+  which is how CI fails a dependency bump that drops a prebuild. `npm_config_platform` /
+  `npm_config_arch` / `npm_config_target_arch` / `npm_config_libc` override the target.
+- `npm install` runs that preflight as a non-fatal **postinstall hook** (`ENGRAM_SKIP_PREFLIGHT=1`
+  silences it). It never fails the install: `package.json` deliberately declares no hard
+  `os`/`cpu` fields, which would refuse to install for anyone with a working toolchain on an
+  unlisted target.
+- `engram doctor` runs the full post-build checks; its `better-sqlite3` and `sqlite-vec` lines
+  end with `prebuilt — …` or `compiled locally — …`, which tells an upgrade that silently fell
+  back to node-gyp apart from one that used the prebuild (a bump that drops a prebuild for your
+  Node major is the usual cause: `nvm use 24` or install the toolchain).
+
+**Caveats: Windows on ARM, armv7 and Alpine/musl.** `sqlite-vec` publishes no binary for
+`win32-arm64` or `linux-arm` (armv7), and its Linux builds — like `onnxruntime-node`'s — are
+glibc-only (they need `ld-linux` and do not load on musl even with `gcompat`). `better-sqlite3`
+itself ships prebuilds for all of those, so `npm install` *succeeds* there and `engram init` then
+fails on the sqlite-vec load; the preflight reports `[FAIL] sqlite-vec: unsupported` up front. On
+Windows on ARM the practical workaround is to install the **x64** Node.js build: Windows 11 runs
+it under emulation and the `win32-x64` prebuilts load (slower, not covered by CI). On armv7 boards,
+use a 64-bit OS image (`linux-arm64`). On Alpine, use a glibc image (`node:22-bookworm-slim`).
+
+**Toolchain needed elsewhere.** On a target `better-sqlite3` has no prebuild for (a Node major
+outside 22/24/25/26 with the pinned `^12.11.1`, or a platform not in the table), `npm install`
+compiles it from source with node-gyp, which needs a C++ toolchain and Python 3:
 
 - Windows: Visual Studio 2022 **Build Tools** with the "Desktop development with C++" workload
   (MSVC compiler + Windows SDK) and Python 3. node-gyp finds them automatically; if it picks the
   wrong Visual Studio run `npm config set msvs_version 2022`.
 - Linux: `gcc`/`g++`, `make`, and `python3` — Debian/Ubuntu `sudo apt install build-essential python3`;
-  Fedora `sudo dnf install gcc-c++ make python3`; Alpine `apk add build-base python3` (musl builds are untested).
+  Fedora `sudo dnf install gcc-c++ make python3`; Alpine `apk add build-base python3`.
 - macOS: Xcode Command Line Tools (`xcode-select --install`).
 
-CI runs lint and the full test suite on all three OSes (x64 Linux/Windows, arm64 macOS).
+CI runs lint and the full test suite on Node 22 and 24 for x64 Linux, arm64 Linux
+(`ubuntu-24.04-arm`), arm64 macOS and x64 Windows (experimental), runs `preflight --strict
+--expect prebuilt` on each so a dependency bump that drops a prebuild fails there and not on a
+user's machine, and asserts the documented *unsupported* verdict on `windows-11-arm` and in a
+`node:22-alpine` (musl) container. Dependabot groups bumps of the native modules separately and
+they are labelled `native-dep` for manual prebuild review.
 
 ## Core Principles
 

@@ -551,6 +551,22 @@ engram health
 
 ---
 
+### engram preflight
+
+Native-dependency check for this Node ABI + platform + arch + libc, before or after install. Needs no database or models, so it also runs as `npx @devinmlowe/engram preflight` before `npm install -g`.
+
+```bash
+engram preflight                       # one line per native module + fix per OS
+engram preflight --json                # structured result: target, deps[], loads[], failed, ok
+engram preflight --strict              # exit 1 on any [FAIL]
+engram preflight --expect prebuilt     # exit 1 unless every dependency is prebuilt (CI)
+engram preflight --expect better-sqlite3=prebuilt,sqlite-vec=unsupported
+```
+
+Per dependency (`better-sqlite3`, `sqlite-vec`, `onnxruntime-node`) the verdict is `prebuilt`, `compiled locally` (a node-gyp build sits in `node_modules`), `will compile (needs python3 + C++ toolchain)` (predicted from the static table before install), `unsupported` (the dependency publishes no build for this target) or `unknown (<reason>)` (the probe could not tell; it never throws). Warn/fail lines are followed by `fix: …` (`xcode-select --install`, `sudo apt install build-essential python3`, `sudo dnf install gcc-c++ make python3`, `apk add build-base python3`, Visual Studio Build Tools + C++ workload) and `or: nvm use <major>` when a Node major without prebuilds is the cause. `npm_config_platform` / `npm_config_arch` / `npm_config_target_arch` / `npm_config_libc` override the target. The same script (`scripts/preflight.cjs`) runs as the npm `postinstall` hook; `ENGRAM_SKIP_PREFLIGHT=1` silences only the hook.
+
+---
+
 ## Configuration Reference
 
 All `EngramConfig` fields with their defaults:

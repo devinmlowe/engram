@@ -18,12 +18,15 @@ import {
   checkDataDir,
   checkMcpDaemon,
   checkModelCache,
+  checkNativeSqlite,
   formatDoctorReport,
   legacyDataDir,
   probeMcpHealth,
+  probeNativeDep,
   runDoctor,
   type DoctorReport,
 } from "../../../src/interfaces/cli/doctor.js";
+import { loadPreflight, type PrebuildProbe } from "../../../src/interfaces/cli/preflight.js";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { loadConfig } from "../../../src/_core/config/index.js";
@@ -104,6 +107,58 @@ describe("doctor report shape", () => {
     expect([...PREBUILT_TARGETS].sort()).toEqual(
       ["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64", "win32-x64"].sort(),
     );
+    // shared with scripts/preflight.cjs rather than duplicated (#63)
+    expect([...PREBUILT_TARGETS]).toEqual([...loadPreflight().PREBUILT_TARGETS]);
+  });
+
+  it("names the Node ABI (and libc on Linux) on the platform/arch line", () => {
+    const platform = report.checks.find((c) => c.name === "platform/arch")!;
+    expect(platform.detail).toContain(`(node-v${process.versions.modules})`);
+    if (process.platform === "linux") expect(platform.detail).toMatch(/, (glibc|musl) \(/);
+  });
+
+  it("ends the native-module lines with the prebuild verdict from the preflight probe (#63)", () => {
+    const verdict = /; (prebuilt|compiled locally|will compile \(needs python3 \+ C\+\+ toolchain\)|unsupported|unknown) — .+/;
+    for (const name of ["better-sqlite3", "sqlite-vec"] as const) {
+      const check = report.checks.find((c) => c.name === name)!;
+      expect(check.detail, name).toMatch(verdict);
+    }
+    // and agrees with `engram preflight` itself
+    const { deps } = loadPreflight().preflight();
+    for (const d of deps.filter((x) => x.dep !== "onnxruntime-node")) {
+      expect(report.checks.find((c) => c.name === d.dep)!.detail).toContain(`; ${d.label} — ${d.detail}`);
+    }
+  });
+});
+
+describe("doctor prebuild verdicts (#63)", () => {
+  const fake = (status: PrebuildProbe["status"], label: string, detail: string, fix: string[] = []): PrebuildProbe => ({
+    dep: "better-sqlite3", status, label, level: "ok", source: "installed", detail, fix,
+  });
+
+  it("says compiled locally when the probe found node-gyp artefacts, with its hints", async () => {
+    const [bs3, vec] = await checkNativeSqlite((dep) =>
+      dep === "better-sqlite3"
+        ? fake("compiled", "compiled locally", "node-gyp artefacts build/config.gypi; no prebuilt for node-v131-linux-x64", ["fix: nvm use 24   (a Node major better-sqlite3 ships prebuilts for)"])
+        : fake("prebuilt", "prebuilt", "sqlite-vec-linux-x64/vec0.so"),
+    );
+    expect(bs3.level).toBe("ok"); // it loads; the verdict is diagnostic
+    expect(bs3.detail).toMatch(/^loaded \(SQLite [\d.]+\); compiled locally — node-gyp artefacts build\/config\.gypi; .*; fix: nvm use 24/);
+    expect(vec.detail).toMatch(/; prebuilt — sqlite-vec-linux-x64\/vec0\.so$/);
+  });
+
+  it("says prebuilt when the probe found a prebuild-install tarball", async () => {
+    const [bs3] = await checkNativeSqlite(() => fake("prebuilt", "prebuilt", "build/Release/better_sqlite3.node with no node-gyp artefacts"));
+    expect(bs3.detail).toMatch(/; prebuilt — build\/Release\/better_sqlite3\.node/);
+  });
+
+  it("degrades to unknown when the probe itself throws", async () => {
+    const p = probeNativeDep("sqlite-vec", () => { throw new Error("script missing"); });
+    expect(p.status).toBe("unknown");
+    expect(p.label).toBe("unknown");
+    expect(p.detail).toContain("script missing");
+    const [, vec] = await checkNativeSqlite(() => { throw new Error("boom"); });
+    expect(vec.detail).toMatch(/; unknown — preflight probe unavailable: boom$/);
   });
 });
 

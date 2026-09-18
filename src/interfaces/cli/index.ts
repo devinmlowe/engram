@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { loadConfig } from "../../_core/config/index.js";
 import { getDatabase, closeDatabase } from "../../_core/db/index.js";
 import { ENGRAM_VERSION } from "../../_core/version/index.js";
+import { loadPreflight } from "./preflight.js";
 
 const program = new Command();
 
@@ -1295,6 +1296,38 @@ program
     }
 
     if (!report.ok) process.exit(1);
+  });
+
+// ─── preflight ──────────────────────────────────────────────────
+
+program
+  .command("preflight")
+  .description(
+    "Native-dependency check for this node/platform/arch/libc: prebuilt, compiled locally, will compile, or unsupported, with the fix per OS. Needs no database or models",
+  )
+  .option("--strict", "Exit 1 when any line is [FAIL] (CI)")
+  .option("--json", "Print the structured result as JSON instead of text")
+  .option(
+    "--expect <spec>",
+    "Exit 1 unless every verdict matches: a status for all deps (prebuilt) or dep=status pairs (better-sqlite3=prebuilt,sqlite-vec=unsupported)",
+  )
+  .action((opts) => {
+    // Runs the same dependency-free script as the npm postinstall hook
+    // (scripts/preflight.cjs); ENGRAM_SKIP_PREFLIGHT only silences that hook.
+    const { preflight, toJson, checkExpectations } = loadPreflight();
+    const result = preflight();
+    if (opts.json) {
+      console.log(JSON.stringify(toJson(result), null, 2));
+    } else {
+      console.log(result.lines.join("\n"));
+    }
+    let failed = Boolean(opts.strict) && result.failed > 0;
+    if (opts.expect) {
+      const problems = checkExpectations(result, opts.expect);
+      for (const p of problems) console.error(p);
+      if (problems.length > 0) failed = true;
+    }
+    if (failed) process.exit(1);
   });
 
 // ─── reflect ─────────────────────────────────────────────────────
