@@ -6,8 +6,8 @@
  * but `engram --version` is old". Pure: PATH, the filesystem probes and the
  * running script are injected so tests stage any layout in a temp dir.
  */
-import { existsSync, realpathSync } from "node:fs";
-import { delimiter, join, resolve, sep } from "node:path";
+import { existsSync, openSync, readSync, closeSync, realpathSync } from "node:fs";
+import { delimiter, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { PACKAGE_NAME, PACKAGE_ROOT } from "../../_core/version/index.js";
 
 export interface InstallPathContext {
@@ -20,13 +20,15 @@ export interface InstallPathContext {
   exists: (p: string) => boolean;
   /** Resolve symlinks; may throw for a dangling one (treated as unresolvable). */
   realpath: (p: string) => string;
+  /** First bytes of a file, for shim scripts (`exec node …/dist/interfaces/cli/index.js`, npm's `.cmd` shims). */
+  readHead?: (p: string) => string;
   packageName?: string;
 }
 
 export interface EngramBinary {
   /** The PATH entry joined with the binary name, as the shell would find it. */
   path: string;
-  /** Symlinks resolved; equal to `path` when resolution fails. */
+  /** Symlinks resolved, or the CLI script a shim runs; equal to `path` when resolution fails. */
   real: string;
   /** Sits inside `packageRoot` (this install). */
   thisInstall: boolean;
@@ -44,6 +46,17 @@ export interface InstallPathReport {
   fix: string | null;
 }
 
+function readHeadSync(p: string): string {
+  const fd = openSync(p, "r");
+  try {
+    const buf = Buffer.alloc(4096);
+    const n = readSync(fd, buf, 0, buf.length, 0);
+    return buf.subarray(0, n).toString("utf8");
+  } finally {
+    closeSync(fd);
+  }
+}
+
 export function defaultInstallPathContext(overrides: Partial<InstallPathContext> = {}): InstallPathContext {
   return {
     argv1: process.argv[1] ?? "",
@@ -52,6 +65,7 @@ export function defaultInstallPathContext(overrides: Partial<InstallPathContext>
     platform: process.platform,
     exists: existsSync,
     realpath: realpathSync,
+    readHead: readHeadSync,
     packageName: PACKAGE_NAME,
     ...overrides,
   };
@@ -59,6 +73,27 @@ export function defaultInstallPathContext(overrides: Partial<InstallPathContext>
 
 function safeReal(ctx: InstallPathContext, p: string): string {
   try { return ctx.realpath(p); } catch { return resolve(p); }
+}
+
+const CLI_SCRIPT_RE = /([^\s"'`]*dist[\\/]interfaces[\\/]cli[\\/]index\.js)/;
+
+/**
+ * A wrapper script instead of a symlink: a hand-written `exec node
+ * <checkout>/dist/interfaces/cli/index.js "$@"`, or npm's `engram.cmd` /
+ * `engram` sh shim on Windows (`%~dp0\node_modules\<pkg>\dist\…`). The CLI
+ * script it names is what really runs, so that is what gets compared.
+ */
+function shimTarget(ctx: InstallPathContext, shim: string): string | null {
+  if (!ctx.readHead) return null;
+  let head: string;
+  try { head = ctx.readHead(shim); } catch { return null; }
+  if (head.includes("\0")) return null; // a binary, not a script
+  const m = head.match(CLI_SCRIPT_RE);
+  if (!m) return null;
+  const dir = dirname(shim);
+  let target = m[1].replace(/^%~dp0[\\/]?/i, `${dir}${sep}`).replace(/^\$basedir[\\/]?/, `${dir}${sep}`);
+  if (!isAbsolute(target)) target = resolve(dir, target);
+  return ctx.exists(target) ? safeReal(ctx, target) : target;
 }
 
 function isInside(file: string, root: string): boolean {
@@ -77,7 +112,8 @@ export function findEngramBinaries(ctx: InstallPathContext): EngramBinary[] {
     for (const name of names) {
       const p = join(dir, name);
       if (!ctx.exists(p)) continue;
-      const real = safeReal(ctx, p);
+      const linked = safeReal(ctx, p);
+      const real = (linked === resolve(p) ? shimTarget(ctx, p) : null) ?? linked;
       // A Windows shim (`engram.cmd`) is not a symlink: it sits in the global
       // prefix next to `node_modules/<package>`, so judge by that tree instead.
       const shimRoot = ctx.platform === "win32" ? join(dir, "node_modules", ...(ctx.packageName ?? "").split("/")) : null;
