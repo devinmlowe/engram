@@ -980,6 +980,7 @@ The one exception is the launchd dream daemon, whose launcher (`scripts/run-drea
 | `ENGRAM_OPENAI_API_KEY_ENV` | `OPENAI_API_KEY` | *Name* of the environment variable holding the route's credential. Engram reads it at call time and never stores, prints or commits the value |
 | `ENGRAM_OPENAI_TEMPERATURE` | — | Sent only when set; the generic route omits `temperature` by default because many gateways and reasoning models reject it |
 | `ENGRAM_LLM_PROVIDERS` | `ollama,openai,openrouter,anthropic` | Tier order, comma-separated. A tier left out is never tried; unknown names are ignored with a warning |
+| `ENGRAM_LLM_TIMEOUT_MS` | `120000` | Per-request timeout for every tier. Raise it for a slow local model — a 27B model on Apple Silicon needs 2–4 minutes per extraction prompt; the `extraction smoke` budget grows to match |
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama endpoint; used first if reachable |
 | `ENGRAM_LOCAL_MODEL` | `qwen2.5:7b` | Ollama model name (must be pulled on the Ollama host) |
 | `ENGRAM_LOCAL_MODEL_FALLBACKS` | — | Comma-separated Ollama models tried in order when `ENGRAM_LOCAL_MODEL` is not pulled (e.g. `llama3.1:8b,qwen3:8b`) |

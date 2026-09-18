@@ -69,6 +69,18 @@ const DEFAULT_OLLAMA_URL = "http://localhost:11434";
 const DEFAULT_OLLAMA_MODEL = "qwen2.5:7b";
 const DEFAULT_OPENROUTER_MODEL = "google/gemini-2.5-flash-lite";
 const DEFAULT_TIMEOUT_MS = 120_000;
+export const LLM_TIMEOUT_ENV = "ENGRAM_LLM_TIMEOUT_MS";
+
+/**
+ * Per-request timeout for every tier (ms). `ENGRAM_LLM_TIMEOUT_MS` raises it for
+ * slow local models (a 27B model on Apple Silicon needs minutes for an
+ * extraction prompt); blank or non-numeric values fall back to the default.
+ */
+export function resolveLlmTimeoutMs(env: Record<string, string | undefined> = process.env): number {
+  const raw = env[LLM_TIMEOUT_ENV]?.trim();
+  const n = raw ? Number(raw) : NaN;
+  return Number.isFinite(n) && n > 0 ? Math.round(n) : DEFAULT_TIMEOUT_MS;
+}
 
 /**
  * Build an IntelligenceConfig from the application EngramConfig.
@@ -90,7 +102,7 @@ export function buildIntelligenceConfig(
       (process.env.OPENROUTER_API_KEY ? DEFAULT_OPENROUTER_MODEL : undefined),
     apiModel: config.dream.apiModel,
     apiFallbackModel: config.dream.apiFallbackModel,
-    timeoutMs: DEFAULT_TIMEOUT_MS,
+    timeoutMs: resolveLlmTimeoutMs(process.env),
     openai: resolveOpenAIRouteConfig(process.env),
     providerOrder: parseProviderOrder(process.env.ENGRAM_LLM_PROVIDERS),
   };

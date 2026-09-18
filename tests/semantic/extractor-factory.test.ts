@@ -145,7 +145,7 @@ function makeAnthropicMock(): ReturnType<typeof vi.fn> {
 
 // ─── Env isolation ──────────────────────────────────────────────
 
-const ENV_KEYS = ["ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "OLLAMA_HOST"] as const;
+const ENV_KEYS = ["ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "OLLAMA_HOST", "ENGRAM_OPENAI_BASE_URL", "ENGRAM_OPENAI_MODEL", "OPENAI_API_KEY"] as const;
 let savedEnv: Record<string, string | undefined> = {};
 
 beforeEach(() => {
@@ -271,5 +271,13 @@ describe("semantic extractor routes through the LLM factory", () => {
   it("initExtractor rejects when no tier is reachable", async () => {
     stubFetch({ ollamaUp: false });
     await expect(initExtractor()).rejects.toThrow("No extraction provider configured");
+  });
+
+  it("initExtractor accepts a configured OpenAI-compatible route on its own (#45)", async () => {
+    stubFetch({ ollamaUp: false });
+    process.env.ENGRAM_OPENAI_BASE_URL = "http://127.0.0.1:8100/v1";
+    process.env.ENGRAM_OPENAI_MODEL = "/models/local";
+    process.env.OPENAI_API_KEY = "no-key-required";
+    await expect(initExtractor()).resolves.toBeUndefined();
   });
 });
