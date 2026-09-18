@@ -536,10 +536,39 @@ Exit status 1 when any check fails.
 Start the MCP server on stdio transport. Used by Claude Code to communicate with Engram.
 
 ```bash
-engram mcp
+engram mcp                 # stdio; bridges to the HTTP daemon when /health answers, else inline (--standalone forces inline)
+engram mcp --http [--port N]
 ```
 
-This is typically not invoked directly — Claude Code launches it via the MCP configuration.
+This is typically not invoked directly — the host launches it via the MCP configuration that
+`engram mcp install` writes.
+
+### engram mcp install / uninstall / status
+
+Register this install with an MCP host (#50). Subcommands of `mcp`; bare `engram mcp` is unchanged.
+
+```bash
+engram mcp install <host> [options]   # claude | codex | cursor | hermes
+engram mcp uninstall <host> [--project] [--dry-run] [--json]
+engram mcp status [--json]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--all` | Every host whose config directory exists (`~/.claude`, `~/.codex`, `~/.cursor`, `$HERMES_HOME`) |
+| `--project` | Project scope in the current directory: `.mcp.json` (claude), `.codex/config.toml`, `.cursor/mcp.json` |
+| `--transport http\|stdio` | Skip the daemon probe. Default: HTTP `http://127.0.0.1:<ENGRAM_MCP_PORT>/mcp` when `/health` answers, else stdio `node <install>/dist/interfaces/cli/index.js mcp` |
+| `--dry-run` | Print the target path and a unified diff; write nothing |
+| `--force` | Write the Claude user-scope entry even though the engram plugin is installed |
+| `--inline-token` | Write the literal `ENGRAM_MCP_TOKEN` (mode 600) instead of referencing the variable (`${ENGRAM_MCP_TOKEN}` / `bearer_token_env_var` / `${env:ENGRAM_MCP_TOKEN}`) |
+| `--json` | Machine-readable results |
+
+Files are written atomically with the previous content in `<file>.bak`; other servers and keys
+are preserved and a second run changes nothing. `hermes` runs `interfaces/hermes-plugin/deploy.sh`
+for the default profile and every profile that already has the plugin. `status` reports, per
+host: registered, transport and target, whether it points at this install, whether the daemon it
+uses answers `/health`, and whether `ENGRAM_MCP_TOKEN` resolves in the current environment (with
+the platform hint for GUI-launched hosts); the Claude Code plugin counts as a registered host.
 
 ---
 

@@ -110,24 +110,30 @@ The plugin runs `npx -y @devinmlowe/engram@<version> mcp` (no clone, no paths) a
 if Claude Code times out during that one-off install, start it with a longer MCP startup
 timeout: `MCP_TIMEOUT=120000 claude`. Update later with `/plugin update engram@engram`.
 
-### Option B: CLI Registration
+### Option B: `engram mcp install claude`
 
 ```bash
-claude mcp add --transport stdio --scope user engram -- npx -y @devinmlowe/engram mcp
+engram mcp install claude            # writes mcpServers.engram into ~/.claude.json (backup in ~/.claude.json.bak)
+engram mcp install claude --project  # or a repo-local .mcp.json
+engram mcp install claude --dry-run  # show the path and diff first
+engram mcp status                    # registered? pointing at this install? daemon answering? token resolving?
 ```
 
-or, for a source checkout:
+The entry is HTTP (`http://127.0.0.1:9907/mcp`) when the engram daemon answers `/health` and
+stdio (`node …/dist/interfaces/cli/index.js mcp`, which bridges to the daemon once one runs)
+otherwise — the command says which and why. If the daemon requires `ENGRAM_MCP_TOKEN` the entry
+carries `"Authorization": "Bearer ${ENGRAM_MCP_TOKEN}"`, never the literal; `engram mcp status`
+warns when the variable is not visible to the host (GUI-launched apps do not inherit your shell:
+`launchctl setenv ENGRAM_MCP_TOKEN …` on macOS). With the plugin (Option A) installed the command
+skips the user-scope entry unless `--force`. The same command registers Codex CLI (`codex`),
+Cursor (`cursor`) and the Hermes plugin (`hermes`); `--all` does every host present.
 
-```bash
-claude mcp add --transport stdio --scope user engram -- \
-  node /path/to/engram/dist/interfaces/mcp/server.js
-```
-
-Replace `/path/to/engram` with the actual path to your clone.
+`claude mcp add --transport stdio --scope user engram -- npx -y @devinmlowe/engram mcp` remains
+the hand-driven equivalent.
 
 ### Option C: Manual Configuration
 
-Add to `~/.claude.json`:
+Add to `~/.claude.json` (what `engram mcp install claude` writes for a stdio entry):
 
 ```json
 {
@@ -400,9 +406,10 @@ The extract and reflect phases use the Claude API for LLM inference. Set `ANTHRO
 
 ### MCP tools not appearing in Claude Code
 
-1. Verify the MCP server starts: `node dist/interfaces/mcp/server.js` (should print to stderr and wait)
-2. Check Claude Code MCP configuration: `claude mcp list`
-3. Ensure the path in your config points to the built `dist/interfaces/mcp/server.js`, not the TypeScript source
+1. `engram mcp status` — is Claude Code registered, does the entry point at this install, does the daemon it targets answer `/health`, does `ENGRAM_MCP_TOKEN` resolve? Re-run `engram mcp install claude` to repair a stale path.
+2. Verify the MCP server starts: `node dist/interfaces/mcp/server.js` (should print to stderr and wait)
+3. Check Claude Code MCP configuration: `claude mcp list`
+4. Ensure the path in your config points to the built `dist/interfaces/mcp/server.js` (or `dist/interfaces/cli/index.js mcp`), not the TypeScript source
 
 ### Database is locked
 

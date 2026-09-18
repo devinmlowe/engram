@@ -83,6 +83,7 @@ Defaults the agent needs to know:
 |------|-------|
 | Database | `~/.local/share/engram/engram.db` (override: `ENGRAM_DB_PATH`) |
 | MCP server entry point | `dist/interfaces/mcp/server.js` |
+| Host registration | `engram mcp install claude\|codex\|cursor\|hermes` (`--all`, `--project`, `--dry-run`) edits the host's own config — no hand-editing. HTTP when the daemon answers `/health`, else stdio; the token is referenced by env var, never written. `engram mcp status` verifies |
 | stdio transport | `npx -y @devinmlowe/engram mcp` (from npm), or `node dist/interfaces/mcp/server.js` from a checkout. Bridges to the HTTP daemon when one is healthy on the port below; `--standalone` forces in-process |
 | Registry entry | `io.github.devinmlowe/engram` on registry.modelcontextprotocol.io (npm artifact `@devinmlowe/engram`, stdio) — hosts that install from the registry get the same `npx … mcp` command |
 | HTTP transport | `node dist/interfaces/mcp/server.js --http` on `http://127.0.0.1:9907` (`--port N` to change) |
@@ -243,7 +244,23 @@ Rules:
 
 ### 2. Explicit tools (MCP registration)
 
-Register engram with the host's MCP client, HTTP transport preferred:
+For Claude Code, Codex CLI, Cursor and Hermes, run the registration command instead of
+editing config files:
+
+```bash
+engram mcp install codex        # or claude | cursor | hermes | --all; --project for a repo-local file
+engram mcp install codex --dry-run   # target path + unified diff, nothing written
+engram mcp status                    # registered? this install? daemon answering? token resolving?
+```
+
+It writes the host's native entry (`[mcp_servers.engram]` in `~/.codex/config.toml`,
+`mcpServers.engram` in `~/.claude.json` / `~/.cursor/mcp.json`, or deploys the Hermes plugin),
+keeps every other server, backs the file up to `<file>.bak`, and is idempotent. It prefers HTTP
+(`http://127.0.0.1:9907/mcp`) when the daemon answers `/health` and falls back to stdio
+otherwise, printing which; a daemon token is referenced (`bearer_token_env_var`,
+`${ENGRAM_MCP_TOKEN}`, `${env:ENGRAM_MCP_TOKEN}`) and never written.
+
+For any other host, register engram with its MCP client by hand, HTTP transport preferred:
 
 ```json
 { "mcpServers": { "engram": { "type": "http", "url": "http://127.0.0.1:9907/mcp" } } }
@@ -362,14 +379,18 @@ calls `recall` over HTTP using a copy of `EngramMcpClient`, and prints:
 Print nothing on zero results or any failure. Hooks cannot call MCP tools
 through Codex, which is why the script speaks HTTP to engram directly.
 
-**Explicit tools** — `~/.codex/config.toml` (or `codex mcp add engram --url http://127.0.0.1:9907/mcp`):
+**Explicit tools** — `engram mcp install codex`, which writes this table into
+`~/.codex/config.toml` (adding `bearer_token_env_var = "ENGRAM_MCP_TOKEN"` when the daemon has
+a token; `--project` targets `.codex/config.toml`):
 
 ```toml
 [mcp_servers.engram]
 url = "http://127.0.0.1:9907/mcp"
-startup_timeout_sec = 20
-tool_timeout_sec = 45
 ```
+
+Add `startup_timeout_sec = 20` / `tool_timeout_sec = 45` to the same table by hand if the
+defaults are too short for a cold daemon; the command replaces only the keys it owns on the
+next run. (`codex mcp add engram --url http://127.0.0.1:9907/mcp` is the equivalent by hand.)
 
 **Instruction block** — append the static block from Behavior 2 to
 `~/.codex/AGENTS.md`.
@@ -385,8 +406,9 @@ threads into `~/.codex/memories/`. Running both is harmless but redundant.
 
 ## Other hosts, briefly
 
-- **Claude Code:** the plugin (`/plugin marketplace add devinmlowe/engram`, `/plugin install engram@engram`) or `claude mcp add --transport stdio --scope user engram -- npx -y @devinmlowe/engram mcp` (or the HTTP form). Auto-recall via a `UserPromptSubmit` hook works the same way as Codex. Claude Code is also the host whose transcripts the dream pipeline ingests natively.
-- **Hermes Agent:** already done; deploy with `interfaces/hermes-plugin/deploy.sh`. Hermes has a real memory-provider interface, so no hooks are needed.
+- **Claude Code:** the plugin (`/plugin marketplace add devinmlowe/engram`, `/plugin install engram@engram`) or `engram mcp install claude` (user scope `~/.claude.json`; `--project` for `.mcp.json`; skipped when the plugin is installed unless `--force`). Auto-recall via a `UserPromptSubmit` hook works the same way as Codex. Claude Code is also the host whose transcripts the dream pipeline ingests natively.
+- **Cursor:** `engram mcp install cursor` (`~/.cursor/mcp.json`, `${env:ENGRAM_MCP_TOKEN}` for the token); no hook system, so recall is model-initiated.
+- **Hermes Agent:** already done; `engram mcp install hermes` runs `interfaces/hermes-plugin/deploy.sh` for the default profile and every profile that already has the plugin. Hermes has a real memory-provider interface, so no hooks are needed.
 - **Anything else with MCP but no hooks:** register the server, add the instruction block with the "call `recall` first" variant, and accept that recall is model-initiated.
 
 ## See also
