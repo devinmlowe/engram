@@ -1,0 +1,38 @@
+{
+  "name": "engram",
+  "owner": {
+    "name": "Devin Lowe",
+    "url": "https://github.com/devinmlowe"
+  },
+  "metadata": {
+    "description": "Engram — cognitive memory for Claude Code: recall, remember, explore, reflect, forget over a local knowledge graph",
+    "version": "0.3.0"
+  },
+  "plugins": [
+    {
+      "name": "engram",
+      "source": "./",
+      "description": "Cognitive memory system — episodic storage, semantic extraction, knowledge graph, and dream-state consolidation for Claude Code. Ships the engram MCP server (16 tools, via npx) and the /recall, /remember, /explore-graph, /reflect and /engram-connect commands.",
+      "version": "0.3.0",
+      "author": {
+        "name": "Devin Lowe"
+      },
+      "homepage": "https://github.com/devinmlowe/engram#readme",
+      "repository": "https://github.com/devinmlowe/engram",
+      "license": "MIT",
+      "keywords": [
+        "memory",
+        "mcp",
+        "knowledge-graph",
+        "episodic",
+        "semantic"
+      ],
+      "category": "productivity",
+      "tags": [
+        "memory",
+        "knowledge-graph",
+        "mcp-server"
+      ]
+    }
+  ]
+}

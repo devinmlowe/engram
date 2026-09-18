@@ -55,10 +55,47 @@ engram search "what did I decide about caching"
 > `$HF_HOME/hub`), where they survive reinstalls and upgrades; see [Model cache](#model-cache).
 > Set `ENGRAM_RERANK_ENABLED=false` to skip the reranker model.
 
-**Use it from Claude Code (MCP)**
+**Install as a Claude Code plugin (recommended)**
 
-Add the server to your Claude Code MCP config (`~/.claude.json`, or a project-level `.mcp.json`),
-pointing at the compiled server with an absolute path:
+No clone, no absolute paths. In Claude Code:
+
+```
+/plugin marketplace add devinmlowe/engram
+/plugin install engram@engram
+```
+
+This repo is its own marketplace (`.claude-plugin/marketplace.json`); the plugin
+(`.claude-plugin/plugin.json`) runs the published npm package as a stdio MCP server —
+`npx -y @devinmlowe/engram@<version> mcp`, version pinned to the release — and adds the
+`/engram:recall`, `/engram:remember`, `/engram:explore-graph`, `/engram:reflect` and
+`/engram:engram-connect` commands (bundled from `commands/`; their tools are
+`mcp__plugin_engram_engram__<tool>`). `/mcp` should list `engram` with 16 tools; the first
+`recall` downloads the embedding model once (see the note above). The plugin updates through
+the marketplace (`/plugin update engram@engram` after a release); `engram update` keeps
+handling the CLI, daemons and the Hermes plugin.
+
+> **The very first start is slow.** The first `npx` run installs the package and its prebuilt
+> native modules into the npm cache — once per pinned version, then it is a cache hit. If Claude
+> Code reports the server timed out during that install, raise its startup timeout (milliseconds):
+> `MCP_TIMEOUT=120000 claude`. Two warm paths: `npm install -g @devinmlowe/engram` first, so the
+> package (and `engram doctor`/`engram init`) is already on the machine; or run the HTTP daemon
+> (`scripts/install-mcp-daemon.sh install`, below) — `engram mcp` then bridges to it and the host
+> process never opens the database or loads the model (see [Transports](#transports-stdio-default-and-http)).
+
+**Use it from Claude Code without the plugin (manual MCP config)**
+
+Add the server to your Claude Code MCP config (`~/.claude.json`, or a project-level `.mcp.json`).
+From npm:
+
+```json
+{
+  "mcpServers": {
+    "engram": { "command": "npx", "args": ["-y", "@devinmlowe/engram", "mcp"] }
+  }
+}
+```
+
+or, for a source checkout, point at the compiled server with an absolute path:
 
 ```json
 {
@@ -73,7 +110,8 @@ pointing at the compiled server with an absolute path:
 ```
 
 The `.mcp.json` shipped in this repo does the same thing with a repo-relative path and is picked
-up automatically when you open the engram checkout itself in Claude Code.
+up automatically when you open the engram checkout itself in Claude Code (it is for developing
+engram; the plugin does not use it).
 
 **Optional: background consolidation and visualization**
 
@@ -362,9 +400,9 @@ Four domains with shared core infrastructure:
 
 ### Transports: stdio (default) and HTTP
 
-`dist/interfaces/mcp/server.js` speaks **stdio** by default, which is what the
-`.mcp.json` example in "Install & first run" uses. Start it with `--http` to
-serve **Streamable HTTP** instead:
+`dist/interfaces/mcp/server.js` (and `engram mcp`, what the plugin runs) speaks
+**stdio** by default, which is what the `.mcp.json` example in "Install & first
+run" uses. Start it with `--http` to serve **Streamable HTTP** instead:
 
 ```bash
 node dist/interfaces/mcp/server.js --http            # http://127.0.0.1:9907/mcp
@@ -384,12 +422,33 @@ multi-second `recall` never blocks `/health`, the handshake, or other clients.
 Each worker owns its own SQLite connection and embedding model. Stdio mode
 never spawns workers.
 
+**Stdio bridges to a running daemon.** A stdio start (`engram mcp`, the plugin's
+`npx` command, `node dist/interfaces/mcp/server.js`) first probes
+`GET http://127.0.0.1:<port>/health` (`--port`, else `ENGRAM_MCP_PORT`, else 9907,
+1.5 s timeout). If the engram daemon answers, the process runs as a thin proxy —
+an MCP client to the daemon's `/mcp` plus an MCP server on stdio forwarding
+`tools/list`, `tools/call` and `ping` — and never opens the database or loads
+the embedding model; every host then shares one warm daemon. Otherwise it runs
+the full server in-process as before. One stderr line says which:
+
+```
+Engram MCP: bridging stdio to http://127.0.0.1:9907/mcp (daemon healthy)
+Engram MCP: running inline (no daemon on :9907 (ECONNREFUSED))
+```
+
+`engram mcp --standalone` (or `ENGRAM_MCP_STANDALONE=1` in the server's env)
+forces inline. The bridge forwards `Authorization: Bearer $ENGRAM_MCP_TOKEN`
+from its own environment when the daemon requires a token, re-opens its daemon
+session under the host's `clientInfo` (so `forget` still records the real
+actor) and survives a daemon restart (`engram update`) with one reconnect.
+
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `ENGRAM_HTTP_WORKERS` | `2` | Worker count in HTTP mode (`0` = run tool calls inline on the main thread) |
 | `ENGRAM_WORKER_TIMEOUT_MS` | `8000` | Per-call timeout; `remember`, `remember_batch`, `index_file_structure` and `reflect --refresh` use higher floors. A worker still silent at 2x the timeout is killed and respawned |
 | `ENGRAM_MCP_TOKEN` | — | When set, `/mcp` requires `Authorization: Bearer <token>` (401 otherwise); `/health` stays open for supervisors. Required before the daemon will bind anything but loopback |
 | `ENGRAM_MCP_HOST` | `127.0.0.1` | Bind address. Anything but loopback is refused unless `ENGRAM_MCP_TOKEN` is set |
+| `ENGRAM_MCP_STANDALONE` | — | `1` makes a stdio start run inline even when the daemon is healthy (same as `--standalone`) |
 
 **Authentication.** Both HTTP servers rely on the loopback bind for access control by default:
 anyone who can reach `127.0.0.1` (other local users, a reverse proxy) has full read/write access
@@ -453,7 +512,9 @@ paths filled in):
 7. **Restart** the MCP daemon, then the visualizer, waiting for `/health` on
    each; re-enable the dream schedule; redeploy the Hermes plugin
    (`interfaces/hermes-plugin/deploy.sh`) to every profile that has it — you
-   restart the gateways.
+   restart the gateways. (The Claude Code plugin is not touched: it updates
+   through the marketplace, `/plugin update engram@engram`, and a stdio
+   bridge that was talking to the old daemon reconnects to the new one.)
 8. **Verify**: `engram doctor`, `/health`, and `engram stats` counts that must
    not have dropped. Any failure prints the rollback steps (stop services,
    restore the backup, check out the previous sha or reinstall the previous

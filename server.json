@@ -1,0 +1,56 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.devinmlowe/engram",
+  "title": "Engram",
+  "description": "Cognitive memory for coding agents: hybrid recall (vector + FTS + graph), remember/forget, knowledge-graph explore and reflect, nightly dream consolidation. Local SQLite, local embeddings.",
+  "repository": {
+    "url": "https://github.com/devinmlowe/engram",
+    "source": "github"
+  },
+  "websiteUrl": "https://github.com/devinmlowe/engram#readme",
+  "version": "0.3.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "@devinmlowe/engram",
+      "version": "0.3.0",
+      "runtimeHint": "npx",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp",
+          "description": "Start the MCP server on stdio (bridges to a running engram HTTP daemon when one is healthy)"
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "ENGRAM_DB_PATH",
+          "description": "SQLite database path (default: <data dir>/engram.db, i.e. ~/.local/share/engram/engram.db)",
+          "isRequired": false,
+          "format": "filepath"
+        },
+        {
+          "name": "ENGRAM_MCP_PORT",
+          "description": "Port of the optional engram HTTP daemon to bridge to (default 9907)",
+          "isRequired": false,
+          "format": "number"
+        },
+        {
+          "name": "ENGRAM_MCP_TOKEN",
+          "description": "Bearer token forwarded to the HTTP daemon when it requires one",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "ENGRAM_MCP_STANDALONE",
+          "description": "Set to 1 to never bridge: always run the full server in-process",
+          "isRequired": false
+        }
+      ]
+    }
+  ]
+}
