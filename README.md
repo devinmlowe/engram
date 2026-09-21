@@ -837,15 +837,15 @@ Interactive knowledge graph visualization at `localhost:3001`:
 | Hub nodes (high degree + bridge score + mentions) become gravitational centers, each defining a unique orbital plane in 3D space. Satellites orbit their hub based on accretion strength (edge weight), placed at angles determined by Jaccard similarity to neighbors. Six custom forces — hub repulsion, satellite attraction, disk flattening, orbital alignment, bridge pulling, and standard charge — create a living solar-system metaphor. Configurable hub threshold, disk flatness, and system spacing. | D3 word cloud built from user messages in episodic memory. Words sized by sqrt-scaled frequency, filtered through an extensive stop-word list and hex-hash detector. Catppuccin Mocha 12-color palette, Archimedean spiral packing with mixed rotation (65% horizontal, 20% vertical, 15% angled). Hover shows mention count; live polling refreshes every 10 seconds with pulse animations on changes. |
 | ![Galaxy View](assets/view-galaxy.webp) | ![Word Cloud](assets/view-words.webp) |
 
-- **Dream Control** — Live pipeline phase tracking with progress bars via SSE
-- **Real-time Updates** — SSE watching SQLite WAL for instant graph changes
+- **Dream Control** — Live pipeline phase tracking with progress bars (the page polls `/graph/api/dream/status`)
+- **Live Updates** — Every view polls its `api/diff` route every 1.5 s; a WAL watcher resets the server's caches when the database changes
 
 Start: `npx tsx src/interfaces/web/server.ts`
 
 **Authentication.** Loopback-only by default and unauthenticated. Set `ENGRAM_WEB_TOKEN`
 (or `ENGRAM_MCP_TOKEN`) and every route except `/api/health` requires it: as
 `Authorization: Bearer <token>` for API clients, or open any page once with `?token=<token>`
-and the server sets an HttpOnly cookie for that page's API calls and SSE stream. Binding a
+and the server sets an HttpOnly cookie for that page's API calls. Binding a
 non-loopback `ENGRAM_BIND` without a token is refused at startup.
 
 For a persistent Windows installation, use [`scripts/install-visualizer.ps1`](scripts/install-visualizer.ps1). The macOS launchd path remains [`scripts/install-visualizer.sh`](scripts/install-visualizer.sh).

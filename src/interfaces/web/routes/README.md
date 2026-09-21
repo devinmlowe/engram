@@ -1,25 +1,20 @@
 # Web Routes
 
-Express route handlers for web visualization API and page endpoints.
+The one route module that carries process state. Plain JSON routes and pages are tables in [`../server.ts`](../server.ts).
 
 ## In Scope
 
-- API endpoints returning JSON data for visualization clients
-- Page endpoints serving HTML visualization views
-- SSE endpoint for real-time database change notifications
-- Dream pipeline trigger and status endpoints
+- Dream pipeline trigger (detached `engram dream` child process) and status (dream_runs table + the daemon's `dream.log` tail)
 
 ## Out of Scope
 
 - Data queries (see [data/](../data/))
 - HTML generation (see [pages/](../pages/))
+- Routing, health and auth (see [`../server.ts`](../server.ts) and [`../auth-gate.ts`](../auth-gate.ts))
 
 ## Contains
 
-- `graph.ts` — Graph page and API routes (`/graph`, `/graph/api/graph`)
-- `words.ts` — Word cloud page and API routes (`/words`, `/words/api/words`)
-- `dream.ts` — Dream status and trigger endpoints (`/api/dream/status`, `/api/dream/start`)
-- `sse.ts` — Server-Sent Events for real-time WAL-watching updates
+- `dream.ts` — `getDreamStatus` (`/graph/api/dream/status`), `startDream` (`POST /graph/api/dream/start`), `resolveEngramCli` / `dreamSpawnCommand` (how the CLI is spawned)
 
 ## See Also
 

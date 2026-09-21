@@ -76,7 +76,7 @@ Rollback (#65, decision #66; `src/interfaces/cli/rollback.ts`): before step 1 th
 
 ## Web Visualization
 
-Port 3001 — Force graph (`/graph`), 3D depth view (`/graph/depth`), galaxy view (`/graph/galaxy`), word cloud (`/words`). Real-time SSE updates via WAL watching, dream pipeline control with live phase tracking.
+Port 3001 — Force graph (`/graph`), 3D depth view (`/graph/depth`), galaxy view (`/graph/galaxy`), word cloud (`/words`). Every page polls its `.../api/diff` route every 1.5 s; the WAL watcher only resets the word and threshold caches. Dream pipeline control with live phase tracking. `server.ts` (#122) is two maps — JSON routes `(db, url) => body` and pre-rendered pages — plus `/api/health` (supervisor probe, 503 on a DB error) and `POST /graph/api/dream/start`; each page's API lives under that page's prefix (`/graph/api/*`, `/graph/depth/api/*`, `/graph/galaxy/api/*`, `/graph/words/api/words`), the terminal pages use `/api/graph`, `/api/threshold`, `/api/communities`. Every graph route serves the same node shape (with `lastActive` / `bridgeScore`).
 
 Terminal-optimized views at `/terminal/graph`, `/terminal/depth`, `/terminal/words`, `/terminal/communities` — SVG-based, pre-stabilized, high-contrast layouts for carbonyl or other terminal browsers.
 
