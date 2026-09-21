@@ -4,7 +4,7 @@
  * temperature by default, /v1 normalisation, tool-call and content parsing,
  * error classes) is asserted on the wire. Placeholder credentials only.
  */
-import { describe, it, expect, beforeEach, afterEach, afterAll, beforeAll } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, afterAll, beforeAll, vi } from "vitest";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import {
@@ -21,9 +21,9 @@ import { loadConfig } from "../../src/_core/config/index.js";
 import { checkLlmProviders } from "../../src/interfaces/cli/doctor.js";
 
 const ENV = ["ENGRAM_OPENAI_BASE_URL", "ENGRAM_OPENAI_MODEL", "ENGRAM_OPENAI_API_KEY_ENV", "ENGRAM_OPENAI_TEMPERATURE", "ENGRAM_LLM_PROVIDERS", "OPENAI_API_KEY", "GATEWAY_TOKEN", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OLLAMA_HOST"];
-let saved: Record<string, string | undefined>;
-beforeEach(() => { saved = Object.fromEntries(ENV.map((k) => [k, process.env[k]])); for (const k of ENV) delete process.env[k]; resetIntelligence(); });
-afterEach(() => { for (const k of ENV) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; } resetIntelligence(); });
+beforeEach(() => {
+  for (const k of ENV) vi.stubEnv(k, undefined); resetIntelligence(); });
+afterEach(() => { resetIntelligence(); });
 
 type Seen = { path: string; auth: string | undefined; body: Record<string, unknown> };
 let server: Server;
@@ -64,14 +64,8 @@ describe("route configuration", () => {
     expect(resolveLlmTimeoutMs({ [LLM_TIMEOUT_ENV]: "soon" })).toBe(120_000);
     expect(resolveLlmTimeoutMs({ [LLM_TIMEOUT_ENV]: "-5" })).toBe(120_000);
     expect(resolveLlmTimeoutMs({ [LLM_TIMEOUT_ENV]: " 600000 " })).toBe(600_000);
-    const saved = process.env[LLM_TIMEOUT_ENV];
-    process.env[LLM_TIMEOUT_ENV] = "300000";
-    try {
-      expect(buildIntelligenceConfig(loadConfig()).timeoutMs).toBe(300_000);
-    } finally {
-      if (saved === undefined) delete process.env[LLM_TIMEOUT_ENV];
-      else process.env[LLM_TIMEOUT_ENV] = saved;
-    }
+    vi.stubEnv(LLM_TIMEOUT_ENV, "300000");
+    expect(buildIntelligenceConfig(loadConfig()).timeoutMs).toBe(300_000);
   });
 
   it("normalises the base URL: trailing slashes dropped, /v1 appended to a bare origin, explicit paths kept", () => {
@@ -156,7 +150,7 @@ describe("cascade + diagnostics", () => {
   }
 
   it("the openai tier answers structured generation through the gateway; provider is reported", async () => {
-    process.env.GATEWAY_TOKEN = "placeholder-token";
+    vi.stubEnv("GATEWAY_TOKEN", "placeholder-token");
     respond = () => toolReply({ facts: ["a"] });
     const r = await generateStructured<{ facts: string[] }>("sys", "user", { properties: { facts: { type: "array" } } }, cfg());
     expect(r.provider).toBe("openai");
@@ -166,7 +160,7 @@ describe("cascade + diagnostics", () => {
   });
 
   it("a tier left out of ENGRAM_LLM_PROVIDERS is never tried; the CascadeError names each tried tier", async () => {
-    process.env.GATEWAY_TOKEN = "placeholder-token";
+    vi.stubEnv("GATEWAY_TOKEN", "placeholder-token");
     respond = () => toolReply({ x: 1 });
     await expect(generateStructured("s", "u", {}, cfg({ providerOrder: ["anthropic"] }))).rejects.toThrow(/anthropic \(config\): skipped: ANTHROPIC_API_KEY not set/);
     expect(seen).toHaveLength(0); // the configured gateway was not called
@@ -175,7 +169,7 @@ describe("cascade + diagnostics", () => {
   });
 
   it("describeProviders / doctor name the order, endpoints, models and key variables — never a key value", () => {
-    process.env.GATEWAY_TOKEN = "super-secret-value";
+    vi.stubEnv("GATEWAY_TOKEN", "super-secret-value");
     const { order, tiers } = describeProviders(cfg(), process.env);
     expect(order).toEqual(["openai", "anthropic"]);
     expect(tiers[0]).toMatchObject({ tier: "openai", configured: true });
@@ -183,15 +177,15 @@ describe("cascade + diagnostics", () => {
     expect(tiers[0].detail).toContain("no temperature sent");
     expect(tiers[1]).toMatchObject({ tier: "anthropic", configured: false });
     expect(JSON.stringify(tiers)).not.toContain("super-secret-value");
-    process.env.ENGRAM_OPENAI_MODEL = "gw-model";
-    process.env.ENGRAM_OPENAI_BASE_URL = base;
-    process.env.ENGRAM_OPENAI_API_KEY_ENV = "GATEWAY_TOKEN";
-    process.env.ENGRAM_LLM_PROVIDERS = "openai";
+    vi.stubEnv("ENGRAM_OPENAI_MODEL", "gw-model");
+    vi.stubEnv("ENGRAM_OPENAI_BASE_URL", base);
+    vi.stubEnv("ENGRAM_OPENAI_API_KEY_ENV", "GATEWAY_TOKEN");
+    vi.stubEnv("ENGRAM_LLM_PROVIDERS", "openai");
     const check = checkLlmProviders(loadConfig(), process.env);
     expect(check).toMatchObject({ name: "llm providers", level: "ok", required: false });
     expect(check.detail).toContain("order openai (ENGRAM_LLM_PROVIDERS)");
     expect(check.detail).not.toContain("super-secret-value");
-    delete process.env.GATEWAY_TOKEN;
+    vi.stubEnv("GATEWAY_TOKEN", undefined);
     const warn = checkLlmProviders(loadConfig(), process.env);
     expect(warn.level).toBe("warn");
     expect(warn.detail).toContain("GATEWAY_TOKEN (from ENGRAM_OPENAI_API_KEY_ENV) not set");

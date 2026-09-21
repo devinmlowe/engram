@@ -63,24 +63,15 @@ const makeAnthropicMock = () => anthropicToolMock("extract_entities", { entities
 // ─── Env isolation ──────────────────────────────────────────────
 
 const ENV_KEYS = ["ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "OLLAMA_HOST"] as const;
-let savedEnv: Record<string, string | undefined> = {};
 
 beforeEach(() => {
   resetGraphExtractor();
-  savedEnv = {};
-  for (const k of ENV_KEYS) {
-    savedEnv[k] = process.env[k];
-    delete process.env[k];
-  }
+  for (const k of ENV_KEYS) vi.stubEnv(k, undefined);
 });
 
 afterEach(() => {
   resetGraphExtractor();
   vi.unstubAllGlobals();
-  for (const k of ENV_KEYS) {
-    if (savedEnv[k] === undefined) delete process.env[k];
-    else process.env[k] = savedEnv[k];
-  }
 });
 
 // ─── Tests ──────────────────────────────────────────────────────
@@ -122,7 +113,7 @@ describe("graph extractor routes through the LLM factory", () => {
   });
 
   it("falls back Ollama → OpenRouter → Anthropic in order", async () => {
-    process.env.OPENROUTER_API_KEY = "test-openrouter-key";
+    vi.stubEnv("OPENROUTER_API_KEY", "test-openrouter-key");
 
     // OpenRouter healthy: served before Anthropic
     const first = stubFetch({ ollamaUp: false, openrouter: "ok" });

@@ -88,18 +88,13 @@ const makeAnthropicMock = () => anthropicToolMock("resolve_conflict", { action: 
 // ─── Setup ──────────────────────────────────────────────────────
 
 const ENV_KEYS = ["ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "OLLAMA_HOST"] as const;
-let savedEnv: Record<string, string | undefined> = {};
 let t: TestDb;
 
 beforeEach(() => {
   t = createTestDb();
   resetConsolidator();
   vi.clearAllMocks();
-  savedEnv = {};
-  for (const k of ENV_KEYS) {
-    savedEnv[k] = process.env[k];
-    delete process.env[k];
-  }
+  for (const k of ENV_KEYS) vi.stubEnv(k, undefined);
 
   insertMemory(t.db, existingMemory(), baseEmbedding());
   mockedEmbedDocument.mockResolvedValue(nliBandEmbedding());
@@ -115,10 +110,6 @@ afterEach(() => {
   t.cleanup();
   resetConsolidator();
   vi.unstubAllGlobals();
-  for (const k of ENV_KEYS) {
-    if (savedEnv[k] === undefined) delete process.env[k];
-    else process.env[k] = savedEnv[k];
-  }
 });
 
 // ─── Tests ──────────────────────────────────────────────────────
@@ -149,7 +140,7 @@ describe("consolidator conflict resolution routes through the LLM factory", () =
   });
 
   it("falls back to OpenRouter when Ollama is unavailable, before Anthropic", async () => {
-    process.env.OPENROUTER_API_KEY = "test-openrouter-key";
+    vi.stubEnv("OPENROUTER_API_KEY", "test-openrouter-key");
     const { calls } = stubFetch({ ollamaUp: false, openrouter: "ok" });
     const mockCreate = makeAnthropicMock();
     setConsolidatorClient({ messages: { create: mockCreate } } as unknown as Anthropic);
@@ -166,7 +157,7 @@ describe("consolidator conflict resolution routes through the LLM factory", () =
   });
 
   it("falls through to Anthropic when both Ollama and OpenRouter fail", async () => {
-    process.env.OPENROUTER_API_KEY = "test-openrouter-key";
+    vi.stubEnv("OPENROUTER_API_KEY", "test-openrouter-key");
     const { calls } = stubFetch({ ollamaUp: false, openrouter: "unauthorized" });
     const mockCreate = makeAnthropicMock();
     setConsolidatorClient({ messages: { create: mockCreate } } as unknown as Anthropic);

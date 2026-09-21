@@ -32,13 +32,11 @@ vi.mock("../../../src/_core/embeddings/index.js", () => ({
 }));
 
 const ENV_KEYS = ["ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "OLLAMA_HOST", "ENGRAM_OPENAI_BASE_URL", "ENGRAM_OPENAI_MODEL", "ENGRAM_LLM_PROVIDERS", "ENGRAM_LOCAL_MODEL", "ENGRAM_LOCAL_MODEL_FALLBACKS", "ENGRAM_DATA_DIR", "ENGRAM_DB_PATH", "ENGRAM_MODEL_CACHE_DIR", "HF_HOME"];
-let saved: Record<string, string | undefined>;
 let root: string;
 let config: EngramConfig;
 
 beforeEach(() => {
-  saved = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
-  for (const k of ENV_KEYS) delete process.env[k];
+  for (const k of ENV_KEYS) vi.stubEnv(k, undefined);
   resetExtractor();
   root = mkdtempSync(join(tmpdir(), "engram-smoke-"));
   config = loadConfig({ dataDir: root, dbPath: join(root, "engram.db") });
@@ -46,7 +44,6 @@ beforeEach(() => {
 afterEach(() => {
   resetExtractor();
   vi.unstubAllGlobals();
-  for (const k of ENV_KEYS) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
   rmSync(root, { recursive: true, force: true });
 });
 

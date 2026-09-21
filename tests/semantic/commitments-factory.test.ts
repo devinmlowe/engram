@@ -41,24 +41,15 @@ const makeAnthropicMock = () => anthropicToolMock("extract_commitments", ANTHROP
 // ─── Setup ──────────────────────────────────────────────────────
 
 const ENV_KEYS = ["ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "OLLAMA_HOST", "ENGRAM_LOCAL_MODEL"] as const;
-let savedEnv: Record<string, string | undefined> = {};
 
 beforeEach(() => {
   resetIntelligence();
-  savedEnv = {};
-  for (const k of ENV_KEYS) {
-    savedEnv[k] = process.env[k];
-    delete process.env[k];
-  }
+  for (const k of ENV_KEYS) vi.stubEnv(k, undefined);
 });
 
 afterEach(() => {
   resetIntelligence();
   vi.unstubAllGlobals();
-  for (const k of ENV_KEYS) {
-    if (savedEnv[k] === undefined) delete process.env[k];
-    else process.env[k] = savedEnv[k];
-  }
 });
 
 // ─── Tests ──────────────────────────────────────────────────────
@@ -80,7 +71,7 @@ describe("commitments extraction routes through the LLM factory", () => {
   });
 
   it("falls back Ollama → OpenRouter → Anthropic in order", async () => {
-    process.env.OPENROUTER_API_KEY = "test-openrouter-key";
+    vi.stubEnv("OPENROUTER_API_KEY", "test-openrouter-key");
     const mockCreate = makeAnthropicMock();
     setClient({ messages: { create: mockCreate } } as unknown as Anthropic);
 

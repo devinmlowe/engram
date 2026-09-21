@@ -5,7 +5,7 @@
  * carries `update: {current, available}`; the CLI prints the notice once on
  * stderr for a user-facing command and never with --json.
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -20,15 +20,12 @@ import {
 import { createEngramHttpServer, type EngramHttpServer } from "../../../src/interfaces/mcp/http.js";
 
 let root: string;
-let savedEnv: string | undefined;
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "engram-update-check-"));
-  savedEnv = process.env[NO_UPDATE_CHECK_ENV];
-  delete process.env[NO_UPDATE_CHECK_ENV];
+  vi.stubEnv(NO_UPDATE_CHECK_ENV, undefined);
 });
 afterEach(() => {
   rmSync(root, { recursive: true, force: true });
-  if (savedEnv === undefined) delete process.env[NO_UPDATE_CHECK_ENV]; else process.env[NO_UPDATE_CHECK_ENV] = savedEnv;
 });
 
 /** An npm-install fake (no `.git` under packageRoot): `npm view` answers the dist-tag and counts calls. */
