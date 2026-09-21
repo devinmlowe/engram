@@ -48,7 +48,7 @@ export {
 // ─── Re-export provider functions for external use ───────────────
 
 export { isOllamaAvailable, resolveOllamaModel, type OllamaProbe } from "./providers/ollama.js";
-export { setClient, isAnthropicAvailable } from "./providers/anthropic.js";
+export { setClient, isAnthropicAvailable, type AnthropicClient } from "./providers/anthropic.js";
 
 /** Reset module state (for testing): injected client and once-per-process warnings. */
 export function resetIntelligence(): void {

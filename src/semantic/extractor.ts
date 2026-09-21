@@ -13,7 +13,7 @@
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import type Anthropic from "@anthropic-ai/sdk";
+import type { AnthropicClient as Anthropic } from "../_core/llm/index.js";
 import type { MemoryType } from "./types.js";
 import {
   buildIntelligenceConfig,

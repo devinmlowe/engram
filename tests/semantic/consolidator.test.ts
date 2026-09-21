@@ -113,7 +113,7 @@ function setupMockConflictClient(
 
   const mockClient = {
     messages: { create: mockCreate },
-  } as unknown as import("@anthropic-ai/sdk").default;
+  } as unknown as import("../../src/_core/llm/index.js").AnthropicClient;
 
   setConsolidatorClient(mockClient);
 }
@@ -438,7 +438,7 @@ describe("consolidateFacts continues past a failing fact (#36)", () => {
     const boom = new Error("conflict resolution exploded");
     setConsolidatorClient({
       messages: { create: vi.fn().mockRejectedValue(boom) },
-    } as unknown as import("@anthropic-ai/sdk").default);
+    } as unknown as import("../../src/_core/llm/index.js").AnthropicClient);
 
     const facts = [
       createTestFact({ content: "Fact one" }),
@@ -697,7 +697,7 @@ describe("resolveMemoryConflict refuses supersession ping-pong (W12)", () => {
     const resolutions = vi.fn().mockResolvedValue({
       content: [{ type: "tool_use", id: "t", name: "resolve_conflict", input: { action: "update", reasoning: "flip back" } }],
     });
-    setConsolidatorClient({ messages: { create: resolutions } } as unknown as import("@anthropic-ai/sdk").default);
+    setConsolidatorClient({ messages: { create: resolutions } } as unknown as import("../../src/_core/llm/index.js").AnthropicClient);
 
     // Same statement as A, as a fresh candidate: nearest active neighbour is B
     // (NLI band, contradiction), and B's predecessor A normalised-equals it.

@@ -6,9 +6,8 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-vi.mock("@anthropic-ai/sdk", () => ({ default: vi.fn() }));
 
-import Anthropic from "@anthropic-ai/sdk";
+import type { AnthropicClient as Anthropic } from "../../src/_core/llm/index.js";
 import {
   extractEntities,
   extractRelationships,
@@ -18,7 +17,12 @@ import {
 } from "../../src/graph/extractor.js";
 import type { ConversationExchange, ConversationMetadata } from "../../src/semantic/extractor.js";
 
-const AnthropicCtor = vi.mocked(Anthropic);
+/** URLs the fetch stub saw that would have reached the real Anthropic Messages API (#118: the client is a plain fetch POST). */
+function anthropicCalls(): string[] {
+  return vi.mocked(fetch).mock.calls
+    .map((c) => (c[0] instanceof Request ? c[0].url : String(c[0])))
+    .filter((u) => u.includes("api.anthropic.com"));
+}
 
 // ─── Helpers ────────────────────────────────────────────────────
 
@@ -133,7 +137,6 @@ let savedEnv: Record<string, string | undefined> = {};
 
 beforeEach(() => {
   resetGraphExtractor();
-  AnthropicCtor.mockClear();
   savedEnv = {};
   for (const k of ENV_KEYS) {
     savedEnv[k] = process.env[k];
@@ -164,7 +167,7 @@ describe("graph extractor routes through the LLM factory", () => {
     expect(result.model).toBe("qwen2.5:7b");
     expect(result.entities.map((e) => e.name)).toEqual(["Ollama", "engram"]);
 
-    expect(AnthropicCtor).not.toHaveBeenCalled();
+    expect(anthropicCalls()).toEqual([]);
     expect(calls.some((u) => u.includes("openrouter.ai"))).toBe(false);
 
     const generateBody = bodies.find((b) => b.format !== undefined);
@@ -185,7 +188,7 @@ describe("graph extractor routes through the LLM factory", () => {
     expect(result.model).toBe("qwen2.5:7b");
     expect(result.relationships).toHaveLength(1);
     expect(result.relationships[0].type).toBe("uses");
-    expect(AnthropicCtor).not.toHaveBeenCalled();
+    expect(anthropicCalls()).toEqual([]);
   });
 
   it("falls back Ollama → OpenRouter → Anthropic in order", async () => {
@@ -217,7 +220,7 @@ describe("graph extractor routes through the LLM factory", () => {
     const args = mockCreate.mock.calls[0][0];
     expect(args.tools[0].name).toBe("extract_entities");
     expect(args.tool_choice).toEqual({ type: "tool", name: "extract_entities" });
-    expect(AnthropicCtor).not.toHaveBeenCalled();
+    expect(anthropicCalls()).toEqual([]);
   });
 
   it("initGraphExtractor rejects when no tier is reachable", async () => {

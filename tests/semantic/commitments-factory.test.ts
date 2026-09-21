@@ -6,15 +6,19 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-vi.mock("@anthropic-ai/sdk", () => ({ default: vi.fn() }));
 
-import Anthropic from "@anthropic-ai/sdk";
+import type { AnthropicClient as Anthropic } from "../../src/_core/llm/index.js";
 import { defaultCommitmentsLlm, hasCommitmentsProvider } from "../../src/semantic/commitments.js";
 import { runCommitmentsPass } from "../../src/dream/commitments-pass.js";
 import { resetIntelligence, setClient } from "../../src/_core/llm/index.js";
 import { createTestDb, type TestDb } from "../helpers.js";
 
-const AnthropicCtor = vi.mocked(Anthropic);
+/** URLs the fetch stub saw that would have reached the real Anthropic Messages API (#118: the client is a plain fetch POST). */
+function anthropicCalls(): string[] {
+  return vi.mocked(fetch).mock.calls
+    .map((c) => (c[0] instanceof Request ? c[0].url : String(c[0])))
+    .filter((u) => u.includes("api.anthropic.com"));
+}
 
 // ─── Helpers ────────────────────────────────────────────────────
 
@@ -99,7 +103,6 @@ let savedEnv: Record<string, string | undefined> = {};
 
 beforeEach(() => {
   resetIntelligence();
-  AnthropicCtor.mockClear();
   savedEnv = {};
   for (const k of ENV_KEYS) {
     savedEnv[k] = process.env[k];
@@ -126,7 +129,7 @@ describe("commitments extraction routes through the LLM factory", () => {
 
     expect(model).toBe("qwen2.5:7b");
     expect(raw).toEqual(OLLAMA_RAW);
-    expect(AnthropicCtor).not.toHaveBeenCalled();
+    expect(anthropicCalls()).toEqual([]);
     expect(calls.some((u) => u.includes("openrouter.ai"))).toBe(false);
 
     const generateBody = bodies.find((b) => b.format !== undefined);
@@ -159,7 +162,7 @@ describe("commitments extraction routes through the LLM factory", () => {
     expect(args.max_tokens).toBe(2048);
     expect(args.tools[0].name).toBe("extract_commitments");
     expect(args.tool_choice).toEqual({ type: "tool", name: "extract_commitments" });
-    expect(AnthropicCtor).not.toHaveBeenCalled();
+    expect(anthropicCalls()).toEqual([]);
   });
 
   it("the dream pass runs on a reachable Ollama alone (INV-3) instead of reporting no provider", async () => {
@@ -177,7 +180,7 @@ describe("commitments extraction routes through the LLM factory", () => {
       expect(r.conversations).toBe(1);
       expect(r.model).toBe("qwen2.5:7b");
       expect(r.inserted).toBe(1);
-      expect(AnthropicCtor).not.toHaveBeenCalled();
+      expect(anthropicCalls()).toEqual([]);
     } finally {
       t.cleanup();
     }
