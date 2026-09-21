@@ -757,7 +757,6 @@ interface EngramConfig {
     apiFallbackModel: string;   // "claude-sonnet-4-6"
     concurrency: number;        // 1
     scheduleHour: number;       // 2 (2 AM)
-    chunkingStrategy: "fixed" | "adaptive"; // ENGRAM_CHUNKING_STRATEGY, default "fixed"
   };
 
   // Confidence decay rates per memory type

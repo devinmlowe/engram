@@ -7,7 +7,7 @@ Cognitive memory system that ingests LLM conversation history and consolidates i
 Four domains with shared core infrastructure:
 
 - **episodic** — Conversation archive ingestion, indexing, episodic search
-- **semantic** — Knowledge extraction, consolidation, adaptive chunking, decay
+- **semantic** — Knowledge extraction, consolidation, decay
 - **graph** — Entity/relationship graph, topic clusters, file structure indexing, reflection
 - **dream** — Autonomous consolidation pipeline (ingest → extract → consolidate → reflect → prune)
 
@@ -29,7 +29,7 @@ Shared infrastructure in `_core/` (config, db, types, embeddings, search, llm, c
 - **recall_session** — Create/resume a stateful recall session with token budget tracking
 - **recall_drill** — Drill into a specific memory for full content with budget deduction
 - **explore_selective** — Criteria-driven graph traversal; returns relevant nodes without loading raw data
-- **remember_batch** — Batch ingest memories with adaptive chunking and dedup
+- **remember_batch** — Batch ingest memories with dedup
 
 ### File Analysis (Phase 7)
 
@@ -144,7 +144,6 @@ through the marketplace.
 ## Key Configuration
 
 - `ENGRAM_DB_PATH` — Database path (default: `~/.local/share/engram/engram.db`)
-- `ENGRAM_CHUNKING_STRATEGY` — `fixed` or `adaptive` (content-aware chunk boundaries)
 - `ENGRAM_FORGET_RETENTION_DAYS` — Days a forgotten memory stays (out of recall, `engram memories restore`-able) before dream prune hard-deletes it (default 30; `0` = next run). `--hard` bypasses it (#56)
 - `ENGRAM_NO_UPDATE_CHECK` — `1` disables the automatic daily version lookup and the "newer version available" notice; an explicit `engram update --check` still asks (#65)
 - `ENGRAM_LOCAL_MODEL` / `ENGRAM_LOCAL_MODEL_FALLBACKS` / `ENGRAM_OPENROUTER_MODEL` — Ollama model (+ ordered fallbacks when it is not pulled) and OpenRouter model; `OLLAMA_HOST`, `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY` enable those cascade tiers. `ENGRAM_OPENAI_BASE_URL` / `ENGRAM_OPENAI_MODEL` / `ENGRAM_OPENAI_API_KEY_ENV` (name of the env var holding the key) / `ENGRAM_OPENAI_TEMPERATURE` configure the generic OpenAI-compatible tier (OpenAI, LiteLLM, self-hosted; `src/_core/llm/providers/openai-compatible.ts`, which OpenRouter also runs on); `ENGRAM_LLM_PROVIDERS` sets the tier order (default `ollama,openai,openrouter,anthropic`); `ENGRAM_LLM_TIMEOUT_MS` (default 120000) is the per-request timeout for every tier — raise it for slow local models. All-tier failures name every tier's reason (`CascadeError`); dream checkpoints record it once per conversation per run

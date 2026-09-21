@@ -249,7 +249,7 @@ function createSchema(db: Database.Database, config: EngramConfig): void {
 
     CREATE INDEX IF NOT EXISTS idx_dream_checkpoints_run ON dream_checkpoints(run_id, phase);
 
-    -- Chunk metadata for adaptive chunking diagnostics
+    -- Chunk boundary metadata for extraction diagnostics (avg_density unused since #117)
     CREATE TABLE IF NOT EXISTS chunk_metadata (
       id TEXT PRIMARY KEY,
       conversation_id TEXT NOT NULL,

@@ -7,6 +7,9 @@ All notable changes to engram are documented here. The format follows
 
 ## [Unreleased]
 
+### Removed
+- Adaptive chunking (#117): `src/semantic/adaptive-chunker.ts`, `ExtractionConfig.chunkingStrategy`, `config.dream.chunkingStrategy` and `ENGRAM_CHUNKING_STRATEGY`. It was unreachable — no caller ever selected it and the env value was never passed to the extractor — so every extraction already used the fixed 25/5 windows and nothing changes. `chunk_metadata.avg_density` stays in the schema and is now always NULL.
+
 ## [0.4.0] - 2026-09-18
 
 First release that ships the Claude Code plugin, the `engram mcp` daemon bridge, `engram mcp install`, `forget`, `engram setup`, `doctor --fix` and `update --rollback` (PRD issues #50 #53 #55 #58 #61 #63 #65) plus the Dependabot majors (#68–#73, #72). The 0.3.0 tarball on npm predates all of it, so the plugin's `npx -y @devinmlowe/engram@<version> mcp` pin only works from this version on. Windows + Node 22 note: see the better-sqlite3 13 entry below (#84).

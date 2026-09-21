@@ -77,7 +77,6 @@ export interface ExtractedFact {
 export interface ChunkBoundaryInfo {
   start: number;
   end: number;
-  avgDensity?: number;
 }
 
 export interface ExtractionResult {
@@ -99,7 +98,6 @@ export interface ExtractionConfig {
   chunkSize: number;
   chunkOverlap: number;
   maxTurns: number;
-  chunkingStrategy: "fixed" | "adaptive";
 }
 
 // ─── Deduplication & Conflict Resolution ────────────────────────
