@@ -113,6 +113,26 @@ describe("per-request scope / read_scopes params", () => {
     expect(text).not.toContain("Databricks");
   });
 
+  // #110: a session keeps the scopes it was created with; a refine that omits
+  // read_scopes (or passes wider ones) must not pull in another tenant.
+  it("recall_session pins its scopes for every refine", async () => {
+    const created = await handleToolCall("recall_session", {
+      query: "interview",
+      sources: ["semantic"],
+      read_scopes: ["global"],
+    });
+    const sessionId = /<session id="([^"]+)"/.exec(created.content[0].text as string)?.[1];
+    expect(sessionId).toBeDefined();
+
+    const refined = await handleToolCall("recall_session", {
+      session_id: sessionId,
+      query: "Databricks",
+      sources: ["semantic"],
+    });
+    expect(refined.isError).toBeFalsy();
+    expect(refined.content[0].text as string).not.toContain("delivery manager role");
+  });
+
   it("remember_batch with scope param stamps every row", async () => {
     const res = await handleToolCall("remember_batch", {
       scope: "hermes:pmp",

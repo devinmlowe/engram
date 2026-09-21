@@ -210,6 +210,8 @@ export async function createOrRefineRecallSession(
       };
     }
 
+    // #110: the session's own scopes, not this call's — a refine must not
+    // widen (or narrow) what the session already holds.
     const response = await searchMultiSource(
       db,
       {
@@ -217,7 +219,7 @@ export async function createOrRefineRecallSession(
         sources,
         mode: "hybrid",
         budget: remainingBudget,
-        scopes: params.scopes,
+        scopes: session.scopes,
       },
       config,
     );
@@ -236,7 +238,7 @@ export async function createOrRefineRecallSession(
 
   // Create new session
   const maxBudget = params.budget ?? 3000;
-  const session = store.create(params.query, { maxBudget });
+  const session = store.create(params.query, { maxBudget, scopes: params.scopes });
 
   const response = await searchMultiSource(
     db,

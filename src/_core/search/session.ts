@@ -50,6 +50,12 @@ export interface RecallSession {
   expandedIds: Set<string>;
   totalBudgetUsed: number;
   maxBudget: number;
+  /**
+   * Tenant scopes the session was created with (#110). Every refine reuses
+   * them, so results from another tenant can never be merged into a session
+   * a scoped caller later drills into. Undefined = unscoped (single-tenant).
+   */
+  scopes?: string[];
 }
 
 export interface DrillResult {
@@ -79,7 +85,7 @@ export class SessionStore {
   /**
    * Create a new recall session.
    */
-  create(query: string, options?: { maxBudget?: number }): RecallSession {
+  create(query: string, options?: { maxBudget?: number; scopes?: string[] }): RecallSession {
     this.evictExpired();
 
     // Evict oldest (LRU) if at capacity
@@ -99,6 +105,7 @@ export class SessionStore {
       expandedIds: new Set(),
       totalBudgetUsed: 0,
       maxBudget: options?.maxBudget ?? 3000,
+      scopes: options?.scopes,
     };
 
     this.sessions.set(id, session);
