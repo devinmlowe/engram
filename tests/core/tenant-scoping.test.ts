@@ -57,17 +57,39 @@ describe("resolveCallScoping (per-request override)", () => {
     expect(s.readScopes).toEqual(["global", "hermes:career"]);
   });
 
-  it("scope param overrides ENGRAM_SCOPE but keeps an explicit ENGRAM_READ_SCOPES", () => {
-    const env = { ENGRAM_SCOPE: "hermes:pmp", ENGRAM_READ_SCOPES: "global,hermes:pmp" };
+  it("scope param may pick another env read scope and keeps ENGRAM_READ_SCOPES as the read default", () => {
+    const env = { ENGRAM_SCOPE: "hermes:pmp", ENGRAM_READ_SCOPES: "global,hermes:pmp,hermes:career" };
     const s = resolveCallScoping(env, { scope: "hermes:career" });
     expect(s.writeScope).toBe("hermes:career");
-    expect(s.readScopes).toEqual(["global", "hermes:pmp"]);
+    expect(s.readScopes).toEqual(["global", "hermes:pmp", "hermes:career"]);
   });
 
-  it("read_scopes param overrides env read scopes and leaves writeScope alone", () => {
-    const env = { ENGRAM_SCOPE: "hermes:pmp" };
-    const s = resolveCallScoping(env, { read_scopes: [" hermes:career "] });
+  // #108: an env-pinned child must not escape its tenant through params.
+  it("scope param outside the env read scopes throws", () => {
+    expect(() => resolveCallScoping({ ENGRAM_SCOPE: "hermes:career" }, { scope: "hermes:personal" })).toThrow(
+      /outside this server's ENGRAM_READ_SCOPES/,
+    );
+    expect(() =>
+      resolveCallScoping({ ENGRAM_READ_SCOPES: "global,hermes:career" }, { scope: "hermes:personal" }),
+    ).toThrow(/outside/);
+  });
+
+  it("read_scopes param is intersected with the env read scopes", () => {
+    const env = { ENGRAM_SCOPE: "hermes:pmp", ENGRAM_READ_SCOPES: "global,hermes:pmp,hermes:career" };
+    const s = resolveCallScoping(env, { read_scopes: [" hermes:career ", "hermes:personal"] });
     expect(s.writeScope).toBe("hermes:pmp");
+    expect(s.readScopes).toEqual(["hermes:career"]);
+  });
+
+  it("read_scopes param with no scope inside the env read scopes throws", () => {
+    expect(() => resolveCallScoping({ ENGRAM_SCOPE: "hermes:pmp" }, { read_scopes: ["hermes:personal"] })).toThrow(
+      /no scope inside/,
+    );
+  });
+
+  it("without env restriction read_scopes is taken as given", () => {
+    const s = resolveCallScoping({}, { read_scopes: [" hermes:career "] });
+    expect(s.writeScope).toBeUndefined();
     expect(s.readScopes).toEqual(["hermes:career"]);
   });
 

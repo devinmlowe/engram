@@ -62,28 +62,45 @@ function requireScope(value: string, param: string): string {
 }
 
 /**
- * Resolve the scoping for a single tool call: request params win over env,
- * env is the default when params are absent.
+ * Resolve the scoping for a single tool call.
  *
- * - `scope` overrides ENGRAM_SCOPE. When ENGRAM_READ_SCOPES is unset it also
- *   re-derives the read default to global + own, mirroring the env rule.
- * - `read_scopes` overrides ENGRAM_READ_SCOPES (and the derived default).
+ * When the env does not restrict (no ENGRAM_SCOPE / ENGRAM_READ_SCOPES — the
+ * shared HTTP daemon), params are the tenant identity: `scope` sets the write
+ * scope and re-derives reads to global + own; `read_scopes` is taken as given.
+ *
+ * When the env restricts (a stdio child pinned to one tenant, #108), params
+ * may only narrow it: `read_scopes` is intersected with the env read scopes
+ * (empty intersection throws) and `scope` must be one of them — a tenant may
+ * only write where it may read. The env read scopes stay the read default.
  */
 export function resolveCallScoping(
   env: Record<string, string | undefined>,
   params: CallScopeParams,
 ): TenantScoping {
   const base = getTenantScoping(env);
+  const allowed = base.readScopes;
 
-  const writeScope = params.scope !== undefined ? requireScope(params.scope, "scope") : base.writeScope;
+  let writeScope = base.writeScope;
+  if (params.scope !== undefined) {
+    writeScope = requireScope(params.scope, "scope");
+    if (allowed && !allowed.includes(writeScope)) {
+      throw new Error(`scope "${writeScope}" is outside this server's ENGRAM_READ_SCOPES (${allowed.join(",")})`);
+    }
+  }
 
-  let readScopes = base.readScopes;
+  let readScopes = allowed;
   if (params.read_scopes !== undefined) {
     if (!Array.isArray(params.read_scopes) || params.read_scopes.length === 0) {
       throw new Error("read_scopes must contain at least one scope");
     }
     readScopes = params.read_scopes.map((s) => requireScope(s, "read_scopes"));
-  } else if (params.scope !== undefined && !env.ENGRAM_READ_SCOPES?.trim()) {
+    if (allowed) {
+      readScopes = readScopes.filter((s) => allowed.includes(s));
+      if (readScopes.length === 0) {
+        throw new Error(`read_scopes has no scope inside this server's ENGRAM_READ_SCOPES (${allowed.join(",")})`);
+      }
+    }
+  } else if (params.scope !== undefined && !allowed) {
     readScopes = ["global", writeScope as string];
   }
 
