@@ -498,30 +498,13 @@ engram migrate [all|data-dir|model-cache|schema] [--dry-run]
 | `model-cache` | Moves a pre-0.4.0 cache out of `node_modules/@xenova/transformers/.cache` into the resolved cache dir (`ENGRAM_MODEL_CACHE_DIR` → `$HF_HOME/hub` → `<data dir>/models`); a no-op with a message once the default applies and nothing legacy is left. An explicit `ENGRAM_MODEL_CACHE_DIR` inside `node_modules` is relocated to `<data dir>/models`, with the env line appended to `~/.config/engram/env` when that file exists |
 | `schema` | Opens the database once so schema migrations run, then lists the `schema_migrations` checkpoints |
 
-`--dry-run` lists every action without changing anything. `engram migrate --source <path>` is the deprecated spelling of `engram import-legacy` and forwards with a notice.
-
----
-
-### engram import-legacy
-
-Import a legacy conversation-index SQLite database (was `engram migrate --source` before 0.4.0).
-
-```bash
-engram import-legacy --source <path> [options]
-```
-
-| Flag | Description |
-|------|-------------|
-| `-s, --source <path>` | Source database path (required; no default) |
-| `-n, --dry-run` | Show what would be imported without changes |
-| `--batch-size <n>` | Embedding batch size (default: `32`) |
-| `--force` | Force re-import (ignore checkpoints) |
+`--dry-run` lists every action without changing anything.
 
 ---
 
 ### engram validate
 
-Validate store integrity: embedding dimensions/norms, FTS5 integrity, reference-query search quality, and (#55) that no `vec_memories` / `memories_fts` rows exist for forgotten or missing memories. With `--source`, the row-count and content checks against a legacy conversation-index database run as well.
+Validate store integrity: embedding dimensions/norms, FTS5 integrity and hit rate, and (#55) that no `vec_memories` / `memories_fts` rows exist for forgotten or missing memories.
 
 ```bash
 engram validate [options]
@@ -529,7 +512,6 @@ engram validate [options]
 
 | Flag | Description |
 |------|-------------|
-| `-s, --source <path>` | Legacy source database to compare against (optional) |
 | `--fix` | Repair orphaned memory index rows: vectors are deleted by id; the FTS index is rebuilt and every forgotten memory re-unindexed. The report then shows the repaired state |
 
 Exit status 1 when any check fails.

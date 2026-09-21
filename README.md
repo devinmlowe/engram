@@ -669,10 +669,7 @@ still asks, and still reuses a fresh cache entry).
 
 `engram migrate [data-dir|model-cache|schema] [--dry-run]` runs step 4 and 6
 on their own, idempotently, for installs you update by hand (`model-cache` is a
-no-op once the default applies and nothing legacy is left to move). (The legacy
-conversation-index importer that used to be `engram migrate --source` is now
-`engram import-legacy --source <path>`; the old spelling still forwards with a
-deprecation notice for one release.)
+no-op once the default applies and nothing legacy is left to move).
 
 Read [CHANGELOG.md](./CHANGELOG.md) for the release's notes — 0.2.0, for
 example, re-extracts every conversation once on the first dream run (bound it
@@ -809,9 +806,8 @@ engram doctor          # Runtime diagnostics: node, platform/arch, better-sqlite
 engram setup           # First run in one command: doctor → init → sync → mcp install → all three services → doctor --fix → extraction smoke → summary (--yes, --no-sync/--sync, --no-daemons/--daemons=<ids>, --host <id...>, --no-smoke, --json)
 engram update          # Controlled self-update: backup, stop services, pull/npm install, migrate, restart, verify (--check, --plan, --yes, --no-backup, --rollback [stamp], --restore-data, --list-rollbacks)
 engram migrate [topic] # Install/data migration: data-dir | model-cache | schema | all; idempotent, --dry-run lists every action
-engram import-legacy --source <db>   # Import a legacy conversation-index SQLite DB (was `engram migrate --source`; the old spelling still forwards)
 engram memories list|show|edit|delete|restore|purge|log  # Inspect and curate memories: provenance, edit, forget (soft delete + retention), restore, purge a conversation, change log
-engram validate [--source <db>] [--fix]  # Store integrity (embeddings, FTS, no vector/FTS rows for forgotten memories; --fix repairs); --source also compares against a legacy import DB
+engram validate [--fix]  # Store integrity (embeddings, FTS, no vector/FTS rows for forgotten memories; --fix repairs)
 engram backfill-event-ts  # Backfill event-time timestamps (temporal recall)
 engram commitments [status]        # List tracked commitments (same XML as the MCP tool)
 engram commitment-done <id>        # Mark a commitment done (--status dropped|superseded)

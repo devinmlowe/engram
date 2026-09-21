@@ -212,13 +212,11 @@ Claude Code conversations (~/.claude/projects/*/...)
 |------|---------------|
 | `index.ts` | Commander.js CLI with all 15 subcommands |
 
-### `src/migration/` — Data Migration
+### `src/migration/` — Data Backfills
 
 | File | Responsibility |
 |------|---------------|
-| `migrate.ts` | Migration from superpowers conversation-index DB |
-| `validate.ts` | Post-migration integrity validation |
-| `types.ts` | Migration-specific types |
+| `backfill-event-ts.ts` | Recover `memories.event_ts` from the dream pipeline's pending-facts files (`engram backfill-event-ts`) |
 
 ---
 

@@ -25,7 +25,7 @@ External access points to engram — CLI for humans, MCP for LLM agents, web for
 ## Key Interfaces
 
 - **MCP Tools**: `recall`, `remember`, `reflect`, `explore`, `show`, `recall_session`, `recall_drill`, `explore_selective`, `remember_batch`, `fetch_snippets`, `index_file_structure`, `scan_file`
-- **CLI Commands**: `init`, `sync`, `search`, `remember`, `extract`, `dream`, `reflect`, `explore`, `entities`, `relationships`, `stats`, `health`, `doctor`, `setup`, `preflight`, `update`, `migrate`, `import-legacy`, `validate`, `backfill-event-ts`, `commitments`, `commitment-done`, `commitments-extract`, `export`, `import`, `mcp`
+- **CLI Commands**: `init`, `sync`, `search`, `remember`, `extract`, `dream`, `reflect`, `explore`, `entities`, `relationships`, `stats`, `health`, `doctor`, `setup`, `preflight`, `update`, `migrate`, `validate`, `backfill-event-ts`, `commitments`, `commitment-done`, `commitments-extract`, `export`, `import`, `mcp`
 - **Web Routes**: `/graph`, `/graph/depth`, `/graph/galaxy`, `/words`, `/api/*`
 
 ## See Also
