@@ -35,23 +35,16 @@ describe("parseDateHint — window matrix", () => {
     ["this year", win("2026-01-01", "2027-01-01")],
     ["last year", win("2025-01-01", "2026-01-01")],
     ["this day last year", win("2025-09-13", "2025-09-14")],
-    ["a year ago today", win("2025-09-13", "2025-09-14")],
-    ["a year ago", win("2025-01-01", "2026-01-01")],
     ["3 days ago", win("2026-09-10", "2026-09-11")],
-    ["three days ago", win("2026-09-10", "2026-09-11")],
     ["2 weeks ago", win("2026-08-24", "2026-08-31")],
     ["2 months ago", win("2026-07-01", "2026-08-01")],
-    ["last 7 days", win("2026-09-07", "2026-09-14")],
-    ["past 30 days", win("2026-08-15", "2026-09-14")],
     ["in March", win("2026-03-01", "2026-04-01")],
     ["march", win("2026-03-01", "2026-04-01")],
     ["March 2025", win("2025-03-01", "2025-04-01")],
     ["in December", win("2025-12-01", "2026-01-01")], // not yet this year → last year
     ["March 10", win("2026-03-10", "2026-03-11")],
-    ["10 March 2026", win("2026-03-10", "2026-03-11")],
     ["2026-03-01", win("2026-03-01", "2026-03-02")],
     ["2026-03", win("2026-03-01", "2026-04-01")],
-    ["2025", win("2025-01-01", "2026-01-01")],
     ["Last Week.", win("2026-08-31", "2026-09-07")], // case + punctuation tolerant
   ];
 
@@ -76,17 +69,11 @@ describe("parseDateHint — open-ended and anniversary", () => {
     expect(parseDateHint("before last week", NOW)).toEqual({ before: "2026-08-31" });
   });
 
-  it("after <phrase> starts where the phrase's window ends", () => {
-    expect(parseDateHint("after March", NOW)).toEqual({ after: "2026-04-01" });
-  });
-
   it("on this day yields an anniversary marker, not a range", () => {
-    for (const hint of ["on this day", "this day in history", "today in history", "on this date"]) {
-      const parsed = parseDateHint(hint, NOW);
-      expect(parsed.anniversary).toEqual({ month: 9, day: 13 });
-      expect(parsed.after).toBeUndefined();
-      expect(parsed.before).toBeUndefined();
-    }
+    const parsed = parseDateHint("On this day", NOW);
+    expect(parsed.anniversary).toEqual({ month: 9, day: 13 });
+    expect(parsed.after).toBeUndefined();
+    expect(parsed.before).toBeUndefined();
   });
 });
 
@@ -123,6 +110,10 @@ describe("parseDateHint — edge cases", () => {
     expect(parsed).toEqual({ note: 'unrecognized date hint: "whenever the mood struck"' });
     expect(parseDateHint("   ", NOW).note).toBe("empty date hint");
     expect(parseDateHint("2026-13", NOW).note).toMatch(/unrecognized/);
+    // Phrasings outside the documented grammar are unrecognized, not guessed at
+    for (const hint of ["day before yesterday", "three days ago", "last 7 days", "after March", "2025", "10 March 2026", "this day in history"]) {
+      expect(parseDateHint(hint, NOW).note, hint).toMatch(/unrecognized/);
+    }
   });
 
   it("is deterministic for a fixed now", () => {
