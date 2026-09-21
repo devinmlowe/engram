@@ -12,7 +12,10 @@
  */
 
 import { terminalSharedCss } from "./shared-css.js";
-import { TYPE_COLORS, DEFAULT_COLOR } from '../theme.js';
+import { sharedJs } from "../shared-js.js";
+import { sparkColorsJs } from "../spark-colors.js";
+import { relevanceScoresJs } from "../relevance.js";
+import { DEFAULT_COLOR } from '../theme.js';
 
 export function terminalDepthPage(): string {
   return `<!DOCTYPE html>
@@ -72,85 +75,20 @@ export function terminalDepthPage(): string {
 
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script>
-const TYPE_COLORS = ${JSON.stringify(TYPE_COLORS)};
-const BG = [39, 46, 51];
 const DEFAULT_COLOR = '${DEFAULT_COLOR}';
+${sharedJs()}
+${sparkColorsJs({ bg: [39, 46, 51], minBlend: 0.2, maxBlend: 1.0 })}
+${relevanceScoresJs()}
 
-function esc(s) {
-  const el = document.createElement('span');
-  el.textContent = s;
-  return el.innerHTML;
-}
-
-function formatAge(ts) {
-  if (!ts) return 'unknown';
-  const now = Math.floor(Date.now() / 1000);
-  const diff = now - ts;
-  if (diff < 3600) return Math.round(diff / 60) + 'm ago';
-  if (diff < 86400) return Math.round(diff / 3600) + 'h ago';
-  if (diff < 2592000) return Math.round(diff / 86400) + 'd ago';
-  return Math.round(diff / 2592000) + 'mo ago';
-}
-
-function hexToRgb(hex) {
-  return [parseInt(hex.slice(1,3),16), parseInt(hex.slice(3,5),16), parseInt(hex.slice(5,7),16)];
-}
-
-// Blend node color with background based on energy (0=dim, 1=bright)
+// Node fill: type colour blended with the background by energy (0=dim, 1=bright)
 function energyColor(type, energy) {
-  const hex = TYPE_COLORS[type] || '#495156';
-  const bright = hexToRgb(hex);
-  const blend = 0.2 + 0.8 * (energy || 0);
-  const r = Math.round(bright[0] * blend + BG[0] * (1 - blend));
-  const g = Math.round(bright[1] * blend + BG[1] * (1 - blend));
-  const b = Math.round(bright[2] * blend + BG[2] * (1 - blend));
-  return 'rgb(' + r + ',' + g + ',' + b + ')';
+  return 'rgb(' + restingColor(type, energy).join(',') + ')';
 }
-
-// ─── Relevance scoring (mirrored from depth.html.ts) ────────────
-const DAY = 86400;
-const RECENCY_HALF = 30 * DAY;
-const AGE_HALF = 90 * DAY;
-
-function computeRelevanceScores(nodes, links) {
-  const now = Math.floor(Date.now() / 1000);
-  const degree = new Map();
-  for (const n of nodes) degree.set(n.id, 0);
-  for (const l of links) {
-    if (degree.has(l.source)) degree.set(l.source, degree.get(l.source) + 1);
-    if (degree.has(l.target)) degree.set(l.target, degree.get(l.target) + 1);
-  }
-
-  let maxMentions = 1, maxDegree = 1, maxBridge = 0.001;
-  for (const n of nodes) {
-    if (n.mentionCount > maxMentions) maxMentions = n.mentionCount;
-    if ((degree.get(n.id) || 0) > maxDegree) maxDegree = degree.get(n.id);
-    if ((n.bridgeScore || 0) > maxBridge) maxBridge = n.bridgeScore;
-  }
-
-  const scores = new Map();
-  for (const n of nodes) {
-    const sinceActive = now - (n.lastActive || 0);
-    const age = now - (n.firstSeen || n.lastActive || 0);
-    const deg = degree.get(n.id) || 0;
-    const recency = Math.exp(-sinceActive / RECENCY_HALF);
-    const creation = Math.exp(-age / AGE_HALF);
-    const mentions = Math.log2((n.mentionCount || 0) + 1) / Math.log2(maxMentions + 1);
-    const degScore = Math.log2(deg + 1) / Math.log2(maxDegree + 1);
-    const bridge = (n.bridgeScore || 0) / maxBridge;
-    scores.set(n.id, 0.30 * recency + 0.10 * creation + 0.25 * mentions + 0.15 * degScore + 0.20 * bridge);
-  }
-
-  return { scores, degree };
-}
-
-let selectedNode = null;
 
 function closeInfo() {
   document.getElementById('info-panel').classList.remove('open');
   d3.selectAll('.node').classed('selected', false).classed('dimmed', false);
   d3.selectAll('.link').classed('dimmed', false).classed('highlighted', false);
-  selectedNode = null;
 }
 
 function showNodeInfo(d) {
@@ -188,7 +126,6 @@ function showNodeInfo(d) {
       const t = typeof l.target === 'object' ? l.target.id : l.target;
       return s === d.id || t === d.id;
     });
-  selectedNode = d;
 }
 
 // ─── Load & Render ──────────────────────────────────────────────

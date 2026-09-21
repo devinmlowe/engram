@@ -3,7 +3,12 @@
  */
 
 import { sharedPanelCss } from "./shared-css.js";
-import { TYPE_COLORS, DEFAULT_COLOR, BG_DEEP } from './theme.js';
+import { sharedJs, panelToggleJs } from "./shared-js.js";
+import { sparkColorsJs } from "./spark-colors.js";
+import { relevanceScoresJs } from "./relevance.js";
+import { diffPollingJs } from "./diff-polling.js";
+import { growthAnimationJs } from "./growth-animation.js";
+import { threeHelpersJs } from "./three-helpers.js";
 
 export function depthPage(): string {
   return `<!DOCTYPE html>
@@ -153,18 +158,10 @@ export function depthPage(): string {
 <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
 <script src="https://unpkg.com/3d-force-graph@1.79.1"></script>
 <script>
-// Panel logic
-document.getElementById('settings-toggle').addEventListener('click', () => {
-  document.getElementById('settings-panel').classList.toggle('open');
-});
-document.getElementById('close-panel').addEventListener('click', () => {
-  document.getElementById('settings-panel').classList.remove('open');
-});
-document.querySelectorAll('.section-header').forEach(hdr => {
-  hdr.addEventListener('click', () => hdr.parentElement.classList.toggle('open'));
-});
-
-const TYPE_COLORS = ${JSON.stringify(TYPE_COLORS)};
+${panelToggleJs()}
+${sharedJs()}
+${sparkColorsJs({ bg: [39, 46, 51], minBlend: 0.15, maxBlend: 0.95 })}
+${relevanceScoresJs()}
 
 let Z_RANGE = 800;
 let mentionThreshold = 5;
@@ -183,76 +180,16 @@ let allNodes = [], allLinks = [];
 let graph;
 let gradLinkMat;
 
-function esc(s) {
-  const el = document.createElement('span');
-  el.textContent = s;
-  return el.innerHTML;
-}
-
-function formatAge(ts) {
-  if (!ts) return 'unknown';
-  const now = Math.floor(Date.now() / 1000);
-  const diff = now - ts;
-  if (diff < 3600) return Math.round(diff / 60) + 'm ago';
-  if (diff < 86400) return Math.round(diff / 3600) + 'h ago';
-  if (diff < 2592000) return Math.round(diff / 86400) + 'd ago';
-  return Math.round(diff / 2592000) + 'mo ago';
-}
-
-// ─── Relevance Scoring ──────────────────────────────────────────
-const DAY = 86400;
-const RECENCY_HALF = 30 * DAY;   // 30-day half-life for access recency
-const AGE_HALF = 90 * DAY;       // 90-day half-life for creation recency
+// ─── Z placement: relevance → gravity → re-rank ─────────────────
 const PULL_STRENGTH = 0.15;
 const GRAVITY_PASSES = 3;
-
-function computeRelevanceScores(filtered, links) {
-  const now = Math.floor(Date.now() / 1000);
-
-  // Build degree map from filtered links
-  const degree = new Map();
-  for (const n of filtered) degree.set(n.id, 0);
-  for (const l of links) {
-    const s = typeof l.source === 'object' ? l.source.id : l.source;
-    const t = typeof l.target === 'object' ? l.target.id : l.target;
-    if (degree.has(s)) degree.set(s, degree.get(s) + 1);
-    if (degree.has(t)) degree.set(t, degree.get(t) + 1);
-  }
-
-  // Find maxima for normalization
-  let maxMentions = 1, maxDegree = 1, maxBridge = 0.001;
-  for (const n of filtered) {
-    if (n.mentionCount > maxMentions) maxMentions = n.mentionCount;
-    if ((degree.get(n.id) || 0) > maxDegree) maxDegree = degree.get(n.id);
-    if ((n.bridgeScore || 0) > maxBridge) maxBridge = n.bridgeScore;
-  }
-
-  const scores = new Map();
-  for (const n of filtered) {
-    const sinceActive = now - (n.lastActive || 0);
-    const age = now - (n.firstSeen || n.lastActive || 0);
-    const deg = degree.get(n.id) || 0;
-
-    const recency    = Math.exp(-sinceActive / RECENCY_HALF);
-    const creation   = Math.exp(-age / AGE_HALF);
-    const mentions   = Math.log2((n.mentionCount || 0) + 1) / Math.log2(maxMentions + 1);
-    const degScore   = Math.log2(deg + 1) / Math.log2(maxDegree + 1);
-    const bridge     = (n.bridgeScore || 0) / maxBridge;
-
-    const score = 0.30 * recency + 0.10 * creation + 0.25 * mentions + 0.15 * degScore + 0.20 * bridge;
-    scores.set(n.id, score);
-  }
-
-  return { scores, degree };
-}
 
 function applyGravity(filtered, links, scores, degree, passes) {
   // Build adjacency list with link weights
   const adj = new Map();
   for (const n of filtered) adj.set(n.id, []);
   for (const l of links) {
-    const s = typeof l.source === 'object' ? l.source.id : l.source;
-    const t = typeof l.target === 'object' ? l.target.id : l.target;
+    const s = linkId(l.source), t = linkId(l.target);
     if (adj.has(s) && adj.has(t)) {
       adj.get(s).push({ id: t, weight: l.weight || 1 });
       adj.get(t).push({ id: s, weight: l.weight || 1 });
@@ -303,6 +240,21 @@ function reRank(filtered, zMap) {
   }
 }
 
+// Place the given nodes on the Z axis, colour them by degree, update the stats bar.
+function layoutDepth(filtered, links) {
+  document.getElementById('stat-nodes').textContent = filtered.length;
+  document.getElementById('stat-edges').textContent = links.length;
+
+  const { scores, degree } = computeRelevanceScores(filtered, links);
+  const zMap = applyGravity(filtered, links, scores, degree, GRAVITY_PASSES);
+  reRank(filtered, zMap);
+
+  for (const n of filtered) n.degree = degree.get(n.id) || 0;
+  assignEnergy(filtered);
+
+  return { nodes: filtered, links };
+}
+
 function filterAndBuild() {
   const nodeSet = new Set();
   const filtered = allNodes.filter(n => {
@@ -310,28 +262,8 @@ function filterAndBuild() {
     nodeSet.add(n.id);
     return true;
   });
-  const links = allLinks.filter(l => nodeSet.has(l.source) && nodeSet.has(l.target));
-
-  document.getElementById('stat-nodes').textContent = filtered.length;
-  document.getElementById('stat-edges').textContent = links.length;
-
-  // 3-phase Z pipeline: relevance → gravity → re-rank
-  const { scores, degree } = computeRelevanceScores(filtered, links);
-  const zMap = applyGravity(filtered, links, scores, degree, GRAVITY_PASSES);
-  reRank(filtered, zMap);
-
-  // Stash degree on each node for the color system
-  let maxDeg = 1;
-  for (const n of filtered) {
-    n.degree = degree.get(n.id) || 0;
-    if (n.degree > maxDeg) maxDeg = n.degree;
-  }
-  // Log-scaled energy: 0 connections → 0, max connections → 1
-  for (const n of filtered) {
-    n.energy = Math.log2(n.degree + 1) / Math.log2(maxDeg + 1);
-  }
-
-  return { nodes: filtered, links };
+  const links = allLinks.filter(l => nodeSet.has(linkId(l.source)) && nodeSet.has(linkId(l.target)));
+  return layoutDepth(filtered, links);
 }
 
 Promise.all([
@@ -347,90 +279,18 @@ Promise.all([
 
     const graphData = filterAndBuild();
 
-    // Shared gradient shader for link lines — bright at endpoints, dim in middle
-    gradLinkMat = new THREE.ShaderMaterial({
-      transparent: true,
-      depthWrite: false,
-      uniforms: { uOpacity: { value: linkOpacity }, uGradient: { value: linkGradient } },
-      vertexShader: [
-        'attribute float t;',
-        'attribute vec3 vColor;',
-        'varying float vT;',
-        'varying vec3 fColor;',
-        'void main() {',
-        '  vT = t; fColor = vColor;',
-        '  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);',
-        '}',
-      ].join('\\n'),
-      fragmentShader: [
-        'uniform float uOpacity;',
-        'uniform float uGradient;',
-        'varying float vT;',
-        'varying vec3 fColor;',
-        'void main() {',
-        '  float fz = (1.0 - uGradient) * 0.5;',
-        '  float dim = uGradient * uGradient;',
-        '  float a;',
-        '  if (fz < 0.001) { a = 1.0; }',
-        '  else if (vT < fz) { a = mix(1.0, dim, vT / fz); }',
-        '  else if (vT > 1.0 - fz) { a = mix(dim, 1.0, (vT - (1.0 - fz)) / fz); }',
-        '  else { a = dim; }',
-        '  a *= min(uGradient * 3.0, 1.0);',
-        '  gl_FragColor = vec4(fColor, a * uOpacity);',
-        '}',
-      ].join('\\n'),
-    });
+    gradLinkMat = makeGradientLinkMaterial(linkOpacity, linkGradient);
 
     graph = ForceGraph3D({ controlType: 'orbit' })
       (document.getElementById('graph-3d'))
       .graphData(graphData)
       .backgroundColor('#191d20')
-      .nodeColor(n => sparkNodeColor3D(n))
+      .nodeColor(n => sparkNodeColor(n))
       .nodeVal(n => Math.max(0.3, Math.log2((n.mentionCount || 1) + 1) * 0.4 * nodeSizeMult))
       .nodeOpacity(0.85)
       .nodeLabel(null)
-      .linkThreeObject(l => {
-        const SEGS = 10;
-        const colors = {
-          uses:          [127,187,179],
-          depends_on:    [230,126,128],
-          related_to:    [214,153,182],
-          part_of:       [167,192,128],
-          configured_by: [230,152,117],
-          solved_by:     [219,188,127],
-        };
-        const c = colors[l.type] || [65,75,80];
-        const pts = SEGS + 1;
-        const positions = new Float32Array(pts * 3);
-        const tAttr = new Float32Array(pts);
-        const colorAttr = new Float32Array(pts * 3);
-        for (let i = 0; i < pts; i++) {
-          tAttr[i] = i / SEGS;
-          colorAttr[i*3]   = c[0] / 255;
-          colorAttr[i*3+1] = c[1] / 255;
-          colorAttr[i*3+2] = c[2] / 255;
-        }
-        const geo = new THREE.BufferGeometry();
-        geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-        geo.setAttribute('t', new THREE.BufferAttribute(tAttr, 1));
-        geo.setAttribute('vColor', new THREE.BufferAttribute(colorAttr, 3));
-        const line = new THREE.Line(geo, gradLinkMat);
-        line.renderOrder = -1;
-        return line;
-      })
-      .linkPositionUpdate((obj, { start, end }) => {
-        const pos = obj.geometry.attributes.position;
-        const arr = pos.array;
-        const segs = (arr.length / 3) - 1;
-        for (let i = 0; i <= segs; i++) {
-          const f = i / segs;
-          arr[i*3]   = start.x + (end.x - start.x) * f;
-          arr[i*3+1] = start.y + (end.y - start.y) * f;
-          arr[i*3+2] = start.z + (end.z - start.z) * f;
-        }
-        pos.needsUpdate = true;
-        return true;
-      })
+      .linkThreeObject(l => gradientLinkObject(gradLinkMat, REL_RGB[l.type] || [65,75,80], 1.0))
+      .linkPositionUpdate(gradientLinkPositionUpdate)
       .linkWidth(0)
       .linkOpacity(1.0)
       .d3Force('charge', d3.forceManyBody().strength(forceRepel).distanceMax(300))
@@ -473,38 +333,9 @@ Promise.all([
     });
 
     // Fit camera to extents of visible nodes after simulation settles
-    setTimeout(() => {
-      const gd = graph.graphData();
-      if (!gd.nodes.length) return;
+    setTimeout(fitCameraToGraph, 3000);
 
-      let minX = Infinity, maxX = -Infinity;
-      let minY = Infinity, maxY = -Infinity;
-      let minZ = Infinity, maxZ = -Infinity;
-      for (const n of gd.nodes) {
-        if (n.x == null) continue;
-        minX = Math.min(minX, n.x); maxX = Math.max(maxX, n.x);
-        minY = Math.min(minY, n.y); maxY = Math.max(maxY, n.y);
-        const z = n.z || 0;
-        minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z);
-      }
-
-      const cx = (minX + maxX) / 2;
-      const cy = (minY + maxY) / 2;
-      const cz = (minZ + maxZ) / 2;
-      const spanX = maxX - minX;
-      const spanY = maxY - minY;
-      const spanZ = maxZ - minZ;
-      const maxSpan = Math.max(spanX, spanY, spanZ, 1);
-
-      // Distance needed to see the full extent (rough FOV estimate ~60deg)
-      const dist = maxSpan * 1.2;
-
-      graph.cameraPosition(
-        { x: cx, y: cy - dist * 0.3, z: cz + dist },
-        { x: cx, y: cy, z: cz },
-        1500
-      );
-    }, 3000);
+    startDiffPolling('/graph/depth', onDiffChanged);
   });
 
 // Controls
@@ -577,263 +408,45 @@ function applyPreset3D(name) {
 document.getElementById('preset-cluster').addEventListener('click', () => applyPreset3D('cluster'));
 document.getElementById('preset-spread').addEventListener('click', () => applyPreset3D('spread'));
 
-// ─── Spark color system (mirroring 2D) ─────────────────────────
+// ─── Live updates ────────────────────────────────────────────────
+${diffPollingJs()}
 
-const BG3D = [39, 46, 51];
-const FADE_DURATION_3D = 60000;
-const MIN_ENERGY_BLEND = 0.15;  // dimmest resting state (isolated nodes)
-const MAX_ENERGY_BLEND = 0.95;  // brightest resting state (hub nodes)
-
-function hexToRgb3D(hex) {
-  return [parseInt(hex.slice(1,3),16), parseInt(hex.slice(3,5),16), parseInt(hex.slice(5,7),16)];
-}
-
-const TYPE_RGB_3D = {};
-for (const [k, hex] of Object.entries(TYPE_COLORS)) {
-  TYPE_RGB_3D[k] = hexToRgb3D(hex);
-}
-
-// Compute resting color for a node based on its energy (degree-scaled 0-1)
-function restingColor3D(type, energy) {
-  const bright = TYPE_RGB_3D[type] || [136, 136, 136];
-  const blend = MIN_ENERGY_BLEND + (MAX_ENERGY_BLEND - MIN_ENERGY_BLEND) * (energy || 0);
-  return [
-    Math.round(bright[0] * blend + BG3D[0] * (1 - blend)),
-    Math.round(bright[1] * blend + BG3D[1] * (1 - blend)),
-    Math.round(bright[2] * blend + BG3D[2] * (1 - blend)),
-  ];
-}
-
-function sparkNodeColor3D(node) {
-  const resting = restingColor3D(node.type, node.energy);
-  if (!node.lastSpark) return 'rgb(' + resting.join(',') + ')';
-  const age = Date.now() - node.lastSpark;
-  if (age >= FADE_DURATION_3D) return 'rgb(' + resting.join(',') + ')';
-  const t = age / FADE_DURATION_3D;
-  const bright = TYPE_RGB_3D[node.type] || [136, 136, 136];
-  // Spark always flashes to full bright, then fades to energy-based resting
-  const r = Math.round(bright[0] + (resting[0] - bright[0]) * t);
-  const g = Math.round(bright[1] + (resting[1] - bright[1]) * t);
-  const b = Math.round(bright[2] + (resting[2] - bright[2]) * t);
-  return 'rgb(' + r + ',' + g + ',' + b + ')';
-}
-
-// ─── Diff Polling (3D) ──────────────────────────────────────────
-
-let lastDiffTimestamp3D = Math.floor(Date.now() / 1000);
-let nodeMap3D = new Map();
-let linkKey3D = new Set();
 let autoZoom3D = localStorage.getItem('engram-autozoom-3d') !== 'false';
 let lastAutoZoomTime3D = 0;
 const AUTOZOOM_COOLDOWN = 5000;
 
-function initLookups3D() {
-  for (const n of allNodes) nodeMap3D.set(n.id, n);
-  for (const l of allLinks) linkKey3D.add(l.source + '|' + l.target + '|' + l.type);
-}
+function onDiffChanged(newNodeIds) {
+  graph.graphData(filterAndBuild());
+  refreshSparkColors(1500);
 
-function pollDiff3D() {
-  fetch('/graph/depth/api/diff?since=' + lastDiffTimestamp3D)
-    .then(r => r.json())
-    .then(mergeDiff3D)
-    .catch(() => {});
-}
-
-function mergeDiff3D(diff) {
-  if (!diff) return;
-  lastDiffTimestamp3D = diff.timestamp;
-  const sparkTime = Date.now();
-  let changed = false;
-  const newNodeIds = [];
-
-  for (const n of diff.newNodes) {
-    if (!nodeMap3D.has(n.id)) {
-      n.lastSpark = sparkTime;
-      n.lastActive = n.lastActive || 0;
-      n.firstSeen = n.firstSeen || 0;
-      n.bridgeScore = n.bridgeScore || 0;
-      allNodes.push(n);
-      nodeMap3D.set(n.id, n);
-      newNodeIds.push(n.id);
-      changed = true;
-    }
-  }
-
-  for (const n of diff.updatedNodes) {
-    const existing = nodeMap3D.get(n.id);
-    if (existing) {
-      existing.name = n.name;
-      existing.description = n.description;
-      existing.mentionCount = n.mentionCount;
-      existing.community = n.community;
-      existing.lastActive = n.lastActive || existing.lastActive;
-      existing.firstSeen = n.firstSeen || existing.firstSeen;
-      existing.bridgeScore = n.bridgeScore ?? existing.bridgeScore;
-      existing.lastSpark = sparkTime;
-      changed = true;
-    }
-  }
-
-  for (const l of diff.newLinks) {
-    const key = l.source + '|' + l.target + '|' + l.type;
-    if (!linkKey3D.has(key)) {
-      allLinks.push(l);
-      linkKey3D.add(key);
-      changed = true;
-      const sn = nodeMap3D.get(l.source);
-      const tn = nodeMap3D.get(l.target);
-      if (sn) sn.lastSpark = sparkTime;
-      if (tn) tn.lastSpark = sparkTime;
-    }
-  }
-
-  for (const l of diff.updatedLinks) {
-    for (const el of allLinks) {
-      if (el.source === l.source && el.target === l.target && el.type === l.type) {
-        el.weight = l.weight;
-        el.context = l.context;
-        changed = true;
-        break;
-      }
-    }
-  }
-
-  if (changed && graph) {
-    const gd = filterAndBuild();
-    graph.graphData(gd);
-    graph.nodeColor(n => sparkNodeColor3D(n));
-
-    const live = document.getElementById('live');
-    live.textContent = '+' + (diff.newNodes.length + diff.updatedNodes.length) + ' changes';
-    live.classList.add('show');
-    setTimeout(() => live.classList.remove('show'), 2000);
-
-    // Auto-zoom to new nodes
-    if (autoZoom3D && newNodeIds.length >= 2 && Date.now() - lastAutoZoomTime3D > AUTOZOOM_COOLDOWN) {
-      setTimeout(() => {
-        const gNodes = graph.graphData().nodes;
-        const newNodes = newNodeIds.map(id => gNodes.find(n => n.id === id)).filter(n => n && n.x != null);
-
-        if (newNodes.length >= 2) {
-          let cx = 0, cy = 0, cz = 0;
-          for (const n of newNodes) { cx += n.x; cy += n.y; cz += n.z || 0; }
-          cx /= newNodes.length; cy /= newNodes.length; cz /= newNodes.length;
-
-          let maxSpread = 0;
-          for (const n of newNodes) {
-            const dx = n.x - cx, dy = n.y - cy, dz = (n.z || 0) - cz;
-            maxSpread = Math.max(maxSpread, Math.sqrt(dx*dx + dy*dy + dz*dz));
-          }
-
-          const dist = Math.max(maxSpread * 3, 200);
-          graph.cameraPosition(
-            { x: cx, y: cy - dist * 0.3, z: cz + dist },
-            { x: cx, y: cy, z: cz },
-            1200
-          );
-          lastAutoZoomTime3D = Date.now();
-        }
-      }, 500);
-    }
-
-    // Continue fade
+  // Auto-zoom to new nodes
+  if (autoZoom3D && newNodeIds.length >= 2 && Date.now() - lastAutoZoomTime3D > AUTOZOOM_COOLDOWN) {
     setTimeout(() => {
-      if (graph) graph.nodeColor(n => sparkNodeColor3D(n));
-    }, 1500);
+      const gNodes = graph.graphData().nodes;
+      const newNodes = newNodeIds.map(id => gNodes.find(n => n.id === id)).filter(n => n && n.x != null);
+
+      if (newNodes.length >= 2) {
+        let cx = 0, cy = 0, cz = 0;
+        for (const n of newNodes) { cx += n.x; cy += n.y; cz += n.z || 0; }
+        cx /= newNodes.length; cy /= newNodes.length; cz /= newNodes.length;
+
+        let maxSpread = 0;
+        for (const n of newNodes) {
+          const dx = n.x - cx, dy = n.y - cy, dz = (n.z || 0) - cz;
+          maxSpread = Math.max(maxSpread, Math.sqrt(dx*dx + dy*dy + dz*dz));
+        }
+
+        const dist = Math.max(maxSpread * 3, 200);
+        graph.cameraPosition(
+          { x: cx, y: cy - dist * 0.3, z: cz + dist },
+          { x: cx, y: cy, z: cz },
+          1200
+        );
+        lastAutoZoomTime3D = Date.now();
+      }
+    }, 500);
   }
 }
-
-// Start polling after initial load
-setTimeout(() => {
-  initLookups3D();
-  setInterval(pollDiff3D, 1500);
-  if (graph) graph.nodeColor(n => sparkNodeColor3D(n));
-}, 200);
-
-// ─── Turntable Rotation ──────────────────────────────────────────
-
-let autoRotateEnabled = true;
-let autoRotateSpeed = 5; // degrees per second
-let turntablePaused = false;
-let idleTimer = null;
-let turntableAngle = 0;
-let lastTurntableTime = 0;
-
-function getCentroid() {
-  const gd = graph ? graph.graphData() : null;
-  if (!gd || !gd.nodes.length) return { x: 0, y: 0, z: 0 };
-  let cx = 0, cy = 0, cz = 0, count = 0;
-  for (const n of gd.nodes) {
-    if (n.x != null) { cx += n.x; cy += n.y; cz += n.z || 0; count++; }
-  }
-  if (count === 0) return { x: 0, y: 0, z: 0 };
-  return { x: cx / count, y: cy / count, z: cz / count };
-}
-
-function turntableTick(now) {
-  if (!graph || !autoRotateEnabled || turntablePaused) {
-    lastTurntableTime = now;
-    requestAnimationFrame(turntableTick);
-    return;
-  }
-
-  if (!lastTurntableTime) lastTurntableTime = now;
-  const dt = (now - lastTurntableTime) / 1000; // seconds
-  lastTurntableTime = now;
-
-  turntableAngle += autoRotateSpeed * dt * (Math.PI / 180); // convert deg/s to rad
-
-  const cam = graph.cameraPosition();
-  const center = getCentroid();
-
-  // Vector from centroid to camera
-  const dx = cam.x - center.x;
-  const dz = (cam.z || 0) - center.z;
-  const radius = Math.sqrt(dx * dx + dz * dz);
-
-  if (radius > 0.1) {
-    // Current angle in XZ plane around centroid
-    const currentAngle = Math.atan2(dz, dx);
-    const newAngle = currentAngle + autoRotateSpeed * dt * (Math.PI / 180);
-
-    graph.cameraPosition({
-      x: center.x + radius * Math.cos(newAngle),
-      y: cam.y, // keep Y (height) unchanged
-      z: center.z + radius * Math.sin(newAngle),
-    });
-  }
-
-  requestAnimationFrame(turntableTick);
-}
-
-setTimeout(() => {
-  if (!graph) return;
-
-  // Pause on user interaction, resume after 5s idle
-  const controls = graph.controls();
-  if (controls) {
-    controls.addEventListener('start', () => {
-      turntablePaused = true;
-      if (idleTimer) clearTimeout(idleTimer);
-    });
-    controls.addEventListener('end', () => {
-      if (idleTimer) clearTimeout(idleTimer);
-      idleTimer = setTimeout(() => { turntablePaused = false; }, 5000);
-    });
-  }
-
-  requestAnimationFrame(turntableTick);
-}, 500);
-
-document.getElementById('toggle-autorotate').addEventListener('click', function() {
-  this.classList.toggle('on');
-  autoRotateEnabled = this.classList.contains('on');
-});
-
-document.getElementById('rotate-speed').addEventListener('input', (e) => {
-  autoRotateSpeed = parseInt(e.target.value, 10);
-  document.getElementById('rotate-speed-val').textContent = autoRotateSpeed;
-});
 
 document.getElementById('toggle-autozoom-3d').addEventListener('click', function() {
   this.classList.toggle('on');
@@ -843,156 +456,16 @@ document.getElementById('toggle-autozoom-3d').addEventListener('click', function
 
 if (!autoZoom3D) document.getElementById('toggle-autozoom-3d').classList.remove('on');
 
-// ─── Growth Animation ────────────────────────────────────────────
+${threeHelpersJs()}
+${growthAnimationJs()}
 
-let animating = false;
-let animTime = 0;
-let animMinTime = 0;
-let animMaxTime = 0;
-let animSpeed = 1;
-const ANIM_SPEEDS = [1, 2, 5, 10, 20];
-let animSpeedIdx = 0;
-let animLastFrame = 0;
-let animNodeOrder = [];
-let animVisibleCount = 0;
-let animSavedThreshold = 0;
-
-const animBtn = document.getElementById('animate-btn');
-const animProgress = document.getElementById('anim-progress');
-const animBar = document.getElementById('anim-bar');
-const animDate = document.getElementById('anim-date');
-const animSpeedEl = document.getElementById('anim-speed');
-
-function formatAnimDate(ts) {
-  const d = new Date(ts * 1000);
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-}
-
-function startAnimation() {
-  // Animate within the current threshold — keeps node count manageable
-  const thresholdFiltered = allNodes.filter(n => (n.mentionCount || 0) >= mentionThreshold);
-  animNodeOrder = thresholdFiltered
-    .filter(n => (n.firstSeen || 0) > 0)
-    .sort((a, b) => (a.firstSeen || 0) - (b.firstSeen || 0));
-  if (animNodeOrder.length < 2) return;
-
-  animMinTime = animNodeOrder[0].firstSeen;
-  animMaxTime = animNodeOrder[animNodeOrder.length - 1].firstSeen;
-  animTime = animMinTime;
-  animVisibleCount = 0;
-  animSavedThreshold = mentionThreshold;
-
-  animating = true;
-  animLastFrame = performance.now();
-  animBtn.classList.add('playing');
-  animBtn.innerHTML = '&#x25A0;';
-  animProgress.classList.add('show');
-
-  graph.graphData({ nodes: [], links: [] });
-  requestAnimationFrame(animTickDepth);
-}
-
-function stopAnimation() {
-  animating = false;
-  animBtn.classList.remove('playing');
-  animBtn.innerHTML = '&#x25B6;';
-  animProgress.classList.remove('show');
-
-  mentionThreshold = animSavedThreshold;
-  document.getElementById('threshold').value = mentionThreshold;
-  document.getElementById('threshold-val').textContent = mentionThreshold;
-  graph.graphData(filterAndBuild());
-}
-
-function animTickDepth(now) {
-  if (!animating) return;
-  const dt = (now - animLastFrame) / 1000;
-  animLastFrame = now;
-
-  const BASE_DURATION = 45;
-  const timeSpan = animMaxTime - animMinTime || 1;
-  const timeScale = timeSpan / BASE_DURATION;
-  animTime += dt * timeScale * animSpeed;
-
-  if (animTime >= animMaxTime) {
-    animTime = animMaxTime;
-    animVisibleCount = animNodeOrder.length;
-    animRebuildDepth();
-    updateAnimUI();
-    setTimeout(stopAnimation, 1500);
-    return;
-  }
-
-  let newCount = animVisibleCount;
-  while (newCount < animNodeOrder.length && (animNodeOrder[newCount].firstSeen || 0) <= animTime) {
-    newCount++;
-  }
-
-  if (newCount > animVisibleCount) {
-    const sparkTime = Date.now();
-    for (let i = animVisibleCount; i < newCount; i++) {
-      animNodeOrder[i].lastSpark = sparkTime;
-    }
-    animVisibleCount = newCount;
-    animRebuildDepth();
-  }
-
-  updateAnimUI();
-  requestAnimationFrame(animTickDepth);
-}
-
-function animRebuildDepth() {
-  const visibleIds = new Set();
-  for (let i = 0; i < animVisibleCount; i++) {
-    visibleIds.add(animNodeOrder[i].id);
-  }
-
-  const filtered = animNodeOrder.slice(0, animVisibleCount);
-  const links = allLinks.filter(l => {
-    const s = typeof l.source === 'object' ? l.source.id : l.source;
-    const t = typeof l.target === 'object' ? l.target.id : l.target;
-    return visibleIds.has(s) && visibleIds.has(t);
-  });
-
-  // Depth relevance pipeline
-  if (filtered.length > 0) {
-    const { scores, degree } = computeRelevanceScores(filtered, links);
-    const zMap = applyGravity(filtered, links, scores, degree, GRAVITY_PASSES);
-    reRank(filtered, zMap);
-    let maxDeg = 1;
-    for (const n of filtered) {
-      n.degree = degree.get(n.id) || 0;
-      if (n.degree > maxDeg) maxDeg = n.degree;
-    }
-    for (const n of filtered) {
-      n.energy = Math.log2(n.degree + 1) / Math.log2(maxDeg + 1);
-    }
-  }
-
-  document.getElementById('stat-nodes').textContent = filtered.length;
-  document.getElementById('stat-edges').textContent = links.length;
-
-  graph.graphData({ nodes: filtered, links });
-  graph.nodeColor(n => sparkNodeColor3D(n));
-  setTimeout(() => { if (graph) graph.nodeColor(n => sparkNodeColor3D(n)); }, 1200);
-}
-
-function updateAnimUI() {
-  const pct = ((animTime - animMinTime) / (animMaxTime - animMinTime || 1)) * 100;
-  animBar.style.width = pct + '%';
-  animDate.textContent = formatAnimDate(animTime);
-}
-
-animBtn.addEventListener('click', () => {
-  if (animating) stopAnimation();
-  else startAnimation();
-});
-
-animSpeedEl.addEventListener('click', () => {
-  animSpeedIdx = (animSpeedIdx + 1) % ANIM_SPEEDS.length;
-  animSpeed = ANIM_SPEEDS[animSpeedIdx];
-  animSpeedEl.textContent = animSpeed + 'x';
-});
+setupGrowthAnimation(
+  (nodes, links) => {
+    graph.graphData(layoutDepth(nodes, links));
+    refreshSparkColors(1200);
+  },
+  () => graph.graphData(filterAndBuild()),
+);
 </script>
 </body>
 </html>`;

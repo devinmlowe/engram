@@ -12,6 +12,8 @@
  */
 
 import { terminalSharedCss } from "./shared-css.js";
+import { terminalTreemapJs } from "./treemap.js";
+import { sharedJs } from "../shared-js.js";
 import { PALETTE } from '../theme.js';
 
 export function terminalWordsPage(): string {
@@ -117,16 +119,12 @@ export function terminalWordsPage(): string {
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script>
 const PALETTE = ${JSON.stringify(PALETTE)};
+${sharedJs()}
+${terminalTreemapJs()}
 
 let wordData = [];
 let mode = 'treemap';
 let selectedWord = null;
-
-function esc(s) {
-  const el = document.createElement('span');
-  el.textContent = s;
-  return el.innerHTML;
-}
 
 function closeInfo() {
   document.getElementById('info-panel').classList.remove('open');
@@ -166,128 +164,15 @@ function toggleMode() {
   }
 }
 
-function renderTreemap(words) {
-  const container = document.getElementById('treemap');
-  container.innerHTML = '';
-
-  if (words.length === 0) return;
-
-  const width = Math.max(window.innerWidth - 32, 768);
-  const height = Math.max(window.innerHeight - 78, 500);
-
-  // Build hierarchy for d3.treemap
-  const root = d3.hierarchy({ children: words.map((w, i) => ({ ...w, rank: i })) })
-    .sum(d => d.count)
-    .sort((a, b) => b.value - a.value);
-
-  d3.treemap()
-    .size([width, height])
-    .padding(2)
-    .round(true)(root);
-
-  const svg = d3.select(container).append('svg')
-    .attr('width', width)
-    .attr('height', height);
-
-  const cells = svg.selectAll('g')
-    .data(root.leaves())
-    .join('g')
-    .attr('class', 'cell')
-    .attr('transform', d => 'translate(' + d.x0 + ',' + d.y0 + ')')
-    .on('click', function(event, d) {
-      event.stopPropagation();
-      showWordInfo(d.data.text, d.data.count, d.data.rank + 1, this);
-    });
-
-  cells.append('rect')
-    .attr('width', d => d.x1 - d.x0)
-    .attr('height', d => d.y1 - d.y0)
-    .attr('fill', d => PALETTE[d.data.rank % PALETTE.length])
-    .attr('rx', 2);
-
-  // Fit text into cells with word-wrapping and proper centering
-  cells.each(function(d) {
-    const cellW = d.x1 - d.x0;
-    const cellH = d.y1 - d.y0;
-    const name = d.data.text;
-    const pad = 6;
-
-    if (cellW < 30 || cellH < 16) return;
-
-    const g = d3.select(this);
-    const usableW = cellW - pad * 2;
-    const usableH = cellH - pad * 2;
-
-    // Start with a font size based on cell height, then shrink if needed
-    const charRatio = 0.65; // monospace char width / font size (tuned for carbonyl)
-    let fontSize = Math.min(usableH * 0.35, 36);
-
-    function wrapText(fs) {
-      const cw = fs * charRatio;
-      const maxChars = Math.max(Math.floor(usableW / cw), 1);
-      const words = name.split(/\\s+/);
-      const lines = [];
-      let cur = '';
-      for (const w of words) {
-        if (w.length > maxChars) {
-          // Word too wide — put it on its own line, truncated with ellipsis
-          if (cur) { lines.push(cur); cur = ''; }
-          lines.push(w.slice(0, maxChars - 1) + '\\u2026');
-          continue;
-        }
-        const test = cur ? cur + ' ' + w : w;
-        if (test.length > maxChars && cur) {
-          lines.push(cur);
-          cur = w;
-        } else {
-          cur = test;
-        }
-      }
-      if (cur) lines.push(cur);
-      return { lines, maxChars };
-    }
-
-    // Try wrapping at current font size, shrink if lines don't fit
-    let result, lineHeight, maxLines;
-    for (let attempt = 0; attempt < 5; attempt++) {
-      if (fontSize < 6) return;
-      result = wrapText(fontSize);
-      lineHeight = fontSize * 1.25;
-      maxLines = Math.floor(usableH / lineHeight);
-      if (maxLines >= 1 && (result.lines.length <= maxLines || maxLines >= 2)) break;
-      fontSize *= 0.8;
-    }
-
-    if (fontSize < 6) return;
-
-    const shownLines = result.lines.slice(0, Math.max(maxLines, 1));
-
-    // Truncate last visible line if there are hidden lines
-    if (shownLines.length < result.lines.length && shownLines.length > 0) {
-      const last = shownLines[shownLines.length - 1];
-      const mc = result.maxChars;
-      shownLines[shownLines.length - 1] = last.length > mc - 1
-        ? last.slice(0, mc - 1) + '\\u2026'
-        : last + '\\u2026';
-    }
-
-    // Center the text block vertically and horizontally
-    const totalH = shownLines.length * lineHeight;
-    const baseY = pad + (usableH - totalH) / 2 + fontSize * 0.8;
-
-    shownLines.forEach((line, i) => {
-      g.append('text')
-        .attr('x', cellW / 2)
-        .attr('y', baseY + i * lineHeight)
-        .attr('font-size', fontSize + 'px')
-        .attr('text-anchor', 'middle')
-        .attr('dominant-baseline', 'auto')
-        .text(line);
-    });
+function renderWordTreemap(words) {
+  const items = words.map((w, i) => ({
+    label: w.text, value: w.count, fill: PALETTE[i % PALETTE.length],
+    text: w.text, count: w.count, rank: i,
+  }));
+  renderTreemap(document.getElementById('treemap'), items, {
+    maxFont: 36,
+    onClick: (d, cellEl) => showWordInfo(d.text, d.count, d.rank + 1, cellEl),
   });
-
-  // Click background to deselect
-  svg.on('click', closeInfo);
 }
 
 function renderTable(words) {
@@ -339,7 +224,7 @@ fetch('/graph/words/api/words?limit=200')
     wordData = data;
     document.getElementById('stats-bar').textContent =
       data.length + ' words from episodic memory';
-    renderTreemap(data);
+    renderWordTreemap(data);
     renderTable(data);
   });
 

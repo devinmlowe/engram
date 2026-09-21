@@ -80,7 +80,7 @@ Port 3001 — Force graph (`/graph`), 3D depth view (`/graph/depth`), galaxy vie
 
 Terminal-optimized views at `/terminal/graph`, `/terminal/depth`, `/terminal/words`, `/terminal/communities` — SVG-based, pre-stabilized, high-contrast layouts for carbonyl or other terminal browsers.
 
-**Theme:** Everforest Hard Dark, centralized in `src/interfaces/web/pages/theme.ts`. All page files import colors from this module — no hardcoded hex values in pages. See ADR-009 for theming architecture and carbonyl rendering lessons.
+**Theme:** Everforest Hard Dark, centralized in `src/interfaces/web/pages/theme.ts`. All page files import colors from this module — no hardcoded hex values in pages. See ADR-009 for theming architecture and carbonyl rendering lessons. Client-side code shared by several pages (spark colours, diff polling, growth animation, Three.js helpers, relevance scoring, the terminal treemap) lives in `pages/*.ts` modules that return a JS string the template interpolates, the way `shared-css.ts` does for CSS (#123).
 
 Start: `npx tsx src/interfaces/web/server.ts`
 

@@ -3,7 +3,11 @@
  */
 
 import { sharedPanelCss } from "./shared-css.js";
-import { TYPE_COLORS, DEFAULT_COLOR, BG_DEEP } from './theme.js';
+import { sharedJs, panelToggleJs } from "./shared-js.js";
+import { sparkColorsJs } from "./spark-colors.js";
+import { diffPollingJs } from "./diff-polling.js";
+import { growthAnimationJs } from "./growth-animation.js";
+import { threeHelpersJs } from "./three-helpers.js";
 
 export function galaxyPage(): string {
   return `<!DOCTYPE html>
@@ -141,18 +145,9 @@ export function galaxyPage(): string {
 <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
 <script src="https://unpkg.com/3d-force-graph@1.79.1"></script>
 <script>
-// Panel logic
-document.getElementById('settings-toggle').addEventListener('click', () => {
-  document.getElementById('settings-panel').classList.toggle('open');
-});
-document.getElementById('close-panel').addEventListener('click', () => {
-  document.getElementById('settings-panel').classList.remove('open');
-});
-document.querySelectorAll('.section-header').forEach(hdr => {
-  hdr.addEventListener('click', () => hdr.parentElement.classList.toggle('open'));
-});
-
-const TYPE_COLORS = ${JSON.stringify(TYPE_COLORS)};
+${panelToggleJs()}
+${sharedJs()}
+${sparkColorsJs({ bg: [39, 46, 51], minBlend: 0.15, maxBlend: 0.95 })}
 
 let mentionThreshold = 5;
 let hubMinDegree = 15;
@@ -164,24 +159,8 @@ let linkGradient = 0.5;
 
 let allNodes = [], allLinks = [];
 let graph;
-let gradLinkMatGal;
+let gradLinkMat;
 let galaxyData = null; // result of classifyNodes + computeRotation
-
-function esc(s) {
-  const el = document.createElement('span');
-  el.textContent = s;
-  return el.innerHTML;
-}
-
-function formatAge(ts) {
-  if (!ts) return 'unknown';
-  const now = Math.floor(Date.now() / 1000);
-  const diff = now - ts;
-  if (diff < 3600) return Math.round(diff / 60) + 'm ago';
-  if (diff < 86400) return Math.round(diff / 3600) + 'h ago';
-  if (diff < 2592000) return Math.round(diff / 86400) + 'd ago';
-  return Math.round(diff / 2592000) + 'mo ago';
-}
 
 // ─── Hub Detection + Satellite Assignment ────────────────────────
 
@@ -196,8 +175,7 @@ function classifyNodes(filtered, links) {
     weightedDegree.set(n.id, 0);
   }
   for (const l of links) {
-    const s = typeof l.source === 'object' ? l.source.id : l.source;
-    const t = typeof l.target === 'object' ? l.target.id : l.target;
+    const s = linkId(l.source), t = linkId(l.target);
     if (adj.has(s) && adj.has(t)) {
       adj.get(s).push({ id: t, weight: l.weight || 1 });
       adj.get(t).push({ id: s, weight: l.weight || 1 });
@@ -425,8 +403,7 @@ function computeGravitation(filtered, links, hubOf, hubSet) {
     let directWeight = 0;
     let satelliteWeight = 0;
     for (const l of links) {
-      const s = typeof l.source === 'object' ? l.source.id : l.source;
-      const t = typeof l.target === 'object' ? l.target.id : l.target;
+      const s = linkId(l.source), t = linkId(l.target);
       const other = s === n.id ? t : t === n.id ? s : null;
       if (!other) continue;
       if (other === myHub) {
@@ -450,48 +427,25 @@ function computeGravitation(filtered, links, hubOf, hubSet) {
   }
 }
 
-// ─── Energy color system (reuse from depth) ─────────────────────
-
-const BG_GAL = [39, 46, 51];
-const FADE_DURATION_GAL = 60000;
-const MIN_ENERGY_BLEND_GAL = 0.15;
-const MAX_ENERGY_BLEND_GAL = 0.95;
-
-function hexToRgbGal(hex) {
-  return [parseInt(hex.slice(1,3),16), parseInt(hex.slice(3,5),16), parseInt(hex.slice(5,7),16)];
-}
-
-const TYPE_RGB_GAL = {};
-for (const [k, hex] of Object.entries(TYPE_COLORS)) {
-  TYPE_RGB_GAL[k] = hexToRgbGal(hex);
-}
-
-function restingColorGal(type, energy) {
-  const bright = TYPE_RGB_GAL[type] || [136, 136, 136];
-  const blend = MIN_ENERGY_BLEND_GAL + (MAX_ENERGY_BLEND_GAL - MIN_ENERGY_BLEND_GAL) * (energy || 0);
-  return [
-    Math.round(bright[0] * blend + BG_GAL[0] * (1 - blend)),
-    Math.round(bright[1] * blend + BG_GAL[1] * (1 - blend)),
-    Math.round(bright[2] * blend + BG_GAL[2] * (1 - blend)),
-  ];
-}
-
-function sparkNodeColorGal(node) {
-  const resting = restingColorGal(node.type, node.energy);
-  if (!node.lastSpark) return 'rgb(' + resting.join(',') + ')';
-  const age = Date.now() - node.lastSpark;
-  if (age >= FADE_DURATION_GAL) return 'rgb(' + resting.join(',') + ')';
-  const t = age / FADE_DURATION_GAL;
-  const bright = TYPE_RGB_GAL[node.type] || [136, 136, 136];
-  const r = Math.round(bright[0] + (resting[0] - bright[0]) * t);
-  const g = Math.round(bright[1] + (resting[1] - bright[1]) * t);
-  const b = Math.round(bright[2] + (resting[2] - bright[2]) * t);
-  return 'rgb(' + r + ',' + g + ',' + b + ')';
-}
-
 // ─── Filter + Build ──────────────────────────────────────────────
 
-function linkId(x) { return typeof x === 'object' ? x.id : x; }
+// Classify into hub systems, then compute rotation vectors and gravitation
+function classifyGalaxy(filtered, links) {
+  galaxyData = classifyNodes(filtered, links);
+  computeRotation(galaxyData.systemMembers, galaxyData.adj, galaxyData.hubSet, filtered);
+  computeGravitation(filtered, links, galaxyData.hubOf, galaxyData.hubSet);
+}
+
+// Colour by degree and update the stats bar; classifyGalaxy must have run for these nodes
+function layoutGalaxy(filtered, links) {
+  assignEnergy(filtered);
+
+  document.getElementById('stat-nodes').textContent = filtered.length;
+  document.getElementById('stat-edges').textContent = links.length;
+  document.getElementById('stat-hubs').textContent = galaxyData ? galaxyData.hubs.length : 0;
+
+  return { nodes: filtered, links };
+}
 
 function filterAndBuild() {
   const nodeSet = new Set();
@@ -502,31 +456,13 @@ function filterAndBuild() {
   });
   const links = allLinks.filter(l => nodeSet.has(linkId(l.source)) && nodeSet.has(linkId(l.target)));
 
-  // Classify into hub systems
-  const classification = classifyNodes(filtered, links);
-  galaxyData = classification;
-
-  // Compute rotation vectors
-  computeRotation(classification.systemMembers, classification.adj, classification.hubSet, filtered);
-
-  // Compute gravitation
-  computeGravitation(filtered, links, classification.hubOf, classification.hubSet);
-
-  // Compute energy (degree-based brightness)
-  let maxDeg = 1;
-  for (const n of filtered) {
-    if (n.degree > maxDeg) maxDeg = n.degree;
-  }
-  for (const n of filtered) {
-    n.energy = Math.log2(n.degree + 1) / Math.log2(maxDeg + 1);
-  }
-
-  document.getElementById('stat-nodes').textContent = filtered.length;
-  document.getElementById('stat-edges').textContent = links.length;
-  document.getElementById('stat-hubs').textContent = classification.hubs.length;
-
-  return { nodes: filtered, links };
+  classifyGalaxy(filtered, links);
+  return layoutGalaxy(filtered, links);
 }
+
+// Hub of a link's endpoint, for the intra- vs inter-system distinction
+function hubOfEnd(x) { return galaxyData ? galaxyData.hubOf.get(linkId(x)) : null; }
+function isIntraSystem(l) { const s = hubOfEnd(l.source); return s && s === hubOfEnd(l.target); }
 
 // ─── Main Initialization ─────────────────────────────────────────
 
@@ -543,42 +479,7 @@ Promise.all([
 
   const graphData = filterAndBuild();
 
-  // Shared gradient shader for Galaxy link lines
-  gradLinkMatGal = new THREE.ShaderMaterial({
-    transparent: true,
-    depthWrite: false,
-    uniforms: { uOpacity: { value: linkOpacity }, uGradient: { value: linkGradient } },
-    vertexShader: [
-      'attribute float t;',
-      'attribute vec3 vColor;',
-      'attribute float dimFactor;',
-      'varying float vT;',
-      'varying vec3 fColor;',
-      'varying float vDim;',
-      'void main() {',
-      '  vT = t; fColor = vColor; vDim = dimFactor;',
-      '  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);',
-      '}',
-    ].join('\\n'),
-    fragmentShader: [
-      'uniform float uOpacity;',
-      'uniform float uGradient;',
-      'varying float vT;',
-      'varying vec3 fColor;',
-      'varying float vDim;',
-      'void main() {',
-      '  float fz = (1.0 - uGradient) * 0.5;',
-      '  float dim = uGradient * uGradient;',
-      '  float a;',
-      '  if (fz < 0.001) { a = 1.0; }',
-      '  else if (vT < fz) { a = mix(1.0, dim, vT / fz); }',
-      '  else if (vT > 1.0 - fz) { a = mix(dim, 1.0, (vT - (1.0 - fz)) / fz); }',
-      '  else { a = dim; }',
-      '  a *= min(uGradient * 3.0, 1.0);',
-      '  gl_FragColor = vec4(fColor, a * uOpacity * vDim);',
-      '}',
-    ].join('\\n'),
-  });
+  gradLinkMat = makeGradientLinkMaterial(linkOpacity, linkGradient);
 
   graph = ForceGraph3D({ controlType: 'orbit' })
     (document.getElementById('graph-3d'))
@@ -601,63 +502,15 @@ Promise.all([
       group.add(new THREE.Mesh(outerGeo, outerMat));
       return group;
     })
-    .nodeColor(n => sparkNodeColorGal(n))
+    .nodeColor(n => sparkNodeColor(n))
     .nodeVal(n => {
       return Math.max(0.3, Math.log2((n.mentionCount || 1) + 1) * (n.isHub ? 1.5 : 0.4) * nodeSizeMult);
     })
     .nodeOpacity(0.85)
     .nodeLabel(null)
-    .linkThreeObject(l => {
-      const SEGS = 10;
-      const colors = {
-        uses:          [127,187,179],
-        depends_on:    [230,126,128],
-        related_to:    [214,153,182],
-        part_of:       [167,192,128],
-        configured_by: [230,152,117],
-        solved_by:     [219,188,127],
-      };
-      const c = colors[l.type] || [65,75,80];
-      // Intra-system vs inter-system dim factor
-      const s = typeof l.source === 'object' ? l.source.id : l.source;
-      const t = typeof l.target === 'object' ? l.target.id : l.target;
-      const sHub = galaxyData ? galaxyData.hubOf.get(s) : null;
-      const tHub = galaxyData ? galaxyData.hubOf.get(t) : null;
-      const dim = (sHub && sHub === tHub) ? 1.0 : 0.5;
-      const pts = SEGS + 1;
-      const positions = new Float32Array(pts * 3);
-      const tAttr = new Float32Array(pts);
-      const colorAttr = new Float32Array(pts * 3);
-      const dimAttr = new Float32Array(pts);
-      for (let i = 0; i < pts; i++) {
-        tAttr[i] = i / SEGS;
-        colorAttr[i*3]   = c[0] / 255;
-        colorAttr[i*3+1] = c[1] / 255;
-        colorAttr[i*3+2] = c[2] / 255;
-        dimAttr[i] = dim;
-      }
-      const geo = new THREE.BufferGeometry();
-      geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-      geo.setAttribute('t', new THREE.BufferAttribute(tAttr, 1));
-      geo.setAttribute('vColor', new THREE.BufferAttribute(colorAttr, 3));
-      geo.setAttribute('dimFactor', new THREE.BufferAttribute(dimAttr, 1));
-      const line = new THREE.Line(geo, gradLinkMatGal);
-      line.renderOrder = -1;
-      return line;
-    })
-    .linkPositionUpdate((obj, { start, end }) => {
-      const pos = obj.geometry.attributes.position;
-      const arr = pos.array;
-      const segs = (arr.length / 3) - 1;
-      for (let i = 0; i <= segs; i++) {
-        const f = i / segs;
-        arr[i*3]   = start.x + (end.x - start.x) * f;
-        arr[i*3+1] = start.y + (end.y - start.y) * f;
-        arr[i*3+2] = start.z + (end.z - start.z) * f;
-      }
-      pos.needsUpdate = true;
-      return true;
-    })
+    // Inter-system links are drawn at half alpha
+    .linkThreeObject(l => gradientLinkObject(gradLinkMat, REL_RGB[l.type] || [65,75,80], isIntraSystem(l) ? 1.0 : 0.5))
+    .linkPositionUpdate(gradientLinkPositionUpdate)
     .linkWidth(0)
     .linkOpacity(1.0)
     // Force 1: Variable-strength charge — hubs repel strongly to separate systems
@@ -669,20 +522,8 @@ Promise.all([
     // Inter-system links are rendered visually but have zero force, allowing
     // hub repulsion to separate systems into distinct clusters.
     .d3Force('link', d3.forceLink().id(d => d.id)
-      .distance(l => {
-        const s = typeof l.source === 'object' ? l.source.id : l.source;
-        const t = typeof l.target === 'object' ? l.target.id : l.target;
-        const sHub = galaxyData ? galaxyData.hubOf.get(s) : null;
-        const tHub = galaxyData ? galaxyData.hubOf.get(t) : null;
-        return (sHub && sHub === tHub) ? 15 : 300;
-      })
-      .strength(l => {
-        const s = typeof l.source === 'object' ? l.source.id : l.source;
-        const t = typeof l.target === 'object' ? l.target.id : l.target;
-        const sHub = galaxyData ? galaxyData.hubOf.get(s) : null;
-        const tHub = galaxyData ? galaxyData.hubOf.get(t) : null;
-        return (sHub && sHub === tHub) ? (l.weight || 0.5) * 0.3 : 0.002;
-      })
+      .distance(l => isIntraSystem(l) ? 15 : 300)
+      .strength(l => isIntraSystem(l) ? (l.weight || 0.5) * 0.3 : 0.002)
     )
     // Force 6: Gentle centering
     .d3Force('center', d3.forceCenter(0, 0, 0).strength(0.003))
@@ -825,33 +666,12 @@ Promise.all([
   });
 
   // Fit camera after simulation settles
-  setTimeout(() => {
-    const gd = graph.graphData();
-    if (!gd.nodes.length) return;
+  setTimeout(fitCameraToGraph, 3500);
 
-    let minX = Infinity, maxX = -Infinity;
-    let minY = Infinity, maxY = -Infinity;
-    let minZ = Infinity, maxZ = -Infinity;
-    for (const n of gd.nodes) {
-      if (n.x == null) continue;
-      minX = Math.min(minX, n.x); maxX = Math.max(maxX, n.x);
-      minY = Math.min(minY, n.y); maxY = Math.max(maxY, n.y);
-      const z = n.z || 0;
-      minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z);
-    }
-
-    const cx = (minX + maxX) / 2;
-    const cy = (minY + maxY) / 2;
-    const cz = (minZ + maxZ) / 2;
-    const maxSpan = Math.max(maxX - minX, maxY - minY, maxZ - minZ, 1);
-    const dist = maxSpan * 1.2;
-
-    graph.cameraPosition(
-      { x: cx, y: cy - dist * 0.3, z: cz + dist },
-      { x: cx, y: cy, z: cz },
-      1500
-    );
-  }, 3500);
+  startDiffPolling('/graph/galaxy', () => {
+    graph.graphData(filterAndBuild());
+    refreshSparkColors(1500);
+  });
 });
 
 // ─── Settings Controls ───────────────────────────────────────────
@@ -897,360 +717,40 @@ document.getElementById('node-size').addEventListener('input', (e) => {
 document.getElementById('link-opacity').addEventListener('input', (e) => {
   linkOpacity = parseInt(e.target.value, 10) / 100;
   document.getElementById('link-opacity-val').textContent = linkOpacity.toFixed(2);
-  gradLinkMatGal.uniforms.uOpacity.value = linkOpacity;
+  gradLinkMat.uniforms.uOpacity.value = linkOpacity;
 });
 
 document.getElementById('link-gradient').addEventListener('input', (e) => {
   linkGradient = parseInt(e.target.value, 10) / 100;
   document.getElementById('link-gradient-val').textContent = e.target.value;
-  gradLinkMatGal.uniforms.uGradient.value = linkGradient;
+  gradLinkMat.uniforms.uGradient.value = linkGradient;
 });
 
-// ─── Diff Polling (Galaxy) ───────────────────────────────────────
+${diffPollingJs()}
+${threeHelpersJs()}
+${growthAnimationJs()}
 
-let lastDiffTimestampGal = Math.floor(Date.now() / 1000);
-let nodeMapGal = new Map();
-let linkKeyGal = new Set();
-
-function initLookupsGal() {
-  for (const n of allNodes) nodeMapGal.set(n.id, n);
-  for (const l of allLinks) linkKeyGal.add(l.source + '|' + l.target + '|' + l.type);
-}
-
-function pollDiffGal() {
-  fetch('/graph/galaxy/api/diff?since=' + lastDiffTimestampGal)
-    .then(r => r.json())
-    .then(mergeDiffGal)
-    .catch(() => {});
-}
-
-function mergeDiffGal(diff) {
-  if (!diff) return;
-  lastDiffTimestampGal = diff.timestamp;
-  const sparkTime = Date.now();
-  let changed = false;
-
-  for (const n of diff.newNodes) {
-    if (!nodeMapGal.has(n.id)) {
-      n.lastSpark = sparkTime;
-      n.lastActive = n.lastActive || 0;
-      n.firstSeen = n.firstSeen || 0;
-      n.bridgeScore = n.bridgeScore || 0;
-      allNodes.push(n);
-      nodeMapGal.set(n.id, n);
-      changed = true;
-    }
-  }
-
-  for (const n of diff.updatedNodes) {
-    const existing = nodeMapGal.get(n.id);
-    if (existing) {
-      existing.name = n.name;
-      existing.description = n.description;
-      existing.mentionCount = n.mentionCount;
-      existing.community = n.community;
-      existing.lastActive = n.lastActive || existing.lastActive;
-      existing.firstSeen = n.firstSeen || existing.firstSeen;
-      existing.bridgeScore = n.bridgeScore ?? existing.bridgeScore;
-      existing.lastSpark = sparkTime;
-      changed = true;
-    }
-  }
-
-  for (const l of diff.newLinks) {
-    const key = l.source + '|' + l.target + '|' + l.type;
-    if (!linkKeyGal.has(key)) {
-      allLinks.push(l);
-      linkKeyGal.add(key);
-      changed = true;
-      const sn = nodeMapGal.get(l.source);
-      const tn = nodeMapGal.get(l.target);
-      if (sn) sn.lastSpark = sparkTime;
-      if (tn) tn.lastSpark = sparkTime;
-    }
-  }
-
-  for (const l of diff.updatedLinks) {
-    for (const el of allLinks) {
-      if (linkId(el.source) === l.source && linkId(el.target) === l.target && el.type === l.type) {
-        el.weight = l.weight;
-        el.context = l.context;
-        changed = true;
-        break;
-      }
-    }
-  }
-
-  if (changed && graph) {
-    const gd = filterAndBuild();
-    graph.graphData(gd);
-    graph.nodeColor(n => sparkNodeColorGal(n));
-
-    const live = document.getElementById('live');
-    live.textContent = '+' + (diff.newNodes.length + diff.updatedNodes.length) + ' changes';
-    live.classList.add('show');
-    setTimeout(() => live.classList.remove('show'), 2000);
-
-    setTimeout(() => {
-      if (graph) graph.nodeColor(n => sparkNodeColorGal(n));
-    }, 1500);
-  }
-}
-
-// Start polling after initial load
-setTimeout(() => {
-  initLookupsGal();
-  setInterval(pollDiffGal, 1500);
-  if (graph) graph.nodeColor(n => sparkNodeColorGal(n));
-}, 200);
-
-// ─── Turntable Rotation ──────────────────────────────────────────
-
-let autoRotateEnabled = true;
-let autoRotateSpeed = 5;
-let turntablePaused = false;
-let idleTimer = null;
-let lastTurntableTime = 0;
-
-function getCentroidGal() {
-  const gd = graph ? graph.graphData() : null;
-  if (!gd || !gd.nodes.length) return { x: 0, y: 0, z: 0 };
-  let cx = 0, cy = 0, cz = 0, count = 0;
-  for (const n of gd.nodes) {
-    if (n.x != null) { cx += n.x; cy += n.y; cz += n.z || 0; count++; }
-  }
-  if (count === 0) return { x: 0, y: 0, z: 0 };
-  return { x: cx / count, y: cy / count, z: cz / count };
-}
-
-function turntableTickGal(now) {
-  if (!graph || !autoRotateEnabled || turntablePaused) {
-    lastTurntableTime = now;
-    requestAnimationFrame(turntableTickGal);
-    return;
-  }
-
-  if (!lastTurntableTime) lastTurntableTime = now;
-  const dt = (now - lastTurntableTime) / 1000;
-  lastTurntableTime = now;
-
-  const cam = graph.cameraPosition();
-  const center = getCentroidGal();
-
-  const dx = cam.x - center.x;
-  const dz = (cam.z || 0) - center.z;
-  const radius = Math.sqrt(dx * dx + dz * dz);
-
-  if (radius > 0.1) {
-    const currentAngle = Math.atan2(dz, dx);
-    const newAngle = currentAngle + autoRotateSpeed * dt * (Math.PI / 180);
-
-    graph.cameraPosition({
-      x: center.x + radius * Math.cos(newAngle),
-      y: cam.y,
-      z: center.z + radius * Math.sin(newAngle),
-    });
-  }
-
-  requestAnimationFrame(turntableTickGal);
-}
-
-setTimeout(() => {
-  if (!graph) return;
-
-  const controls = graph.controls();
-  if (controls) {
-    controls.addEventListener('start', () => {
-      turntablePaused = true;
-      if (idleTimer) clearTimeout(idleTimer);
-    });
-    controls.addEventListener('end', () => {
-      if (idleTimer) clearTimeout(idleTimer);
-      idleTimer = setTimeout(() => { turntablePaused = false; }, 5000);
-    });
-  }
-
-  requestAnimationFrame(turntableTickGal);
-}, 500);
-
-document.getElementById('toggle-autorotate').addEventListener('click', function() {
-  this.classList.toggle('on');
-  autoRotateEnabled = this.classList.contains('on');
-});
-
-document.getElementById('rotate-speed').addEventListener('input', (e) => {
-  autoRotateSpeed = parseInt(e.target.value, 10);
-  document.getElementById('rotate-speed-val').textContent = autoRotateSpeed;
-});
-
-// ─── Growth Animation ────────────────────────────────────────────
-
-let animating = false;
-let animTime = 0;
-let animMinTime = 0;
-let animMaxTime = 0;
-let animSpeed = 1;
-const ANIM_SPEEDS = [1, 2, 5, 10, 20];
-let animSpeedIdx = 0;
-let animLastFrame = 0;
-let animNodeOrder = [];
-let animVisibleCount = 0;
-let animSavedThreshold = 0;
+// Reclassifying hub systems is expensive, so the animation does it every 30
+// nodes, every 500 ms, or on the final frame.
 let animLastClassify = 0;
 let animLastClassifyTime = 0;
 
-const animBtn = document.getElementById('animate-btn');
-const animProgress = document.getElementById('anim-progress');
-const animBar = document.getElementById('anim-bar');
-const animDate = document.getElementById('anim-date');
-const animSpeedEl = document.getElementById('anim-speed');
-
-function formatAnimDate(ts) {
-  const d = new Date(ts * 1000);
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-}
-
-function startAnimation() {
-  // Animate within the current threshold — keeps node count manageable
-  const thresholdFiltered = allNodes.filter(n => (n.mentionCount || 0) >= mentionThreshold);
-  animNodeOrder = thresholdFiltered
-    .filter(n => (n.firstSeen || 0) > 0)
-    .sort((a, b) => (a.firstSeen || 0) - (b.firstSeen || 0));
-  if (animNodeOrder.length < 2) return;
-
-  animMinTime = animNodeOrder[0].firstSeen;
-  animMaxTime = animNodeOrder[animNodeOrder.length - 1].firstSeen;
-  animTime = animMinTime;
-  animVisibleCount = 0;
-  animSavedThreshold = mentionThreshold;
-  animLastClassify = 0; // throttle tracker
-
-  animating = true;
-  animLastFrame = performance.now();
-  animBtn.classList.add('playing');
-  animBtn.innerHTML = '&#x25A0;'; // square = stop
-  animProgress.classList.add('show');
-
-  // Start with empty graph
-  graph.graphData({ nodes: [], links: [] });
-  requestAnimationFrame(animTick);
-}
-
-function stopAnimation() {
-  animating = false;
-  animBtn.classList.remove('playing');
-  animBtn.innerHTML = '&#x25B6;'; // triangle = play
-  animProgress.classList.remove('show');
-
-  // Restore normal view
-  mentionThreshold = animSavedThreshold;
-  document.getElementById('threshold').value = mentionThreshold;
-  document.getElementById('threshold-val').textContent = mentionThreshold;
-  graph.graphData(filterAndBuild());
-}
-
-function animTick(now) {
-  if (!animating) return;
-  const dt = (now - animLastFrame) / 1000;
-  animLastFrame = now;
-
-  // Compress full time span into ~45 seconds at 1x
-  const BASE_DURATION = 45;
-  const timeSpan = animMaxTime - animMinTime || 1;
-  const timeScale = timeSpan / BASE_DURATION;
-  animTime += dt * timeScale * animSpeed;
-
-  if (animTime >= animMaxTime) {
-    animTime = animMaxTime;
-    // Let it settle on the final frame, then stop
-    animVisibleCount = animNodeOrder.length;
-    animRebuild();
-    updateAnimUI();
-    setTimeout(stopAnimation, 1500);
-    return;
-  }
-
-  // Check if new nodes should appear
-  let newCount = animVisibleCount;
-  while (newCount < animNodeOrder.length && (animNodeOrder[newCount].firstSeen || 0) <= animTime) {
-    newCount++;
-  }
-
-  if (newCount > animVisibleCount) {
-    // Spark newly appearing nodes
-    const sparkTime = Date.now();
-    for (let i = animVisibleCount; i < newCount; i++) {
-      animNodeOrder[i].lastSpark = sparkTime;
+setupGrowthAnimation(
+  (nodes, links) => {
+    if (nodes.length === 0) { animLastClassify = 0; animLastClassifyTime = 0; }
+    const now = performance.now();
+    const shouldClassify = nodes.length > 0 && links.length > 0 &&
+      (nodes.length - animLastClassify >= 30 || now - animLastClassifyTime > 500 || nodes.length === animNodeOrder.length);
+    if (shouldClassify) {
+      classifyGalaxy(nodes, links);
+      animLastClassify = nodes.length;
+      animLastClassifyTime = now;
     }
-    animVisibleCount = newCount;
-    animRebuild();
-  }
-
-  updateAnimUI();
-  requestAnimationFrame(animTick);
-}
-
-function animRebuild() {
-  // Build visible set from animation order
-  const visibleIds = new Set();
-  for (let i = 0; i < animVisibleCount; i++) {
-    visibleIds.add(animNodeOrder[i].id);
-  }
-
-  const filtered = animNodeOrder.slice(0, animVisibleCount);
-  const links = allLinks.filter(l => {
-    const s = linkId(l.source);
-    const t = linkId(l.target);
-    return visibleIds.has(s) && visibleIds.has(t);
-  });
-
-  // Throttle galaxy reclassification: every 30 nodes or 500ms
-  const now = performance.now();
-  const shouldClassify = filtered.length > 0 && links.length > 0 &&
-    (animVisibleCount - (animLastClassify || 0) >= 30 || now - (animLastClassifyTime || 0) > 500 || animVisibleCount === animNodeOrder.length);
-  if (shouldClassify) {
-    const classification = classifyNodes(filtered, links);
-    galaxyData = classification;
-    computeRotation(classification.systemMembers, classification.adj, classification.hubSet, filtered);
-    computeGravitation(filtered, links, classification.hubOf, classification.hubSet);
-    animLastClassify = animVisibleCount;
-    animLastClassifyTime = now;
-  }
-
-  // Compute energy
-  let maxDeg = 1;
-  for (const n of filtered) { if ((n.degree || 0) > maxDeg) maxDeg = n.degree; }
-  for (const n of filtered) {
-    n.energy = Math.log2((n.degree || 0) + 1) / Math.log2(maxDeg + 1);
-  }
-
-  document.getElementById('stat-nodes').textContent = filtered.length;
-  document.getElementById('stat-edges').textContent = links.length;
-  document.getElementById('stat-hubs').textContent = galaxyData ? galaxyData.hubs.length : 0;
-
-  graph.graphData({ nodes: filtered, links });
-  graph.nodeColor(n => sparkNodeColorGal(n));
-
-  // Refresh spark colors after glow period
-  setTimeout(() => { if (graph) graph.nodeColor(n => sparkNodeColorGal(n)); }, 1200);
-}
-
-function updateAnimUI() {
-  const pct = ((animTime - animMinTime) / (animMaxTime - animMinTime || 1)) * 100;
-  animBar.style.width = pct + '%';
-  animDate.textContent = formatAnimDate(animTime);
-}
-
-animBtn.addEventListener('click', () => {
-  if (animating) stopAnimation();
-  else startAnimation();
-});
-
-animSpeedEl.addEventListener('click', () => {
-  animSpeedIdx = (animSpeedIdx + 1) % ANIM_SPEEDS.length;
-  animSpeed = ANIM_SPEEDS[animSpeedIdx];
-  animSpeedEl.textContent = animSpeed + 'x';
-});
+    graph.graphData(layoutGalaxy(nodes, links));
+    refreshSparkColors(1200);
+  },
+  () => graph.graphData(filterAndBuild()),
+);
 </script>
 </body>
 </html>`;
