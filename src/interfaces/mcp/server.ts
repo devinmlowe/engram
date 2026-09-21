@@ -116,17 +116,6 @@ export async function warmUpEmbeddings(): Promise<void> {
 /** Upper bound for the LLM merge inside a `remember` tool call */
 const MERGE_TIMEOUT_MS = 15_000;
 
-const VALID_MEMORY_TYPES: readonly MemoryType[] = [
-  "preference",
-  "decision",
-  "pattern",
-  "fact",
-  "solution",
-  "convention",
-];
-
-const VALID_SOURCES: readonly SearchSource[] = ["episodic", "semantic", "graph"];
-
 const VALID_MEMORY_SOURCES = ["user", "dream", "rlm", "import", "hermes-mirror"] as const satisfies readonly MemorySource[];
 
 
@@ -368,26 +357,6 @@ const ForgetInputSchema = z
     message: "Pass exactly one of memory_id or query",
   });
 
-/** Every tool's zod input schema, keyed by tool name; ListTools advertises the JSON Schema generated from it. */
-export const MCP_TOOL_INPUT_SCHEMAS: Record<string, z.ZodType> = {
-  recall: RecallInputSchema,
-  remember: RememberInputSchema,
-  remember_batch: RememberBatchInputSchema,
-  show: ShowInputSchema,
-  explore: ExploreInputSchema,
-  reflect: ReflectInputSchema,
-  recall_session: RecallSessionInputSchema,
-  recall_drill: RecallDrillInputSchema,
-  explore_selective: ExploreSelectiveInputSchema,
-  fetch_snippets: FetchSnippetsInputSchema,
-  scan_file: ScanFileInputSchema,
-  index_file_structure: IndexFileStructureInputSchema,
-  commitments: CommitmentsInputSchema,
-  commitments_update: CommitmentsUpdateInputSchema,
-  ingest_turn: IngestTurnInputSchema,
-  forget: ForgetInputSchema,
-};
-
 /**
  * JSON Schema for ListTools, generated from the zod input schema (io: "input",
  * so defaulted fields stay optional). Dropped as noise: the `$schema` marker,
@@ -396,7 +365,7 @@ export const MCP_TOOL_INPUT_SCHEMAS: Record<string, z.ZodType> = {
  * every hand-written schema was — the validator still strips unknown keys
  * (Hermes' warm-up recall sends `limit`).
  */
-export function toInputSchema(schema: z.ZodType): Tool["inputSchema"] {
+function toInputSchema(schema: z.ZodType): Tool["inputSchema"] {
   const json = JSON.parse(JSON.stringify(z.toJSONSchema(schema, { io: "input" })), function (this: Record<string, unknown>, key, value) {
     if (key === "$schema") return undefined;
     if (key === "maximum" && value === Number.MAX_SAFE_INTEGER) return undefined;
@@ -436,7 +405,14 @@ const server = new Server(
  * the hint would make MCP clients prompt for approval on every recall.
  * `reinforce: false` opts out per call.
  */
-export const MCP_TOOL_DEFINITIONS: Tool[] = [
+interface ToolSpec {
+  name: string;
+  description: string;
+  schema: z.ZodType;
+  annotations: Tool["annotations"];
+}
+
+export const MCP_TOOL_DEFINITIONS: Tool[] = ([
   {
     name: "recall",
     description:
@@ -450,87 +426,7 @@ export const MCP_TOOL_DEFINITIONS: Tool[] = [
       "events it describes happened. The applied window is echoed in <date_filter>. " +
       "Retrieval records access bookkeeping on the returned memories (access_count, last_accessed, stability); " +
       "pass reinforce: false to opt out.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        query: { type: "string", minLength: 2 },
-        budget: {
-          type: "number",
-          minimum: 100,
-          maximum: 5000,
-          default: 1500,
-          description: "Max tokens in response",
-        },
-        after: {
-          type: "string",
-          pattern: "^\\d{4}-\\d{2}-\\d{2}$",
-          description: "Only results after this date (YYYY-MM-DD)",
-        },
-        before: {
-          type: "string",
-          pattern: "^\\d{4}-\\d{2}-\\d{2}$",
-          description: "Only results before this date (YYYY-MM-DD; that day is excluded)",
-        },
-        dateHint: {
-          type: "string",
-          maxLength: 200,
-          description:
-            "Natural-language date window, resolved in UTC: today, yesterday, " +
-            "this/last week|month|year, N days|weeks|months ago, this day last year, " +
-            "in <month>, <month> <year>, since <phrase>, before <phrase>, " +
-            "on this day (same month/day across all years), or an ISO date/month. " +
-            "Explicit after/before take precedence over the hint. Unrecognized " +
-            "hints apply no filter and are reported in <date_filter note>.",
-        },
-        dateBasis: {
-          type: "string",
-          enum: ["filed", "event"],
-          default: "filed",
-          description:
-            "What the dates refer to: 'filed' = when the memory was recorded " +
-            "(memories IN March); 'event' = when the described events happened, " +
-            "via source-exchange timestamps (memories ABOUT March). Episodic " +
-            "results are identical under both.",
-        },
-        depth: {
-          type: "string",
-          enum: ["shallow", "deep"],
-          default: "shallow",
-        },
-        sources: {
-          type: "array",
-          items: { type: "string", enum: ["episodic", "semantic", "graph"] },
-          default: ["episodic", "semantic"],
-          description:
-            "Which memory stores to search. Defaults to episodic and semantic.",
-        },
-        scope: {
-          type: "string",
-          minLength: 1,
-          description:
-            "Tenant identity for this call (e.g. \"hermes:career\"); reads " +
-            "default to global + this scope. Overrides ENGRAM_SCOPE for this call only.",
-        },
-        read_scopes: {
-          type: "array",
-          items: { type: "string", minLength: 1 },
-          minItems: 1,
-          description:
-            "Explicit scopes to read from (e.g. [\"global\", \"hermes:career\"]). " +
-            "Overrides ENGRAM_READ_SCOPES for this call only.",
-        },
-        reinforce: {
-          type: "boolean",
-          default: true,
-          description:
-            "Reinforce the semantic memories this call returns (FSRS: bumps " +
-            "access_count/last_accessed and grows stability). Set false for " +
-            "read-only or diagnostic callers that must not mutate the store.",
-        },
-      },
-      required: ["query"],
-      additionalProperties: false,
-    },
+    schema: RecallInputSchema,
     annotations: {
       title: "Recall Memories",
       readOnlyHint: true,
@@ -546,56 +442,7 @@ export const MCP_TOOL_DEFINITIONS: Tool[] = [
       "memory. Use this to explicitly record important information that should " +
       "persist across conversations. Automatically deduplicates against " +
       "existing memories.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        content: {
-          type: "string",
-          minLength: 1,
-          description: "The fact, preference, or knowledge to remember",
-        },
-        type: {
-          type: "string",
-          enum: [
-            "preference",
-            "decision",
-            "pattern",
-            "fact",
-            "solution",
-            "convention",
-          ],
-          default: "fact",
-          description: "Type of memory",
-        },
-        importance: {
-          type: "number",
-          minimum: 0,
-          maximum: 1,
-          default: 0.7,
-          description: "Importance score (0-1)",
-        },
-        source: {
-          type: "string",
-          enum: [...VALID_MEMORY_SOURCES],
-          default: "user",
-          description: "Source of this memory (user, dream, rlm, import, hermes-mirror)",
-        },
-        context: {
-          type: "string",
-          maxLength: 500,
-          description: "Provenance note stored alongside the memory (e.g. what produced this write)",
-        },
-        scope: {
-          type: "string",
-          minLength: 1,
-          description:
-            "Tenant scope to stamp on this write (e.g. \"hermes:career\"). " +
-            "Overrides the ENGRAM_SCOPE env default for this call only.",
-        },
-      },
-      required: ["content"],
-      additionalProperties: false,
-    },
+    schema: RememberInputSchema,
     annotations: {
       title: "Remember",
       readOnlyHint: false,
@@ -612,75 +459,7 @@ export const MCP_TOOL_DEFINITIONS: Tool[] = [
       "Automatically deduplicates against existing memories and within the batch. " +
       "Use for bulk ingestion from RLM agents or dream pipeline. Optionally link " +
       "each memory to existing graph entities via relates_to_entities.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        memories: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
-              content: {
-                type: "string",
-                minLength: 1,
-                description: "The fact, preference, or knowledge to remember",
-              },
-              type: {
-                type: "string",
-                enum: [
-                  "preference",
-                  "decision",
-                  "pattern",
-                  "fact",
-                  "solution",
-                  "convention",
-                ],
-                default: "fact",
-                description: "Type of memory",
-              },
-              importance: {
-                type: "number",
-                minimum: 0,
-                maximum: 1,
-                description: "Importance score (0-1)",
-              },
-              source: {
-                type: "string",
-                enum: [...VALID_MEMORY_SOURCES],
-                description: "Source of this memory (user, dream, rlm, import, hermes-mirror)",
-              },
-              context: {
-                type: "string",
-                maxLength: 500,
-                description: "Provenance note stored alongside the memory",
-              },
-              relates_to_entities: {
-                type: "array",
-                items: { type: "string" },
-                maxItems: 10,
-                description:
-                  "Entity names to link this memory to. Bumps mention counts " +
-                  "and creates pairwise related_to relationships between entities.",
-              },
-            },
-            required: ["content"],
-            additionalProperties: false,
-          },
-          minItems: 1,
-          maxItems: 50,
-          description: "Array of memories to store (max 50)",
-        },
-        scope: {
-          type: "string",
-          minLength: 1,
-          description:
-            "Tenant scope to stamp on this write (e.g. \"hermes:career\"). " +
-            "Overrides the ENGRAM_SCOPE env default for this call only.",
-        },
-      },
-      required: ["memories"],
-      additionalProperties: false,
-    },
+    schema: RememberBatchInputSchema,
     annotations: {
       title: "Batch Remember",
       readOnlyHint: false,
@@ -695,16 +474,7 @@ export const MCP_TOOL_DEFINITIONS: Tool[] = [
       "Read full conversations to extract detailed context after " +
       "finding relevant results with recall. Use startLine/endLine " +
       "pagination for large conversations.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        path: { type: "string", minLength: 1 },
-        startLine: { type: "number", minimum: 1 },
-        endLine: { type: "number", minimum: 1 },
-      },
-      required: ["path"],
-      additionalProperties: false,
-    },
+    schema: ShowInputSchema,
     annotations: {
       title: "Show Conversation",
       readOnlyHint: true,
@@ -719,69 +489,7 @@ export const MCP_TOOL_DEFINITIONS: Tool[] = [
       "Explore connections in the knowledge graph starting from an entity. " +
       "Shows what a concept, tool, project, or technology is connected to. " +
       "Use after recall to understand how things relate to each other.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        entity: {
-          type: "string",
-          minLength: 1,
-          description:
-            "Entity name to explore (e.g., 'TypeScript', 'engram', 'SQLite')",
-        },
-        depth: {
-          type: "number",
-          minimum: 1,
-          maximum: 3,
-          default: 1,
-          description: "Number of hops to traverse (1-3)",
-        },
-        limit: {
-          type: "number",
-          minimum: 1,
-          maximum: 50,
-          default: 25,
-          description: "Max neighbors to return, sorted by weight (1-50)",
-        },
-        budget: {
-          type: "number",
-          minimum: 100,
-          maximum: 5000,
-          default: 1500,
-          description: "Max tokens in response",
-        },
-        relationship_types: {
-          type: "array",
-          items: {
-            type: "string",
-            enum: [
-              "uses",
-              "depends_on",
-              "related_to",
-              "part_of",
-              "configured_by",
-              "solved_by",
-              "contains",
-            ],
-          },
-          description: "Filter by relationship types",
-        },
-        scope: {
-          type: "string",
-          minLength: 1,
-          description: "Tenant identity for this call (e.g. \"hermes:career\"); derives the read default global + own",
-        },
-        read_scopes: {
-          type: "array",
-          items: { type: "string", minLength: 1 },
-          minItems: 1,
-          description:
-            "Explicit scopes to read from (e.g. [\"global\", \"hermes:career\"]). " +
-            "Overrides ENGRAM_READ_SCOPES for this call only (#25).",
-        },
-      },
-      required: ["entity"],
-      additionalProperties: false,
-    },
+    schema: ExploreInputSchema,
     annotations: {
       title: "Explore Knowledge Graph",
       readOnlyHint: true,
@@ -798,23 +506,7 @@ export const MCP_TOOL_DEFINITIONS: Tool[] = [
       "connecting different domains, temporal patterns, and graph health. " +
       "Use after working on a topic to understand how it connects to " +
       "other knowledge domains.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        mode: {
-          type: "string",
-          enum: ["communities", "bridges", "temporal", "health", "all"],
-          default: "all",
-          description: "What to reflect on.",
-        },
-        refresh: {
-          type: "boolean",
-          default: false,
-          description: "Force a fresh analysis instead of using cached results.",
-        },
-      },
-      additionalProperties: false,
-    },
+    schema: ReflectInputSchema,
     annotations: {
       title: "Reflect on Knowledge Graph",
       readOnlyHint: false,
@@ -832,59 +524,7 @@ export const MCP_TOOL_DEFINITIONS: Tool[] = [
       "remaining token budget. Use recall_drill to expand individual results. " +
       "Retrieval records access bookkeeping on the returned memories (access_count, last_accessed, stability); " +
       "pass reinforce: false to opt out.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        query: {
-          type: "string",
-          minLength: 2,
-          description: "Search query",
-        },
-        session_id: {
-          type: "string",
-          format: "uuid",
-          description: "Existing session ID to refine (omit to create new)",
-        },
-        budget: {
-          type: "number",
-          minimum: 100,
-          maximum: 10000,
-          default: 3000,
-          description: "Max total token budget for this session",
-        },
-        sources: {
-          type: "array",
-          items: { type: "string", enum: ["episodic", "semantic", "graph"] },
-          default: ["episodic", "semantic"],
-          description: "Which memory stores to search",
-        },
-        scope: {
-          type: "string",
-          minLength: 1,
-          description:
-            "Tenant identity for this call (e.g. \"hermes:career\"); reads " +
-            "default to global + this scope. Overrides ENGRAM_SCOPE for this call only.",
-        },
-        read_scopes: {
-          type: "array",
-          items: { type: "string", minLength: 1 },
-          minItems: 1,
-          description:
-            "Explicit scopes to read from (e.g. [\"global\", \"hermes:career\"]). " +
-            "Overrides ENGRAM_READ_SCOPES for this call only.",
-        },
-        reinforce: {
-          type: "boolean",
-          default: true,
-          description:
-            "Reinforce the semantic memories this call returns (FSRS: bumps " +
-            "access_count/last_accessed and grows stability). Set false for " +
-            "read-only or diagnostic callers that must not mutate the store.",
-        },
-      },
-      required: ["query"],
-      additionalProperties: false,
-    },
+    schema: RecallSessionInputSchema,
     annotations: {
       title: "Recall Session",
       readOnlyHint: true,
@@ -902,31 +542,7 @@ export const MCP_TOOL_DEFINITIONS: Tool[] = [
       "For graph results: shows entity with full relationship neighborhood. " +
       "Retrieval records access bookkeeping on the returned memories (access_count, last_accessed, stability); " +
       "pass reinforce: false to opt out.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        session_id: {
-          type: "string",
-          format: "uuid",
-          description: "Session ID from recall_session",
-        },
-        result_index: {
-          type: "number",
-          minimum: 0,
-          description: "0-based index into session results",
-        },
-        reinforce: {
-          type: "boolean",
-          default: true,
-          description:
-            "Reinforce the semantic memories this call returns (FSRS: bumps " +
-            "access_count/last_accessed and grows stability). Set false for " +
-            "read-only or diagnostic callers that must not mutate the store.",
-        },
-      },
-      required: ["session_id", "result_index"],
-      additionalProperties: false,
-    },
+    schema: RecallDrillInputSchema,
     annotations: {
       title: "Drill Into Result",
       readOnlyHint: true,
@@ -943,68 +559,7 @@ export const MCP_TOOL_DEFINITIONS: Tool[] = [
       "uses embedding similarity to prune irrelevant neighbors and recursively " +
       "follows only relevant paths. Use when you want to find connections related " +
       "to a specific topic or question.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        entity: {
-          type: "string",
-          minLength: 1,
-          description:
-            "Starting entity name (e.g., 'TypeScript', 'engram', 'SQLite')",
-        },
-        criteria: {
-          type: "string",
-          minLength: 1,
-          description:
-            "What makes a neighbor relevant (e.g., 'build tooling', 'performance optimization')",
-        },
-        max_depth: {
-          type: "number",
-          minimum: 1,
-          maximum: 5,
-          default: 3,
-          description: "Maximum traversal depth (1-5)",
-        },
-        max_nodes: {
-          type: "number",
-          minimum: 1,
-          maximum: 50,
-          default: 50,
-          description: "Safety cap on total nodes returned (1-50)",
-        },
-        relationship_types: {
-          type: "array",
-          items: {
-            type: "string",
-            enum: [
-              "uses",
-              "depends_on",
-              "related_to",
-              "part_of",
-              "configured_by",
-              "solved_by",
-              "contains",
-            ],
-          },
-          description: "Filter by relationship types",
-        },
-        scope: {
-          type: "string",
-          minLength: 1,
-          description: "Tenant identity for this call (e.g. \"hermes:career\"); derives the read default global + own",
-        },
-        read_scopes: {
-          type: "array",
-          items: { type: "string", minLength: 1 },
-          minItems: 1,
-          description:
-            "Explicit scopes to read from (e.g. [\"global\", \"hermes:career\"]). " +
-            "Overrides ENGRAM_READ_SCOPES for this call only (#25).",
-        },
-      },
-      required: ["entity", "criteria"],
-      additionalProperties: false,
-    },
+    schema: ExploreSelectiveInputSchema,
     annotations: {
       title: "Selective Graph Exploration",
       readOnlyHint: true,
@@ -1020,40 +575,7 @@ export const MCP_TOOL_DEFINITIONS: Tool[] = [
       "merged when overlapping, padded with optional context lines, and joined " +
       "with gap markers. More efficient than multiple show calls for targeted " +
       "code reading.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        path: { type: "string", minLength: 1 },
-        ranges: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
-              start: { type: "number", minimum: 1 },
-              end: { type: "number", minimum: 1 },
-            },
-            required: ["start", "end"],
-          },
-          minItems: 1,
-          maxItems: 20,
-          description: "Line ranges to fetch (max 20)",
-        },
-        context: {
-          type: "number",
-          minimum: 0,
-          maximum: 50,
-          default: 0,
-          description: "Number of padding lines around each range (0-50)",
-        },
-        session_id: {
-          type: "string",
-          format: "uuid",
-          description: "Optional session ID for token budget tracking",
-        },
-      },
-      required: ["path", "ranges"],
-      additionalProperties: false,
-    },
+    schema: FetchSnippetsInputSchema,
     annotations: {
       title: "Fetch Snippets",
       readOnlyHint: true,
@@ -1069,55 +591,7 @@ export const MCP_TOOL_DEFINITIONS: Tool[] = [
       "with surrounding context. The file is read on the server and never loaded " +
       "into conversation context. Supports multiple patterns, context windows, " +
       "overlap deduplication, and function context detection.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        path: {
-          type: "string",
-          minLength: 1,
-          description: "Absolute path to the file to scan",
-        },
-        patterns: {
-          type: "array",
-          items: { type: "string" },
-          minItems: 1,
-          maxItems: 10,
-          description: "Regex patterns to search for (max 10)",
-        },
-        context_lines: {
-          type: "number",
-          minimum: 0,
-          maximum: 10,
-          default: 2,
-          description: "Lines of context before and after each match (0-10)",
-        },
-        group_by: {
-          type: "string",
-          enum: ["pattern", "location"],
-          default: "location",
-          description: "Order results by file location or grouped by pattern",
-        },
-        max_matches: {
-          type: "number",
-          minimum: 1,
-          maximum: 500,
-          default: 100,
-          description: "Maximum matches to return (1-500)",
-        },
-        deduplicate_overlaps: {
-          type: "boolean",
-          default: true,
-          description: "Merge overlapping context windows to avoid duplicate lines",
-        },
-        session_id: {
-          type: "string",
-          format: "uuid",
-          description: "Optional session ID for token budget tracking",
-        },
-      },
-      required: ["path", "patterns"],
-      additionalProperties: false,
-    },
+    schema: ScanFileInputSchema,
     annotations: {
       title: "Scan File",
       readOnlyHint: true,
@@ -1132,18 +606,7 @@ export const MCP_TOOL_DEFINITIONS: Tool[] = [
       "Parse a source file to extract function, class, and module definitions, " +
       "then index them as entities in the knowledge graph with 'contains' relationships. " +
       "Enables RLM to discover file contents without reading the full file.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        path: {
-          type: "string",
-          minLength: 1,
-          description: "Absolute path to the source file to index",
-        },
-      },
-      required: ["path"],
-      additionalProperties: false,
-    },
+    schema: IndexFileStructureInputSchema,
     annotations: {
       title: "Index File Structure",
       readOnlyHint: false,
@@ -1160,50 +623,7 @@ export const MCP_TOOL_DEFINITIONS: Tool[] = [
       "(\"mention once, never dropped\"). Default: pending items, overdue " +
       "first, then by due date, then newest. Use include_due_within_days to " +
       "surface only what is due soon or overdue.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        status: {
-          type: "string",
-          enum: ["pending", "done", "dropped", "superseded", "all"],
-          default: "pending",
-          description: "Lifecycle state to list",
-        },
-        include_due_within_days: {
-          type: "number",
-          minimum: 0,
-          description: "Only items with a due date within this many days (overdue items included)",
-        },
-        limit: {
-          type: "number",
-          minimum: 1,
-          maximum: 500,
-          default: 20,
-          description: "Max items",
-        },
-        budget: {
-          type: "number",
-          minimum: 100,
-          maximum: 10000,
-          default: 1500,
-          description: "Token budget for the XML response",
-        },
-        scope: {
-          type: "string",
-          minLength: 1,
-          description: "Tenant identity for this call (e.g. \"hermes:career\"); derives the read default global + own",
-        },
-        read_scopes: {
-          type: "array",
-          items: { type: "string", minLength: 1 },
-          minItems: 1,
-          description:
-            "Explicit scopes to read from (e.g. [\"global\", \"hermes:career\"]). " +
-            "Overrides ENGRAM_READ_SCOPES for this call only (#25).",
-        },
-      },
-      additionalProperties: false,
-    },
+    schema: CommitmentsInputSchema,
     annotations: {
       title: "Commitments",
       readOnlyHint: true,
@@ -1218,27 +638,7 @@ export const MCP_TOOL_DEFINITIONS: Tool[] = [
       "Resolve a tracked commitment once the user confirms it is handled: " +
       "mark it done, dropped, or superseded by another commitment. Accepts " +
       "the full id or a unique prefix (6+ characters).",
-    inputSchema: {
-      type: "object",
-      properties: {
-        id: {
-          type: "string",
-          minLength: 6,
-          description: "Commitment id (from the commitments tool) or a unique prefix",
-        },
-        status: {
-          type: "string",
-          enum: ["done", "dropped", "superseded"],
-          description: "Resolution",
-        },
-        superseded_by: {
-          type: "string",
-          description: "Id of the commitment that replaces this one (required when status is superseded)",
-        },
-      },
-      required: ["id", "status"],
-      additionalProperties: false,
-    },
+    schema: CommitmentsUpdateInputSchema,
     annotations: {
       title: "Update Commitment",
       readOnlyHint: false,
@@ -1257,70 +657,7 @@ export const MCP_TOOL_DEFINITIONS: Tool[] = [
       "place. The conversation carries the given tenant scope, and every " +
       "memory later extracted from it inherits that scope. An optional " +
       "author {id, name, is_bot} is stored on the turn.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        session_id: {
-          type: "string",
-          minLength: 1,
-          description: "Caller's conversation/session identifier (stable across turns)",
-        },
-        turn_index: {
-          type: "integer",
-          minimum: 0,
-          description: "0-based position of this turn within the session",
-        },
-        scope: {
-          type: "string",
-          minLength: 1,
-          description: "Tenant scope of the conversation (e.g. \"hermes:career\")",
-        },
-        user_text: {
-          type: "string",
-          description: "The user's message for this turn",
-        },
-        assistant_text: {
-          type: "string",
-          description: "The assistant's reply for this turn",
-        },
-        tool_calls: {
-          type: "array",
-          description: "Tools invoked during the turn (input/output are truncated to 1000 chars)",
-          items: {
-            type: "object",
-            properties: {
-              name: { type: "string", minLength: 1 },
-              input: { description: "Tool input (any JSON)" },
-              output: { description: "Tool output/result summary (any JSON)" },
-            },
-            required: ["name"],
-            additionalProperties: false,
-          },
-        },
-        timestamp: {
-          type: "string",
-          description: "ISO-8601 time of the turn (default: now)",
-        },
-        source: {
-          type: "string",
-          minLength: 1,
-          default: DEFAULT_TURN_SOURCE,
-          description: "Platform/source label; part of the conversation key (default \"hermes\")",
-        },
-        author: {
-          type: "object",
-          description: "Who authored the user side of the turn (stored as JSON on the exchange)",
-          properties: {
-            id: { type: "string", description: "Platform user id" },
-            name: { type: "string", description: "Display name" },
-            is_bot: { type: "boolean", description: "True when the author is a bot" },
-          },
-          additionalProperties: false,
-        },
-      },
-      required: ["session_id", "turn_index", "scope", "user_text", "assistant_text"],
-      additionalProperties: false,
-    },
+    schema: IngestTurnInputSchema,
     annotations: {
       title: "Ingest Turn",
       readOnlyHint: false,
@@ -1343,45 +680,7 @@ export const MCP_TOOL_DEFINITIONS: Tool[] = [
       "this client's name, and will not be re-extracted from the same " +
       "conversation. hard: true deletes it outright. Only memories within " +
       "read_scopes can be forgotten unless scope is \"global\".",
-    inputSchema: {
-      type: "object",
-      properties: {
-        memory_id: {
-          type: "string",
-          minLength: 6,
-          description: "Id of the memory to forget (from recall's <semantic id>), or a unique prefix of 6+ characters",
-        },
-        query: {
-          type: "string",
-          minLength: 2,
-          description: "Find candidate memories instead of naming one; returns ids, deletes nothing unless confirm + a single match",
-        },
-        confirm: {
-          type: "boolean",
-          default: false,
-          description: "In query mode: forget the match when exactly one memory matches",
-        },
-        hard: {
-          type: "boolean",
-          default: false,
-          description: "Delete the row outright instead of the soft delete + retention purge",
-        },
-        scope: {
-          type: "string",
-          minLength: 1,
-          description:
-            "Tenant identity for this call (e.g. \"hermes:career\"); reads default to " +
-            "global + this scope. \"global\" acts on a memory in any scope.",
-        },
-        read_scopes: {
-          type: "array",
-          items: { type: "string", minLength: 1 },
-          minItems: 1,
-          description: "Scopes this call may act on (e.g. [\"global\", \"hermes:career\"]). Overrides ENGRAM_READ_SCOPES for this call only.",
-        },
-      },
-      additionalProperties: false,
-    },
+    schema: ForgetInputSchema,
     annotations: {
       title: "Forget Memory",
       readOnlyHint: false,
@@ -1390,8 +689,7 @@ export const MCP_TOOL_DEFINITIONS: Tool[] = [
       openWorldHint: false,
     },
   },
-];
-
+] satisfies ToolSpec[]).map(({ schema, ...tool }) => ({ ...tool, inputSchema: toInputSchema(schema) }));
 /**
  * Exported so tests can drive a real `Server` over an in-memory transport
  * (stdio-equivalent) and over the HTTP front end.

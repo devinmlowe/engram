@@ -148,34 +148,21 @@ describe("MCP Server Tool Definitions", () => {
   });
 
   it("recall tool has correct input schema shape", async () => {
-    const { readFileSync } = await import("node:fs");
-    const serverSource = readFileSync(
-      new URL("../../src/interfaces/mcp/server.ts", import.meta.url),
-      "utf-8",
+    const { MCP_TOOL_DEFINITIONS } = await import("../../src/interfaces/mcp/server.js");
+    const recall = MCP_TOOL_DEFINITIONS.find((t) => t.name === "recall")!;
+    expect(Object.keys(recall.inputSchema.properties!)).toEqual(
+      expect.arrayContaining(["query", "budget", "after", "before", "depth", "sources"]),
     );
-
-    // Verify recall accepts query, budget, after, before, depth, sources
-    expect(serverSource).toContain("query");
-    expect(serverSource).toContain("budget");
-    expect(serverSource).toContain("after");
-    expect(serverSource).toContain("before");
-    expect(serverSource).toContain("depth");
-    expect(serverSource).toContain("sources");
+    expect(recall.inputSchema.required).toEqual(["query"]);
   });
 
   it("remember tool accepts content, type, importance", async () => {
-    const { readFileSync } = await import("node:fs");
-    const serverSource = readFileSync(
-      new URL("../../src/interfaces/mcp/server.ts", import.meta.url),
-      "utf-8",
+    const { MCP_TOOL_DEFINITIONS } = await import("../../src/interfaces/mcp/server.js");
+    const remember = MCP_TOOL_DEFINITIONS.find((t) => t.name === "remember")!;
+    expect(Object.keys(remember.inputSchema.properties!)).toEqual(
+      expect.arrayContaining(["content", "type", "importance"]),
     );
-
-    // Check remember tool schema properties (keys are unquoted in TS source)
-    expect(serverSource).toContain("content:");
-    expect(serverSource).toContain("importance:");
-    // Verify remember-specific schema structure
-    expect(serverSource).toContain('required: ["content"]');
-    expect(serverSource).toContain("RememberInputSchema");
+    expect(remember.inputSchema.required).toEqual(["content"]);
   });
 });
 
