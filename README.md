@@ -519,7 +519,10 @@ Engram MCP: running inline (no daemon on :9907 (ECONNREFUSED))
 ```
 
 `engram mcp --standalone` (or `ENGRAM_MCP_STANDALONE=1` in the server's env)
-forces inline. The bridge forwards `Authorization: Bearer $ENGRAM_MCP_TOKEN`
+forces inline, and so do `ENGRAM_SCOPE` / `ENGRAM_READ_SCOPES` in that env (they
+scope *this* process; the daemon would ignore them, #87). With `ENGRAM_DB_PATH`
+set, the bridge is used only when the daemon's `/health` reports the same
+`dbPath`. The bridge forwards `Authorization: Bearer $ENGRAM_MCP_TOKEN`
 from its own environment when the daemon requires a token, re-opens its daemon
 session under the host's `clientInfo` (so `forget` still records the real
 actor) and survives a daemon restart (`engram update`) with one reconnect.

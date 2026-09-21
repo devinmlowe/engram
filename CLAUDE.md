@@ -121,7 +121,10 @@ proxy (`src/interfaces/mcp/bridge.ts`): an MCP SDK client over Streamable HTTP t
 daemon's `/mcp` plus an MCP server on stdio forwarding `tools/list`, `tools/call`, `ping`.
 It opens no database and loads no model — the CLI decides before `server.ts` is imported.
 Otherwise it runs inline. `engram mcp --standalone` / `ENGRAM_MCP_STANDALONE=1` force
-inline. One stderr line names the mode: `Engram MCP: bridging stdio to
+inline, as do `ENGRAM_SCOPE` / `ENGRAM_READ_SCOPES` in the process env (#87: per-process
+scoping the daemon would ignore — every Hermes profile child); `ENGRAM_DB_PATH` bridges only
+when `/health` reports the same `dbPath` (`Engram MCP: running inline (ENGRAM_SCOPE=hermes:x
+is per-process; the daemon would ignore it)`). One stderr line names the mode: `Engram MCP: bridging stdio to
 http://127.0.0.1:9907/mcp (daemon healthy)` / `Engram MCP: running inline (no daemon on
 :9907 (ECONNREFUSED))`. The bridge forwards `Authorization: Bearer $ENGRAM_MCP_TOKEN` from
 its own env, re-opens its daemon session under the host's `clientInfo` after `initialize`
