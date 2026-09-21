@@ -23,6 +23,7 @@ import { cosineSimilarity } from "../_core/search/vector.js";
 import { escapeXml } from "../_core/search/format.js";
 import { estimateTokens } from "../_core/search/budget.js";
 import { parseDateHint, isoDayToEpochSeconds, toIsoDay } from "../_core/search/dates.js";
+import { formatConversation } from "./extractor.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -117,11 +118,6 @@ function loadPromptTemplate(): string {
   return readFileSync(join(__dirname, "..", "..", "prompts", "extract-commitments.md"), "utf-8");
 }
 
-function clip(text: string, cap: number): string {
-  if (text.length <= cap) return text;
-  return `${text.slice(0, cap)} …[truncated]`;
-}
-
 /**
  * Build the extraction prompt. Assistant turns are abbreviated: commitments
  * come from the user's words, the assistant text is only context.
@@ -130,16 +126,8 @@ export function buildCommitmentsPrompt(
   exchanges: CommitmentExchange[],
   metadata: CommitmentMetadata,
 ): string {
-  const template = loadPromptTemplate();
-  const header = `Project: ${metadata.project}, Date Range: ${metadata.dateRange}`;
-  const body = exchanges
-    .map(
-      (ex) =>
-        `[Exchange ${ex.index}]\nUser: ${clip(ex.userMessage, USER_MESSAGE_CAP)}\n` +
-        `Assistant: ${clip(ex.assistantMessage, ASSISTANT_MESSAGE_CAP)}`,
-    )
-    .join("\n\n");
-  return `${template}\n${header}\n\n${body}`;
+  const body = formatConversation(exchanges, metadata, { user: USER_MESSAGE_CAP, assistant: ASSISTANT_MESSAGE_CAP });
+  return `${loadPromptTemplate()}\n${body}`;
 }
 
 // ─── Response validation ────────────────────────────────────────
