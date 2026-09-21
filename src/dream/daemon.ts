@@ -14,7 +14,7 @@
  * Phase 5, Step 3 implementation.
  */
 
-import { writeFileSync, readFileSync, existsSync, mkdirSync, appendFileSync } from "node:fs";
+import { writeFileSync, mkdirSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
 import type Database from "better-sqlite3";
 import type { DreamPhase, DreamReport } from "./types.js";
@@ -51,7 +51,7 @@ export function resolveDreamLogPath(config: EngramConfig = loadConfig()): string
   return join(config.logsDir, "dream.log");
 }
 
-/** Scratch directory for facts handed from the extract phase to consolidate. */
+/** Directory of the per-run pending-facts files kept for `engram backfill-event-ts`. */
 export function resolvePendingFactsDir(config: EngramConfig = loadConfig()): string {
   return join(config.dataDir, "tmp");
 }
@@ -64,6 +64,12 @@ export interface DreamOptions {
   /** Re-extract every conversation even when its fingerprint is unchanged (W12). */
   force?: boolean;
   onProgress?: (phase: DreamPhase, processed: number, total: number, errors: number) => void;
+}
+
+/** Facts extracted from one conversation, handed from extract to consolidate. */
+interface FactBatch {
+  conversationId: string;
+  facts: ExtractedFact[];
 }
 
 interface PhaseResult {
@@ -189,6 +195,9 @@ async function runDreamLocked(
     memoriesPruned: 0,
   };
 
+  // Facts the extract phase hands to consolidate within this run.
+  const pendingFacts: FactBatch[] = [];
+
   try {
     for (const phase of phasesToRun) {
       if (shuttingDown) {
@@ -208,10 +217,10 @@ async function runDreamLocked(
           result = await runIngestPhase(db, config, runId, logPath, options);
           break;
         case "extract":
-          result = await runExtractPhase(db, config, runId, logPath, options, report);
+          result = await runExtractPhase(db, config, runId, logPath, options, report, pendingFacts);
           break;
         case "consolidate":
-          result = await runConsolidatePhase(db, config, runId, logPath, options, report);
+          result = await runConsolidatePhase(db, config, runId, logPath, options, report, pendingFacts);
           break;
         case "reflect":
           result = await runReflectPhase(db, config, runId, logPath, options, report);
@@ -314,6 +323,7 @@ async function runExtractPhase(
   logPath: string,
   options: DreamOptions,
   report: DreamReport,
+  allFacts: FactBatch[],
 ): Promise<PhaseResult> {
   const startMs = Date.now();
   logEntry(logPath, "extract", "Starting extract phase");
@@ -385,8 +395,7 @@ async function runExtractPhase(
   await initExtractor();
   await initGraphExtractor();
 
-  // Accumulate facts for batch consolidation in the next phase
-  const allFacts: Array<{ conversationId: string; facts: ExtractedFact[] }> = [];
+  // Facts accumulate in allFacts for the consolidate phase
   let processed = 0;
   let errors = 0;
 
@@ -482,9 +491,7 @@ async function runExtractPhase(
     }
   }
 
-  // Store accumulated facts in a temporary table-like structure for consolidation
-  // We use a simple approach: store facts as JSON in the run's data
-  storePendingFacts(db, runId, allFacts);
+  storePendingFacts(runId, allFacts);
 
   // Commitments pass ("mention once, never dropped"): a second extraction
   // target alongside facts. Checkpointed per conversation across runs, so
@@ -527,6 +534,7 @@ async function runConsolidatePhase(
   logPath: string,
   options: DreamOptions,
   report: DreamReport,
+  extracted: FactBatch[],
 ): Promise<PhaseResult> {
   const startMs = Date.now();
   logEntry(logPath, "consolidate", "Starting consolidate phase");
@@ -543,10 +551,10 @@ async function runConsolidatePhase(
   await initEmbeddings(config);
   await initConsolidator();
 
-  // Retrieve pending facts from the extract phase. W9a: the same statement
-  // extracted from several conversations in one run is collapsed here (sources
-  // unioned into the first occurrence) before per-batch consolidation.
-  const { batches: pendingFacts, collapsed } = collapseAcrossBatches(loadPendingFacts(db, runId));
+  // W9a: the same statement extracted from several conversations in one run
+  // is collapsed here (sources unioned into the first occurrence) before
+  // per-batch consolidation.
+  const { batches: pendingFacts, collapsed } = collapseAcrossBatches(extracted);
   if (collapsed > 0) {
     logEntry(logPath, "consolidate", `Collapsed ${collapsed} cross-conversation duplicate candidates before consolidation`);
   }
@@ -988,41 +996,16 @@ function dropSuppressed(
 // ─── Pending Facts Storage ───────────────────────────────────────
 
 /**
- * Store extracted facts from the extract phase for batch consolidation.
- * Uses a simple JSON blob in the dream_runs error field as scratch space,
- * or more properly, a dedicated SQLite table if available.
- *
- * For simplicity, we store as JSON in a file in the logs directory.
+ * Write the run's extracted facts to `<dataDir>/tmp/pending-facts-<runId>.json`.
+ * The consolidate phase receives the array in memory; the file exists for
+ * `engram backfill-event-ts`, which maps legacy memories back to their
+ * conversations through these files.
  */
-function storePendingFacts(
-  db: Database.Database,
-  runId: string,
-  facts: Array<{ conversationId: string; facts: ExtractedFact[] }>,
-): void {
+function storePendingFacts(runId: string, facts: FactBatch[]): void {
   if (facts.length === 0) return;
-
-  // Store in a JSON file for retrieval during consolidation
   const dataDir = resolvePendingFactsDir();
   mkdirSync(dataDir, { recursive: true });
-  const filePath = join(dataDir, `pending-facts-${runId}.json`);
-  writeFileSync(filePath, JSON.stringify(facts));
-}
-
-function loadPendingFacts(
-  _db: Database.Database,
-  runId: string,
-): Array<{ conversationId: string; facts: ExtractedFact[] }> {
-  const dataDir = resolvePendingFactsDir();
-  const filePath = join(dataDir, `pending-facts-${runId}.json`);
-
-  if (!existsSync(filePath)) return [];
-
-  try {
-    const data = readFileSync(filePath, "utf-8");
-    return JSON.parse(data);
-  } catch {
-    return [];
-  }
+  writeFileSync(join(dataDir, `pending-facts-${runId}.json`), JSON.stringify(facts));
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────
