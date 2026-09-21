@@ -347,8 +347,9 @@ describe("migrate model-cache and schema", () => {
 
     // ENGRAM_MODEL_CACHE_DIR set + a legacy cache: the weights move rather than re-download
     legacyCache(pkg);
+    process.env.ENGRAM_MODEL_CACHE_DIR = explicit; // the tier is read off the loaded config
     const env = { ENGRAM_MODEL_CACHE_DIR: explicit };
-    const withLegacy = planModelCache({ config: loadConfig({ dataDir: join(root, "data"), modelCacheDir: explicit }), env, platform: "linux", home }, pkg);
+    const withLegacy = planModelCache({ config: loadConfig({ dataDir: join(root, "data") }), env, platform: "linux", home }, pkg);
     expect(withLegacy).toMatchObject({ durable: true, source: "ENGRAM_MODEL_CACHE_DIR", hasModels: true });
     applyModelCachePlan(withLegacy, { dryRun: false });
     expect(existsSync(join(explicit, "Xenova", "m", "config.json"))).toBe(true);
@@ -362,8 +363,9 @@ describe("migrate model-cache and schema", () => {
     const envFile = join(home, ".config", "engram", "env");
     mkdirSync(join(home, ".config", "engram"), { recursive: true });
     writeFileSync(envFile, "#ANTHROPIC_API_KEY=\n");
+    process.env.ENGRAM_MODEL_CACHE_DIR = legacy; // the tier is read off the loaded config
     const env = { ENGRAM_MODEL_CACHE_DIR: legacy };
-    const cfg = loadConfig({ dataDir: join(root, "data"), modelCacheDir: legacy });
+    const cfg = loadConfig({ dataDir: join(root, "data") });
     const plan = planModelCache({ config: cfg, env, platform: "linux", home }, pkg);
     expect(plan).toMatchObject({ durable: false, source: "ENGRAM_MODEL_CACHE_DIR", current: legacy, proposed: join(root, "data", "models"), hasModels: true, envFile });
     const dry = applyModelCachePlan(plan, { dryRun: true }).join("\n");

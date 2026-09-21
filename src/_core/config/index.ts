@@ -70,22 +70,6 @@ export function resolveModelCacheLocation(
   return { dir: defaultModelCacheDir(dataDir), source: "default" };
 }
 
-/**
- * Recover how an already-loaded config's `modelCacheDir` was chosen, for
- * `engram doctor` / `engram migrate` output. Mirrors resolveModelCacheLocation().
- */
-export function describeModelCacheDir(
-  config: Pick<EngramConfig, "dataDir" | "modelCacheDir">,
-  env: Record<string, string | undefined> = process.env,
-): ModelCacheResolution {
-  const dir = config.modelCacheDir;
-  if (envDir(env.ENGRAM_MODEL_CACHE_DIR) === dir) return { dir, source: "ENGRAM_MODEL_CACHE_DIR" };
-  if (dir === defaultModelCacheDir(config.dataDir)) return { dir, source: "default" };
-  const hfHome = envDir(env.HF_HOME);
-  if (hfHome && dir === join(hfHome, "hub")) return { dir, source: "HF_HOME" };
-  return { dir, source: "override" };
-}
-
 // Snapshot of the platform default at import time. The path fields below are
 // placeholders only: loadConfig() always recomputes them from ENGRAM_DATA_DIR /
 // resolveDefaultDataDir(env) so environment changes after import still apply.
@@ -100,6 +84,7 @@ const defaults: EngramConfig = {
   archiveDir: join(IMPORT_TIME_DATA_DIR, "archive"),
   logsDir: join(IMPORT_TIME_DATA_DIR, "logs"),
   modelCacheDir: defaultModelCacheDir(IMPORT_TIME_DATA_DIR),
+  modelCacheSource: "default",
   claudeProjectsDir: join(HOME, ".claude", "projects"),
 
   embedding: {
@@ -162,6 +147,7 @@ export function loadConfig(overrides?: Partial<EngramConfig>): EngramConfig {
 
   const dataDir =
     envDir(env.ENGRAM_DATA_DIR) ?? overrides?.dataDir ?? resolveDefaultDataDir(env);
+  const modelCache = resolveModelCacheLocation(dataDir, env, overrides?.modelCacheDir);
 
   return {
     ...defaults,
@@ -174,7 +160,8 @@ export function loadConfig(overrides?: Partial<EngramConfig>): EngramConfig {
       env.ENGRAM_CLAUDE_PROJECTS_DIR ??
       overrides?.claudeProjectsDir ??
       defaults.claudeProjectsDir,
-    modelCacheDir: resolveModelCacheLocation(dataDir, env, overrides?.modelCacheDir).dir,
+    modelCacheDir: modelCache.dir,
+    modelCacheSource: modelCache.source,
 
     embedding: {
       ...defaults.embedding,

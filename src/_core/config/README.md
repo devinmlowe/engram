@@ -16,7 +16,7 @@ System-wide configuration with sensible defaults and environment variable overri
 
 ## Contains
 
-- `index.ts` — Configuration loader with env var overrides, exports `EngramConfig`; `resolveModelCacheLocation` / `describeModelCacheDir` name the winning tier for `engram doctor` and `engram migrate`
+- `index.ts` — Configuration loader with env var overrides, exports `EngramConfig`; `resolveModelCacheLocation` names the winning tier, kept on the config as `modelCacheSource` for `engram doctor` and `engram migrate`
 
 ## See Also
 

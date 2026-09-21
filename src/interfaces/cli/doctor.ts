@@ -19,7 +19,7 @@ import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, st
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import type Database from "better-sqlite3";
-import { describeModelCacheDir, loadConfig, type ModelCacheResolution } from "../../_core/config/index.js";
+import { loadConfig, type ModelCacheResolution } from "../../_core/config/index.js";
 import { isInsideNodeModules } from "../../_core/embeddings/model-cache.js";
 import { buildIntelligenceConfig, describeProviders, resolveOllamaModel } from "../../_core/llm/index.js";
 import type { EngramConfig } from "../../_core/types/index.js";
@@ -663,7 +663,7 @@ export async function runDoctor(
   const ctx = defaultDoctorContext(opts.ctx);
   const [betterSqlite, sqliteVec] = await checkNativeSqlite();
   const transformers = await checkTransformers();
-  const modelCache = checkModelCache(describeModelCacheDir(config, ctx.env), { config, env: ctx.env, home: ctx.home, platform: ctx.platform, packageRoot: ctx.packageRoot });
+  const modelCache = checkModelCache({ dir: config.modelCacheDir, source: config.modelCacheSource }, { config, env: ctx.env, home: ctx.home, platform: ctx.platform, packageRoot: ctx.packageRoot });
   const ollama = await checkOllama(config, { exec: ctx.exec, probe: ctx.ollamaProbe });
   const mcpDaemon = await checkMcpDaemon(ctx.mcpPort, ctx.mcpProbe, { services: ctx.services, startWaitMs: ctx.mcpStartWaitMs });
   const hosts = await checkHosts(ctx.hosts, { probe: ctx.hostProbe, exec: ctx.exec });
