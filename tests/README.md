@@ -16,7 +16,8 @@ Vitest test suites organized to mirror the source structure. Run via `npm run te
 
 ## Contains
 
-- [helpers.ts](./helpers.ts) — Shared test utilities (in-memory DB setup, fixtures)
+- [helpers.ts](./helpers.ts) — Shared test utilities: temp DB setup, synthetic records (`createTestMemory`, `makeExchanges`, ...), raw row inserts (`insertEntity`, `insertMemory`, ...), the built-CLI guard (`builtCli`, `itBuilt`)
+- [mocks/](./mocks/) — `vi.mock` factories and fakes shared across suites: `embeddings.ts` (deterministic hash embeddings), `llm-fetch.ts` (the Ollama/OpenRouter fetch stub and Anthropic tool mock), `fake-worker.ts` (in-process MCP worker)
 - [contracts/](./contracts/) — Cross-module contract tests (schema, config, search, chunking)
 - [core/](./core/) — `_core/` infrastructure tests (db, cache, sessions, scan, snippets)
 - [dream/](./dream/) — Dream pipeline tests (daemon, scheduler, intelligence)
