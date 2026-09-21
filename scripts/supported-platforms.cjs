@@ -2,9 +2,9 @@
 "use strict";
 /**
  * Renders the README "Supported platform/arch set" table from
- * scripts/preflight.cjs (NATIVE_DEPS, NODE_ABI_MAJORS, MIN_NODE_MAJOR) so the
- * documentation can never drift from what the preflight actually checks (#63).
- * The block lives between `<!-- supported-platforms:start -->` and
+ * scripts/preflight.cjs (NATIVE_DEPS, MIN_NODE_MAJOR) so the documentation
+ * can never drift from what the preflight actually checks (#63). The block
+ * lives between `<!-- supported-platforms:start -->` and
  * `<!-- supported-platforms:end -->` in README.md.
  *
  *   node scripts/supported-platforms.cjs          # print the block
@@ -12,12 +12,12 @@
  *   node scripts/supported-platforms.cjs --write  # rewrite the block in README.md
  *
  * Only prose lives here (machine descriptions, which CI job covers a target);
- * every verdict comes from the preflight tables.
+ * every verdict comes from the preflight table.
  */
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { NATIVE_DEPS, NODE_ABI_MAJORS, MIN_NODE_MAJOR } = require("./preflight.cjs");
+const { NATIVE_DEPS, MIN_NODE_MAJOR } = require("./preflight.cjs");
 
 const README = path.join(__dirname, "..", "README.md");
 const START = "<!-- supported-platforms:start -->";
@@ -47,68 +47,39 @@ const CI = {
   "linuxmusl-x64": "CI: node:22-alpine container asserts this verdict",
 };
 
-/** The LTS (even) Node majors ≥ MIN_NODE_MAJOR the table has a column for. */
-function documentedMajors() {
-  return Object.values(NODE_ABI_MAJORS).filter((m) => m >= MIN_NODE_MAJOR && m % 2 === 0).sort((a, b) => a - b);
-}
-
-function abiOf(major) {
-  return Number(Object.keys(NODE_ABI_MAJORS).find((abi) => NODE_ABI_MAJORS[abi] === major));
-}
-
-/** `prebuilt` | `compiles` | `—` for one dependency on one target and Node major. */
-function cell(dep, target, major) {
-  const onTarget = target !== null && dep.targets.includes(target);
-  const abiOk = !dep.abis || dep.abis.includes(abiOf(major));
-  if (onTarget && abiOk) return "prebuilt";
+/** `prebuilt` | `compiles` | `—` for one dependency on one target (null = the catch-all row). */
+function cell(dep, target) {
+  if (target !== null && dep.targets.includes(target)) return "prebuilt";
   return dep.compiles ? "compiles" : "—";
 }
 
-function verdictFor(target, majors) {
-  const cells = NATIVE_DEPS.flatMap((dep) => majors.map((m) => cell(dep, target, m)));
+function verdictFor(cells) {
   if (cells.every((c) => c === "prebuilt")) return "**supported**";
   if (cells.some((c) => c === "—")) return "**not supported**";
   return "needs a C++ toolchain";
 }
 
-function row(target, majors) {
+function row(target) {
   const label = target === null ? "any other target" : `\`${target}\``;
   const machines = target === null ? "FreeBSD, 32-bit x86, …" : MACHINES[target] || "";
-  const cells = NATIVE_DEPS.map((dep) => majors.map((m) => cell(dep, target, m)));
-  // A Node-independent dependency has the same cell for every major: print it once.
-  const rendered = cells.map((c, i) => (NATIVE_DEPS[i].abis ? c.join(" · ") : c[0]));
+  const cells = NATIVE_DEPS.map((dep) => cell(dep, target));
   const ci = target !== null && CI[target] ? ` (${CI[target]})` : "";
-  return `| ${label} | ${machines} | ${rendered.join(" | ")} | ${verdictFor(target, majors)}${ci} |`;
+  return `| ${label} | ${machines} | ${cells.join(" | ")} | ${verdictFor(cells)}${ci} |`;
 }
 
 /** The markdown block (without the markers). */
 function render() {
-  const majors = documentedMajors();
   const targets = [...new Set(NATIVE_DEPS.flatMap((d) => d.targets))].sort();
-  const header = NATIVE_DEPS.map((d) => (d.abis ? `${d.name} (Node ${majors.join(" · ")})` : d.name));
-  const lines = [
-    `| Target | Machines | ${header.join(" | ")} | Engram |`,
+  const names = NATIVE_DEPS.map((d) => d.name);
+  return [
+    `| Target | Machines | ${names.join(" | ")} | Engram |`,
     `|---|---|${NATIVE_DEPS.map(() => "---").join("|")}|---|`,
-    ...targets.map((t) => row(t, majors)),
-    row(null, majors),
-  ];
-  const odd = Object.values(NODE_ABI_MAJORS)
-    .filter((m) => m > MIN_NODE_MAJOR && m % 2 === 1)
-    .sort((a, b) => a - b)
-    .map((m) => `Node ${m}: ${NATIVE_DEPS.filter((d) => d.abis).map((d) => `${d.name} ${d.abis.includes(abiOf(m)) ? "prebuilt" : "compiles"}`).join(", ")}`);
-  const abiDeps = NATIVE_DEPS.filter((d) => d.abis);
-  const independent = NATIVE_DEPS.filter((d) => !d.abis).map((d) => d.name);
-  const nodeNote = abiDeps.length
-    ? `Node ABIs with prebuilts: ${abiDeps.map((d) => `${d.name} node-v${d.abis.join("/")} (Node ${d.abis.map((a) => NODE_ABI_MAJORS[a]).join(", ")})`).join("; ")}. ` +
-      `Odd (non-LTS) majors — ${odd.join("; ")}. ` +
-      `${independent.join(" and ")} are Node-version independent. `
-    : `Every native dependency (${independent.join(", ")}) is N-API / Node-version independent: the same binaries serve every Node major ≥ ${MIN_NODE_MAJOR}, odd (non-LTS) majors included. `;
-  lines.push("");
-  lines.push(
-    nodeNote +
+    ...targets.map(row),
+    row(null),
+    "",
+    `Every native dependency (${names.join(", ")}) is N-API / Node-version independent: the same binaries serve every Node major ≥ ${MIN_NODE_MAJOR}, odd (non-LTS) majors included. ` +
       "Generated from `scripts/preflight.cjs` by `node scripts/supported-platforms.cjs --write`; `--check` runs in the test suite.",
-  );
-  return lines.join("\n");
+  ].join("\n");
 }
 
 function readBlock(rawText) {
@@ -137,7 +108,7 @@ function write() {
   fs.writeFileSync(README, `${text.slice(0, start)}\n${render()}\n${text.slice(end)}`);
 }
 
-module.exports = { render, check, write, readBlock, documentedMajors, START, END };
+module.exports = { render, check, write, readBlock, START, END };
 
 if (require.main === module) {
   const argv = process.argv.slice(2);

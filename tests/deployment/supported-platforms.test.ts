@@ -14,7 +14,6 @@ const gen = createRequire(import.meta.url)(generator) as {
   render(): string;
   check(readmeText?: string): string | null;
   readBlock(text: string): string | null;
-  documentedMajors(): number[];
   START: string;
   END: string;
 };
@@ -24,15 +23,12 @@ describe("README supported-platforms table", () => {
     expect(gen.check(readFileSync(readme, "utf8"))).toBeNull();
   });
 
-  it("has one row per prebuild target plus the catch-all, and a column per documented Node major", () => {
+  it("has one row per prebuild target plus the catch-all, one column per dependency", () => {
     const table = gen.render();
-    const majors = gen.documentedMajors();
-    expect(majors).toContain(22);
-    expect(majors).toContain(24);
-    // better-sqlite3 13 is N-API: no per-Node-major columns for any dependency any more.
+    // Every dependency is N-API: no per-Node-major columns, one note saying so.
     expect(table).toMatch(/^\| Target \| Machines \| better-sqlite3 \| sqlite-vec \| onnxruntime-node \| Engram \|$/m);
     expect(table).not.toContain("(Node ");
-    expect(table).toMatch(/Node-version independent/);
+    expect(table).toMatch(/Node-version independent: the same binaries serve every Node major ≥ 22/);
     for (const target of ["darwin-arm64", "linux-x64", "linuxmusl-x64", "win32-arm64"]) {
       expect(table).toMatch(new RegExp(`^\\| \`${target}\` \\|`, "m"));
     }

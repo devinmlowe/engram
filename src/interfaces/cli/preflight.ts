@@ -18,9 +18,8 @@ export interface PreflightTarget {
   arch: string;
   /** `glibc` | `musl` on Linux, empty elsewhere. */
   libc: string;
-  /** NODE_MODULE_VERSION (`process.versions.modules`). */
+  /** NODE_MODULE_VERSION (`process.versions.modules`); printed, never decisive — every native dependency is N-API. */
   abi: number;
-  nodeMajor: number | null;
   /** prebuild-install target string, e.g. `linuxmusl-x64`. */
   key: string;
 }
@@ -56,8 +55,9 @@ export interface PreflightResult {
 export interface NativeDepSpec {
   name: string;
   via: string;
-  abis: number[] | null;
+  /** prebuild-install target strings the pinned range publishes a binary for. */
   targets: string[];
+  /** Whether a node-gyp source build is a fallback (better-sqlite3) or the target is simply unsupported. */
   compiles: boolean;
 }
 
@@ -73,14 +73,13 @@ export interface ProbeOptions {
 export interface PreflightModule {
   preflight(opts?: ProbeOptions): PreflightResult;
   toJson(result: PreflightResult): Omit<PreflightResult, "lines">;
-  /** `dep` is a NATIVE_DEPS name or an ad-hoc spec (tests exercise ABI-bound layouts that way). */
-  probePrebuild(dep: string | NativeDepSpec, opts?: ProbeOptions): PrebuildProbe;
+  /** `dep` is a NATIVE_DEPS name. */
+  probePrebuild(dep: string, opts?: ProbeOptions): PrebuildProbe;
   resolveTarget(opts?: ProbeOptions): PreflightTarget;
   describeStatus(status: PrebuildStatus): string;
   checkExpectations(result: PreflightResult, spec: string): string[];
   NATIVE_DEPS: NativeDepSpec[];
   PREBUILT_TARGETS: string[];
-  PREBUILT_NODE_MAJORS: number[];
   MIN_NODE_MAJOR: number;
 }
 
@@ -98,7 +97,6 @@ const script = loadPreflight();
 
 /** Re-exported from the script so doctor, tests and docs share one matrix. */
 export const PREBUILT_TARGETS: readonly string[] = script.PREBUILT_TARGETS;
-export const PREBUILT_NODE_MAJORS: readonly number[] = script.PREBUILT_NODE_MAJORS;
 export const MIN_NODE_MAJOR: number = script.MIN_NODE_MAJOR;
 
 /**
