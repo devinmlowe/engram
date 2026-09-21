@@ -601,7 +601,7 @@ describe("inspect", () => {
 describe("memory index integrity (engram validate)", () => {
   it("a clean store passes; orphaned vector/FTS rows for forgotten or missing memories fail; --fix repairs", async () => {
     const { auditMemoryIndex, repairMemoryIndex } = await import("../../src/semantic/index-integrity.js");
-    const { validateMemoryIndex } = await import("../../src/migration/validate.js");
+    const { validateMemoryIndex } = await import("../../src/interfaces/cli/validate.js");
     seed("live", "a live memory");
     seed("gone", "a forgotten memory");
     forgetMemory(t.db, { memoryId: "gone", actor: "cli" });

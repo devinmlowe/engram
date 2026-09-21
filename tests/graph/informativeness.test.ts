@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createTestDb, type TestDb } from "../helpers.js";
-import { migrateInformativenessColumns } from "../../src/migration/add-informativeness-columns.js";
 import {
   computeConversationCounts,
   computeEntityIdf,
@@ -12,7 +11,6 @@ describe("informativeness scoring", () => {
 
   beforeEach(() => {
     t = createTestDb();
-    migrateInformativenessColumns(t.db);
 
     // Setup: 10 conversations
     for (let i = 1; i <= 10; i++) {
