@@ -55,6 +55,8 @@ Integrate Recursive Language Model (RLM) patterns into engram and the Claude Cod
 
 ### 1A: Adaptive Dream Extraction (HIGH VALUE)
 
+> Superseded 2026-09-20: removed, unreachable (#117)
+
 **Problem:** Fixed 25-exchange chunking misses information-dense clusters and wastes LLM calls on sparse exchanges.
 
 **Current code:** `src/_core/search/text.ts:19-48` (`chunkConversation()`) + `src/semantic/extractor.ts:472-539`

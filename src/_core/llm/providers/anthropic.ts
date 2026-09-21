@@ -1,12 +1,14 @@
 /**
- * Anthropic provider — Claude API for LLM inference.
+ * Anthropic provider — Claude Messages API over `fetch` (#118).
  *
- * Handles client lifecycle (lazy singleton), structured generation via
- * tool_use, and free-text generation. Supports primary → fallback model
- * cascade within the Anthropic tier.
+ * The request shape is the one the `@anthropic-ai/sdk` client used to send
+ * (model, max_tokens, system, messages, tools, tool_choice) with the same
+ * `anthropic-version` header; the SDK itself is no longer a dependency. The
+ * client seam (`setClient`) is kept so tests can inject a mock with a
+ * `messages.create` function. Supports primary → fallback model cascade
+ * within the Anthropic tier.
  */
 
-import Anthropic from "@anthropic-ai/sdk";
 import type { IntelligenceConfig, GenerationResult, GenerationOptions } from "../types.js";
 import {
   DEFAULT_MAX_TOKENS,
@@ -14,16 +16,94 @@ import {
   DEFAULT_TOOL_DESCRIPTION,
 } from "../types.js";
 
+// ─── Wire types ──────────────────────────────────────────────────
+
+export const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
+/** API version header; the value the SDK (0.125.0) sent. */
+export const ANTHROPIC_VERSION = "2023-06-01";
+
+export interface AnthropicTool {
+  name: string;
+  description?: string;
+  input_schema: { type: "object"; [key: string]: unknown };
+}
+
+export interface AnthropicMessageParams {
+  model: string;
+  max_tokens: number;
+  system?: string;
+  messages: Array<{ role: "user" | "assistant"; content: string }>;
+  tools?: AnthropicTool[];
+  tool_choice?: { type: "tool"; name: string } | { type: "auto" } | { type: "any" };
+  temperature?: number;
+}
+
+export type AnthropicContentBlock =
+  | { type: "text"; text: string }
+  | { type: "tool_use"; id: string; name: string; input: unknown };
+
+export interface AnthropicMessage {
+  content: AnthropicContentBlock[];
+  model?: string;
+  stop_reason?: string | null;
+}
+
+export interface AnthropicRequestOptions {
+  signal?: AbortSignal;
+}
+
+/** The slice of the Anthropic client surface engram uses; test mocks implement it. */
+export interface AnthropicClient {
+  messages: {
+    create(params: AnthropicMessageParams, options?: AnthropicRequestOptions): Promise<AnthropicMessage>;
+  };
+}
+
+/** Non-2xx reply; `status` lets the cascade classify it (transient / provider / permanent). */
+export class AnthropicApiError extends Error {
+  status: number;
+
+  constructor(status: number, body: string) {
+    super(`Anthropic API error ${status}: ${body}`);
+    this.name = "AnthropicApiError";
+    this.status = status;
+  }
+}
+
+/** A minimal Messages API client over `fetch`. */
+export function createAnthropicClient(apiKey: string): AnthropicClient {
+  return {
+    messages: {
+      async create(params, options) {
+        const response = await fetch(ANTHROPIC_MESSAGES_URL, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": apiKey,
+            "anthropic-version": ANTHROPIC_VERSION,
+          },
+          body: JSON.stringify(params),
+          signal: options?.signal,
+        });
+        if (!response.ok) {
+          throw new AnthropicApiError(response.status, await response.text());
+        }
+        return (await response.json()) as AnthropicMessage;
+      },
+    },
+  };
+}
+
 // ─── Module State ────────────────────────────────────────────────
 
-let client: Anthropic | null = null;
+let client: AnthropicClient | null = null;
 
 // ─── Client Management ───────────────────────────────────────────
 
 /**
  * Set a custom Anthropic client (for testing with mocks).
  */
-export function setClient(customClient: Anthropic): void {
+export function setClient(customClient: AnthropicClient): void {
   client = customClient;
 }
 
@@ -53,7 +133,7 @@ export function resetIntelligence(): void {
 /**
  * Get or lazily create the Anthropic client singleton.
  */
-function getClient(): Anthropic {
+function getClient(): AnthropicClient {
   if (!client) {
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) {
@@ -62,7 +142,7 @@ function getClient(): Anthropic {
           "Set ANTHROPIC_API_KEY environment variable.",
       );
     }
-    client = new Anthropic({ apiKey });
+    client = createAnthropicClient(apiKey);
   }
   return client;
 }
@@ -86,7 +166,7 @@ export async function apiGenerateStructured<T>(
   const anthropic = getClient();
 
   const toolName = options.toolName ?? DEFAULT_TOOL_NAME;
-  const tool: Anthropic.Tool = {
+  const tool: AnthropicTool = {
     name: toolName,
     description: options.toolDescription ?? DEFAULT_TOOL_DESCRIPTION,
     input_schema: {
@@ -100,14 +180,17 @@ export async function apiGenerateStructured<T>(
 
   for (const model of modelsToTry(config)) {
     try {
-      const response = await anthropic.messages.create({
-        model,
-        max_tokens: options.maxTokens ?? DEFAULT_MAX_TOKENS,
-        system: systemPrompt,
-        tools: [tool],
-        tool_choice: { type: "tool", name: toolName },
-        messages: [{ role: "user", content: userPrompt }],
-      });
+      const response = await anthropic.messages.create(
+        {
+          model,
+          max_tokens: options.maxTokens ?? DEFAULT_MAX_TOKENS,
+          system: systemPrompt,
+          tools: [tool],
+          tool_choice: { type: "tool", name: toolName },
+          messages: [{ role: "user", content: userPrompt }],
+        },
+        { signal: AbortSignal.timeout(config.timeoutMs) },
+      );
 
       const toolUseBlock = response.content.find(
         (block) => block.type === "tool_use",
@@ -151,12 +234,15 @@ export async function apiGenerate(
 
   for (const model of modelsToTry(config)) {
     try {
-      const response = await anthropic.messages.create({
-        model,
-        max_tokens: DEFAULT_MAX_TOKENS,
-        system: systemPrompt,
-        messages: [{ role: "user", content: userPrompt }],
-      });
+      const response = await anthropic.messages.create(
+        {
+          model,
+          max_tokens: DEFAULT_MAX_TOKENS,
+          system: systemPrompt,
+          messages: [{ role: "user", content: userPrompt }],
+        },
+        { signal: AbortSignal.timeout(config.timeoutMs) },
+      );
 
       const textBlock = response.content.find(
         (block) => block.type === "text",

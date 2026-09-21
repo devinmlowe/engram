@@ -22,7 +22,7 @@ Phase-level plans defining scope, requirements, and acceptance criteria for each
 - [phase-3-plan.md](./phase-3-plan.md) — Semantic extraction
 - [phase-4-plan.md](./phase-4-plan.md) — Knowledge graph
 - [phase-6-rlm-integration.md](./phase-6-rlm-integration.md) — RLM integration master plan
-- [phase-6a-adaptive-chunking.md](./phase-6a-adaptive-chunking.md) — Adaptive chunking sub-plan
+- [phase-6a-adaptive-chunking.md](./phase-6a-adaptive-chunking.md) — Adaptive chunking sub-plan (Superseded 2026-09-20: removed, unreachable (#117))
 - [phase-6b-iterative-recall.md](./phase-6b-iterative-recall.md) — Iterative recall sub-plan
 - [phase-6c-recursive-explore.md](./phase-6c-recursive-explore.md) — Recursive exploration sub-plan
 - [phase-6d-batch-remember.md](./phase-6d-batch-remember.md) — Batch remember sub-plan

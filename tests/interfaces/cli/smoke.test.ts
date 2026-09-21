@@ -21,7 +21,6 @@ import {
   LLM_PROVIDER_HINT, SMOKE_FIXTURE, SMOKE_MAX_EXCHANGES, latestConversation, loadSmokeFixture, providerOf, runExtractionSmoke, skippedSmoke, tallyWritten,
 } from "../../../src/interfaces/cli/smoke.js";
 
-vi.mock("@anthropic-ai/sdk", () => ({ default: vi.fn() }));
 vi.mock("../../../src/semantic/nli.js", () => ({ classifyNli: vi.fn() }));
 vi.mock("../../../src/_core/embeddings/index.js", () => ({
   initEmbeddings: vi.fn(async () => undefined),

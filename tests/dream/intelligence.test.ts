@@ -41,7 +41,7 @@ function mockFetch(
 function makeMockClient(createFn: ReturnType<typeof vi.fn>) {
   return {
     messages: { create: createFn },
-  } as unknown as import("@anthropic-ai/sdk").default;
+  } as unknown as import("../../src/_core/llm/index.js").AnthropicClient;
 }
 
 // ─── Setup / Teardown ────────────────────────────────────────────

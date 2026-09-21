@@ -438,7 +438,7 @@ describe("extractEntities (mocked API)", () => {
 
     const mockClient = {
       messages: { create: mockCreate },
-    } as unknown as import("@anthropic-ai/sdk").default;
+    } as unknown as import("../../src/_core/llm/index.js").AnthropicClient;
 
     setGraphExtractorClient(mockClient);
 
@@ -530,7 +530,7 @@ describe("extractRelationships (mocked API)", () => {
 
     const mockClient = {
       messages: { create: mockCreate },
-    } as unknown as import("@anthropic-ai/sdk").default;
+    } as unknown as import("../../src/_core/llm/index.js").AnthropicClient;
 
     setGraphExtractorClient(mockClient);
 

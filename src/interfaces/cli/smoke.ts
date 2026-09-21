@@ -230,7 +230,6 @@ async function defaultExtract(id: string, exchanges: ConversationExchange[], met
   return extractFromConversation(id, exchanges, metadata, {
     tier: "auto",
     reflexionEnabled: false,
-    chunkingStrategy: "fixed",
     chunkSize: Math.max(exchanges.length, 1),
     chunkOverlap: 0,
   });

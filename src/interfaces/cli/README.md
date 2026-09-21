@@ -15,7 +15,7 @@ Command-line interface for direct human interaction with engram. Built on Comman
 
 ## Contains
 
-- `index.ts` — All 27 CLI commands: `init`, `sync`, `search`, `remember`, `memories`, `extract`, `dream`, `reflect`, `explore`, `entities`, `relationships`, `stats`, `health`, `doctor`, `setup`, `preflight`, `update`, `migrate`, `import-legacy`, `validate`, `backfill-event-ts`, `commitments`, `commitment-done`, `commitments-extract`, `export`, `import`, `mcp` (with the `install` / `uninstall` / `status` subcommands from `hosts-command.ts`)
+- `index.ts` — All 26 CLI commands: `init`, `sync`, `search`, `remember`, `memories`, `extract`, `dream`, `reflect`, `explore`, `entities`, `relationships`, `stats`, `health`, `doctor`, `setup`, `preflight`, `update`, `migrate`, `validate`, `backfill-event-ts`, `commitments`, `commitment-done`, `commitments-extract`, `export`, `import`, `mcp` (with the `install` / `uninstall` / `status` subcommands from `hosts-command.ts`)
 - `first-run.ts` — The bodies of `init` (`runInit`) and `sync` (`runSync`), so `setup` runs the same steps (#61)
 - `setup.ts` — `engram setup` (#61, decision #62): doctor → init → sync → mcp install → all three daemons → doctor --fix → extraction smoke → summary; orchestration only, every collaborator injected through `SetupDeps`
 - `smoke.ts` — The `extraction smoke` doctor check (#61): latest conversation or bundled fixture, capped input, 60 s budget, `tier=… memories=N` or per-tier cascade reasons; real-conversation facts stored with `source='smoke'`
@@ -55,7 +55,7 @@ Tests: `tests/interfaces/cli/transfer.test.ts`.
 | `engram memories purge --conversation <id> [--hard]` | Forget every memory derived from that conversation's exchanges (privacy purge). |
 | `engram memories log [--memory id] [--op forget\|edit\|purge\|restore] [--limit n] [--json]` | The change log, newest first, with actor (`cli` or the MCP client name). |
 
-`engram validate [--source <db>] [--fix]`: `--source` is optional; the memory-index check fails on vector/FTS rows for forgotten or missing memories and `--fix` repairs them (vectors by id; FTS by rebuild + re-unindexing every forgotten row). Tests: `tests/interfaces/cli/memories.test.ts`, `tests/semantic/forget.test.ts`.
+`engram validate [--fix]` (`validate.ts`): embedding dimensions/norms, FTS5 integrity and hit rate, and the memory-index check, which fails on vector/FTS rows for forgotten or missing memories; `--fix` repairs them (vectors by id; FTS by rebuild + re-unindexing every forgotten row). Tests: `tests/interfaces/cli/validate.test.ts`, `tests/interfaces/cli/memories.test.ts`, `tests/semantic/forget.test.ts`.
 
 ## MCP host registration (#50)
 
@@ -86,8 +86,7 @@ Tests: `tests/deployment/preflight.test.ts`, `tests/deployment/prebuild-probe.te
 | `engram update [--yes] [--no-backup] [--to <version>]` | Runs the plan. Refuses on blockers: dirty checkout, two populated data dirs, a daemon answering on its port with no supervisor. Writes `<data dir>/updates/<stamp>.json` before step 1 and advances its `progress` at every step; a failed post-swap step offers the rollback (`--yes` performs it; a TTY is asked; otherwise the command is printed), restoring the backup only when verification showed counts dropped. |
 | `engram update --rollback [<stamp>] [--restore-data] [--yes]` | Code-only rollback of the newest (or named) plan: stop → `git checkout <sha> && npm ci` / `npm install -g <pkg>@<prev>` → `migrate schema` with the restored build → restart → verify. `--restore-data` also copies the backup back (refused without one). Refused across a `BREAKING_MIGRATIONS` checkpoint. Records `rolledBack` in the plan. |
 | `engram update --list-rollbacks` | The recorded plans, newest first. |
-| `engram migrate [all\|data-dir\|model-cache\|schema] [--dry-run]` | Idempotent install/data migration; refuses to move the data dir while the MCP daemon answers on its port. `--source` forwards to `import-legacy` with a deprecation notice. |
-| `engram import-legacy --source <path>` | The legacy conversation-index importer (unchanged behaviour, new name). |
+| `engram migrate [all\|data-dir\|model-cache\|schema] [--dry-run]` | Idempotent install/data migration; refuses to move the data dir while the MCP daemon answers on its port. |
 
 Tests: `tests/interfaces/cli/update.test.ts`, `tests/interfaces/cli/install-path.test.ts`, `tests/interfaces/cli/update-check.test.ts`.
 

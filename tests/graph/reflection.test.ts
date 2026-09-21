@@ -45,7 +45,6 @@ import {
   pruneStaleGenerations,
   runReflection,
 } from "../../src/graph/reflection.js";
-import { migrateInformativenessColumns } from "../../src/migration/add-informativeness-columns.js";
 
 const mockedGenerate = vi.mocked(generate);
 
@@ -929,8 +928,6 @@ describe("Reflection Orchestration", () => {
 
   describe("runReflection computes informativeness", () => {
     it("populates informativeness column after reflect", async () => {
-      migrateInformativenessColumns(t.db);
-
       // Setup 5 conversations for meaningful IDF spread
       for (let i = 1; i <= 5; i++) {
         t.db.prepare("INSERT INTO conversations (id, project) VALUES (?, ?)").run(`conv-${i}`, "test");

@@ -13,7 +13,7 @@
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import type Anthropic from "@anthropic-ai/sdk";
+import type { AnthropicClient as Anthropic } from "../_core/llm/index.js";
 import type { MemoryType } from "./types.js";
 import {
   buildIntelligenceConfig,
@@ -56,7 +56,6 @@ const DEFAULT_CONFIG: ExtractionConfig = {
   chunkSize: 25,
   chunkOverlap: 5,
   maxTurns: 100,
-  chunkingStrategy: "fixed",
 };
 
 // ─── Tool Schema ────────────────────────────────────────────────
@@ -241,9 +240,6 @@ export function buildExtractionPrompt(
 // Import from shared location; re-export for backward compatibility
 import { chunkConversation } from "../_core/search/text.js";
 export { chunkConversation };
-
-// Adaptive chunking (Phase 6A)
-import { adaptiveChunk, scoreExchangeDensity } from "./adaptive-chunker.js";
 
 // Database type for chunk metadata persistence (Phase 7C.2)
 import type Database from "better-sqlite3";
@@ -537,30 +533,14 @@ export async function extractFromConversation(
   const cfg: ExtractionConfig = { ...DEFAULT_CONFIG, ...config };
   const startTime = Date.now();
 
-  // Chunk if needed — use adaptive or fixed strategy
-  const chunks = cfg.chunkingStrategy === "adaptive"
-    ? adaptiveChunk(exchanges, { overlap: cfg.chunkOverlap })
-    : chunkConversation(exchanges, cfg.chunkSize, cfg.chunkOverlap);
+  // Chunk if needed (fixed windows; adaptive chunking removed in #117)
+  const chunks = chunkConversation(exchanges, cfg.chunkSize, cfg.chunkOverlap);
 
   // Phase 7C.2: Compute chunk boundary metadata for diagnostics
-  const densityScores = cfg.chunkingStrategy === "adaptive"
-    ? scoreExchangeDensity(exchanges)
-    : [];
-  const chunkBoundaries: ChunkBoundaryInfo[] = chunks.map((chunk) => {
-    const startIdx = chunk[0]?.index ?? 0;
-    const endIdx = (chunk[chunk.length - 1]?.index ?? 0) + 1;
-    // Compute average density for this chunk's range (adaptive only)
-    let avgDensity: number | undefined;
-    if (densityScores.length > 0) {
-      const relevant = densityScores.filter(
-        (s) => s.index >= startIdx && s.index < endIdx,
-      );
-      if (relevant.length > 0) {
-        avgDensity = relevant.reduce((sum, s) => sum + s.score, 0) / relevant.length;
-      }
-    }
-    return { start: startIdx, end: endIdx, avgDensity };
-  });
+  const chunkBoundaries: ChunkBoundaryInfo[] = chunks.map((chunk) => ({
+    start: chunk[0]?.index ?? 0,
+    end: (chunk[chunk.length - 1]?.index ?? 0) + 1,
+  }));
 
   const plan = planForTier(cfg.tier, intelligenceConfig());
 
@@ -634,7 +614,7 @@ export async function extractFromConversation(
 export function persistChunkMetadata(
   db: Database.Database | null,
   conversationId: string,
-  chunks: Array<{ start: number; end: number; avgDensity?: number }>,
+  chunks: Array<{ start: number; end: number }>,
 ): void {
   if (!db || chunks.length === 0) return;
 
@@ -655,7 +635,7 @@ export function persistChunkMetadata(
           chunk.start,
           chunk.end,
           chunk.end - chunk.start,
-          chunk.avgDensity ?? null,
+          null, // avg_density: kept for schema compatibility, unused since adaptive chunking was removed (#117)
         );
       }
     });

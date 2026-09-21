@@ -31,7 +31,7 @@ All engram application code. Organized into four domain modules, a shared core i
 - [interfaces/](./interfaces/) — CLI, MCP server, web visualization
 
 ### Utilities
-- [migration/](./migration/) — Data migration from legacy superpowers DB
+- [migration/](./migration/) — One-off data backfills (`backfill-event-ts`)
 
 ## See Also
 

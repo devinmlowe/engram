@@ -290,26 +290,36 @@ export async function callOpenAICompatibleText(
   }, route.label);
 }
 
-// ─── Tier wrappers for the generic route ────────────────────────
+// ─── Tier wrappers ──────────────────────────────────────────────
+//
+// One pair of wrappers serves every tier that is an OpenAI-compatible route
+// (the generic `openai` tier and OpenRouter, #118): a resolver turns the
+// cascade config into a concrete route or a config-skip failure, and a
+// runtime error becomes a `failure` outcome under the route's tier.
 
-function openaiFailure(err: unknown): { failure: TierError } {
+/** The cascade config → a concrete route, or the config reason the tier is skipped. */
+export type RouteResolver = (config: IntelligenceConfig) => { route: OpenAIRoute } | { failure: TierError };
+
+function routeFailure(tier: LlmProvider, err: unknown): { failure: TierError } {
   return {
     failure: {
-      tier: "openai",
+      tier,
       errorClass: err instanceof OpenAICompatibleError ? err.errorClass : "unknown",
       message: tierErrorMessage(err),
     },
   };
 }
 
-export async function openaiGenerateStructured<T>(
+/** Structured generation through a route. Returns a `failure` outcome (never throws). */
+export async function routeGenerateStructured<T>(
+  resolve: RouteResolver,
   systemPrompt: string,
   userPrompt: string,
   schema: Record<string, unknown>,
   config: IntelligenceConfig,
   options: GenerationOptions = {},
 ): Promise<TierOutcome<T>> {
-  const resolved = openaiRoute(config);
+  const resolved = resolve(config);
   if ("failure" in resolved) return resolved;
   try {
     const startMs = Date.now();
@@ -323,18 +333,20 @@ export async function openaiGenerateStructured<T>(
       },
       { timeoutMs: config.timeoutMs, maxTokens: options.maxTokens },
     );
-    return { result, source: "api", provider: "openai", model, durationMs: Date.now() - startMs };
+    return { result, source: "api", provider: resolved.route.tier, model, durationMs: Date.now() - startMs };
   } catch (err) {
-    return openaiFailure(err);
+    return routeFailure(resolved.route.tier, err);
   }
 }
 
-export async function openaiGenerate(
+/** Free-text generation through a route. Returns a `failure` outcome (never throws). */
+export async function routeGenerate(
+  resolve: RouteResolver,
   systemPrompt: string,
   userPrompt: string,
   config: IntelligenceConfig,
 ): Promise<TierOutcome<string>> {
-  const resolved = openaiRoute(config);
+  const resolved = resolve(config);
   if ("failure" in resolved) return resolved;
   try {
     const startMs = Date.now();
@@ -343,8 +355,22 @@ export async function openaiGenerate(
       [{ role: "system", content: systemPrompt }, { role: "user", content: userPrompt }],
       { timeoutMs: config.timeoutMs },
     );
-    return { result, source: "api", provider: "openai", model, durationMs: Date.now() - startMs };
+    return { result, source: "api", provider: resolved.route.tier, model, durationMs: Date.now() - startMs };
   } catch (err) {
-    return openaiFailure(err);
+    return routeFailure(resolved.route.tier, err);
   }
 }
+
+export const openaiGenerateStructured = <T>(
+  systemPrompt: string,
+  userPrompt: string,
+  schema: Record<string, unknown>,
+  config: IntelligenceConfig,
+  options: GenerationOptions = {},
+): Promise<TierOutcome<T>> => routeGenerateStructured<T>(openaiRoute, systemPrompt, userPrompt, schema, config, options);
+
+export const openaiGenerate = (
+  systemPrompt: string,
+  userPrompt: string,
+  config: IntelligenceConfig,
+): Promise<TierOutcome<string>> => routeGenerate(openaiRoute, systemPrompt, userPrompt, config);

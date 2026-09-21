@@ -75,17 +75,7 @@ engram init
 
 This creates the SQLite database at `~/.local/share/engram/engram.db` and downloads the embedding model (`nomic-ai/nomic-embed-text-v1.5`). First run takes a few minutes for the model download.
 
-### 2. Import Existing Data (optional)
-
-If you have an existing episodic-memory plugin (conversation-index) database:
-
-```bash
-engram import-legacy --source ~/.config/superpowers/conversation-index/db.sqlite
-```
-
-Use `--dry-run` to preview what would be imported. (`engram migrate` now means *install/data migration* — see "Updating" in the README; `engram update` runs it for you.)
-
-### 3. Sync Conversations
+### 2. Sync Conversations
 
 ```bash
 engram sync
@@ -93,7 +83,7 @@ engram sync
 
 Scans `~/.claude/projects/` for conversation files, parses exchanges, generates embeddings, and indexes everything for search. Run this whenever you want to ingest new conversations.
 
-### 4. Verify
+### 3. Verify
 
 ```bash
 engram health
