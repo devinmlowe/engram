@@ -4,7 +4,7 @@ Model Context Protocol server exposing 16 tools for LLM agent memory operations.
 
 ## In Scope
 
-- MCP tool registration and schema definitions (Zod-validated)
+- MCP tool registration and schema definitions (Zod-validated; the advertised `inputSchema` is generated from the same zod schema with `z.toJSONSchema`, and `tests/interfaces/mcp/tool-schemas.test.ts` snapshots the result — #119)
 - Request routing to shared operation handlers
 - Response formatting for LLM consumption (structured text with token budgets)
 
