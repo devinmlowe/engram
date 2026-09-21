@@ -268,6 +268,21 @@ describe("forget honours read_scopes (#25)", () => {
     expect(memoryRow(HOME)!.is_active).toBe(1);
   });
 
+  // #109: the global override is for an unpinned server only — an env-pinned
+  // child must not reach another tenant's memory with scope: "global".
+  it('scope: "global" is ignored when the env pins the server to a tenant', async () => {
+    const id = memoryRow(HOME)!.id;
+    process.env.ENGRAM_SCOPE = "hermes:career";
+    try {
+      const res = await handleToolCall("forget", { memory_id: id, scope: "global" });
+      expect(res.isError).toBe(true);
+      expect(text(res)).toMatch(/outside read_scopes/);
+      expect(memoryRow(HOME)!.is_active).toBe(1);
+    } finally {
+      delete process.env.ENGRAM_SCOPE;
+    }
+  });
+
   it('scope: "global" acts across scopes', async () => {
     const id = memoryRow(HOME)!.id;
     const res = await handleToolCall("forget", { memory_id: id, read_scopes: ["global", "hermes:career"], scope: "global" });

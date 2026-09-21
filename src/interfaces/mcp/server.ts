@@ -30,7 +30,7 @@ import { updateHealthField } from "../cli/update-check.js";
 import { escapeXml } from "../../_core/search/index.js";
 import { initEmbeddings } from "../../_core/embeddings/index.js";
 import { rememberFact, storeMemoryBatch } from "../shared/remember.js";
-import { resolveCallScoping } from "./scoping.js";
+import { getTenantScoping, resolveCallScoping } from "./scoping.js";
 import { ingestTurn, DEFAULT_TURN_SOURCE } from "../../episodic/ingest-turn.js";
 import {
   forgetMemory,
@@ -1292,7 +1292,8 @@ export const MCP_TOOL_DEFINITIONS: Tool[] = [
       "out of every recall path immediately, is logged in the change log with " +
       "this client's name, and will not be re-extracted from the same " +
       "conversation. hard: true deletes it outright. Only memories within " +
-      "read_scopes can be forgotten unless scope is \"global\".",
+      "read_scopes can be forgotten; scope \"global\" reaches any scope, but " +
+      "only on a server whose env does not pin it to one tenant.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1321,7 +1322,8 @@ export const MCP_TOOL_DEFINITIONS: Tool[] = [
           minLength: 1,
           description:
             "Tenant identity for this call (e.g. \"hermes:career\"); reads default to " +
-            "global + this scope. \"global\" acts on a memory in any scope.",
+            "global + this scope. \"global\" acts on a memory in any scope " +
+            "(unless the server env pins it to one tenant).",
         },
         read_scopes: {
           type: "array",
@@ -1894,6 +1896,11 @@ async function handleForget(params: ForgetParams, context?: ToolCallContext): Pr
   const actor = context?.clientName ?? UNKNOWN_MCP_ACTOR;
   const scoping = resolveCallScoping(process.env, params);
   const db = getDb();
+  // #109: `scope: "global"` acts on a memory in any scope. Honour that only
+  // for a server the env does not pin to a tenant — otherwise an env-pinned
+  // child (Hermes stdio) could delete another tenant's memories with one arg.
+  const envPinned = getTenantScoping(process.env).readScopes !== undefined;
+  const callScope = envPinned ? undefined : params.scope;
 
   const act = (memoryId: string): ToolResult => {
     const result = forgetMemory(db, {
@@ -1901,7 +1908,7 @@ async function handleForget(params: ForgetParams, context?: ToolCallContext): Pr
       actor,
       hard: params.hard,
       readScopes: scoping.readScopes,
-      scope: params.scope,
+      scope: callScope,
     });
     return { content: [{ type: "text", text: formatForgottenXml(result, actor) }] };
   };
@@ -1923,7 +1930,7 @@ async function handleForget(params: ForgetParams, context?: ToolCallContext): Pr
       mode: "hybrid",
       limit: FORGET_CANDIDATE_LIMIT,
       budget: 4000,
-      scopes: params.scope === "global" ? undefined : scoping.readScopes,
+      scopes: callScope === "global" ? undefined : scoping.readScopes,
       reinforce: false,
     },
     config,
