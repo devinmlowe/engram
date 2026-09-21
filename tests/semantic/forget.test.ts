@@ -34,9 +34,11 @@ import {
   MemoryAlreadyForgottenError,
 } from "../../src/semantic/forget.js";
 
-/** Whether the content's hash is in memory_suppressions (the check dream extract runs). */
-function isSuppressed(db: TestDb["db"], content: string): boolean {
-  return db.prepare("SELECT 1 FROM memory_suppressions WHERE content_hash = ?").get(contentHash(content)) !== undefined;
+/** Whether the content's hash is suppressed for a scope (the check dream extract runs; #106: tenant-keyed). */
+function isSuppressed(db: TestDb["db"], content: string, scope = "global"): boolean {
+  return db
+    .prepare("SELECT 1 FROM memory_suppressions WHERE content_hash = ? AND scope IN (?, 'global')")
+    .get(contentHash(content), scope) !== undefined;
 }
 import { listMemories, getMemoryProvenance, listMemoryChanges, resolveMemoryId } from "../../src/semantic/inspect.js";
 import { drillIntoResult } from "../../src/_core/search/drill.js";
@@ -504,9 +506,33 @@ describe("extraction suppression", () => {
   it("clearSuppression lifts it (an explicit remember wins)", () => {
     seed("m1", "keep me after all");
     forgetMemory(t.db, { memoryId: "m1", actor: "cli" });
-    expect(clearSuppression(t.db, "Keep me after all")).toBe(true);
+    expect(clearSuppression(t.db, "Keep me after all", "global")).toBe(true);
     expect(isSuppressed(t.db, "keep me after all")).toBe(false);
-    expect(clearSuppression(t.db, "keep me after all")).toBe(false);
+    expect(clearSuppression(t.db, "keep me after all", "global")).toBe(false);
+  });
+
+  // #106: a suppression is keyed by tenant; only a global one applies everywhere.
+  it("a tenant's forget suppresses only that tenant; a global one suppresses all", () => {
+    seed("a", "Prefer TypeScript over Python", { scope: "hermes:career" });
+    seed("b", "Prefer TypeScript over Python", { scope: "hermes:personal" });
+    forgetMemory(t.db, { memoryId: "a", actor: "cli", scope: "hermes:career" });
+    const facts = [{ type: "fact" as const, content: "prefer typescript over python", importance: 0.5, sourceExchangeIds: [] }];
+    expect(filterSuppressedFacts(t.db, facts, "hermes:career").suppressed).toHaveLength(1);
+    expect(filterSuppressedFacts(t.db, facts, "hermes:personal").suppressed).toHaveLength(0);
+    // B forgetting the same sentence keeps A's row (composite key).
+    forgetMemory(t.db, { memoryId: "b", actor: "cli", scope: "hermes:personal" });
+    expect(t.db.prepare("SELECT count(*) AS n FROM memory_suppressions").get()).toEqual({ n: 2 });
+    // B's remember lifts only B's suppression.
+    expect(clearSuppression(t.db, "Prefer TypeScript over Python", "hermes:personal")).toBe(true);
+    expect(isSuppressed(t.db, "Prefer TypeScript over Python", "hermes:personal")).toBe(false);
+    expect(isSuppressed(t.db, "Prefer TypeScript over Python", "hermes:career")).toBe(true);
+    // A global suppression reaches every tenant; restore removes only its own row.
+    seed("g", "Prefer TypeScript over Python");
+    forgetMemory(t.db, { memoryId: "g", actor: "cli" });
+    expect(filterSuppressedFacts(t.db, facts, "hermes:personal").suppressed).toHaveLength(1);
+    restoreMemory(t.db, { memoryId: "g", actor: "cli" });
+    expect(isSuppressed(t.db, "Prefer TypeScript over Python", "hermes:personal")).toBe(false);
+    expect(isSuppressed(t.db, "Prefer TypeScript over Python", "hermes:career")).toBe(true);
   });
 });
 

@@ -47,6 +47,9 @@ describe("forget_v1 schema migration (#55)", () => {
     expect(() =>
       t.db.prepare("INSERT INTO memory_suppressions (content_hash, memory_id, scope, created_at) VALUES ('h', 'm2', 'global', 'now')").run(),
     ).toThrow(/UNIQUE|PRIMARY/);
+    // #106: keyed by (content_hash, scope) — another tenant's row coexists.
+    t.db.prepare("INSERT INTO memory_suppressions (content_hash, memory_id, scope, created_at) VALUES ('h', 'm3', 'hermes:x', 'now')").run();
+    expect(t.db.prepare("SELECT count(*) AS n FROM memory_suppressions WHERE content_hash = 'h'").get()).toEqual({ n: 2 });
   });
 
   it("records the checkpoint and is a no-op on re-open", () => {
