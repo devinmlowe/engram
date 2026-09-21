@@ -32,6 +32,7 @@ import {
   PingRequestSchema,
   type Implementation,
 } from "@modelcontextprotocol/sdk/types.js";
+import { resolve as resolvePath } from "node:path";
 import { ENGRAM_VERSION } from "../../_core/version/index.js";
 import { resolveMcpToken } from "./auth.js";
 import { DEFAULT_MCP_PORT, isEngramDaemonHealth, parseMcpPort, probeMcpHealth, type McpHealthProbe } from "./port.js";
@@ -87,9 +88,29 @@ function errShort(err: unknown): string {
 }
 
 /**
+ * Per-process scoping env (ADR-010, `scoping.ts`). The bridge forwards calls
+ * verbatim and the daemon resolves them under its *own* env, so a stdio start
+ * carrying these must run inline or the values are silently dropped (#87 —
+ * every Hermes profile child sets them).
+ */
+const PER_PROCESS_SCOPE_ENV = ["ENGRAM_SCOPE", "ENGRAM_READ_SCOPES"] as const;
+
+/** The database a `/health` body says the daemon serves, when it says (#87). */
+function daemonDbPath(body: string): string | undefined {
+  try {
+    const dbPath = (JSON.parse(body) as { dbPath?: unknown }).dbPath;
+    return typeof dbPath === "string" && dbPath ? dbPath : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Choose bridge or inline for a stdio start. Pure apart from the probe, so
- * tests inject one. `--standalone` and `ENGRAM_MCP_STANDALONE` win without
- * probing; otherwise one `GET /health` with a short timeout decides.
+ * tests inject one. `--standalone`, `ENGRAM_MCP_STANDALONE` and per-process
+ * scoping env win without probing; otherwise one `GET /health` with a short
+ * timeout decides, and a daemon serving a different `ENGRAM_DB_PATH` counts
+ * as no daemon.
  */
 export async function decideStdioMode(options: DecideStdioModeOptions): Promise<StdioDecision> {
   const { args, env, probe = probeMcpHealth, timeoutMs = DEFAULT_PROBE_TIMEOUT_MS } = options;
@@ -98,10 +119,21 @@ export async function decideStdioMode(options: DecideStdioModeOptions): Promise<
 
   if (args.includes(STANDALONE_FLAG)) return { mode: "inline", port, url, reason: STANDALONE_FLAG };
   if (isTruthy(env[STANDALONE_ENV])) return { mode: "inline", port, url, reason: `${STANDALONE_ENV}=${env[STANDALONE_ENV]?.trim()}` };
+  for (const name of PER_PROCESS_SCOPE_ENV) {
+    const value = env[name]?.trim();
+    if (value) return { mode: "inline", port, url, reason: `${name}=${value} is per-process; the daemon would ignore it` };
+  }
 
   try {
     const health = await probe(port, timeoutMs);
-    if (isEngramDaemonHealth(health)) return { mode: "bridge", port, url, reason: "daemon healthy" };
+    if (isEngramDaemonHealth(health)) {
+      const mine = env.ENGRAM_DB_PATH?.trim();
+      const theirs = daemonDbPath(health.body);
+      if (mine && theirs && resolvePath(mine) !== resolvePath(theirs)) {
+        return { mode: "inline", port, url, reason: `ENGRAM_DB_PATH=${mine} but the daemon serves ${theirs}` };
+      }
+      return { mode: "bridge", port, url, reason: "daemon healthy" };
+    }
     return {
       mode: "inline", port, url,
       reason: `something answers on :${port} but not like the engram daemon (HTTP ${health.status})`,

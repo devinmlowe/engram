@@ -1385,8 +1385,11 @@ export async function startMcpServer(args: string[] = process.argv.slice(2)): Pr
       registerHandlers: (srv) => registerToolHandlers(srv, dispatcher.call),
       health: () => {
         const stats = dispatcher.stats();
-        // #65: the daily version check the CLI caches (never the network from here)
-        return { workers: stats ?? { size: 0 }, update: updateHealthField((config ??= loadConfig()).dataDir) };
+        config ??= loadConfig();
+        // #65: the daily version check the CLI caches (never the network from here).
+        // #87: the database this daemon serves, so a scoped stdio start with another
+        // ENGRAM_DB_PATH runs inline instead of bridging into the wrong database.
+        return { workers: stats ?? { size: 0 }, dbPath: config.dbPath, update: updateHealthField(config.dataDir) };
       },
     });
 

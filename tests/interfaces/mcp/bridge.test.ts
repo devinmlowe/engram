@@ -194,6 +194,30 @@ describe("decideStdioMode", () => {
     const d = await decideStdioMode({ args: ["--port", "9912"], env: { ENGRAM_MCP_PORT: "9911" }, probe: ok() });
     expect(d.port).toBe(9912);
   });
+
+  // #87: a stdio start scoped through its env (the Hermes plugin's child, or
+  // any host that sets ENGRAM_SCOPE in the server's env block) must never
+  // bridge — the daemon would run every call under its own env instead.
+  it("ENGRAM_SCOPE / ENGRAM_READ_SCOPES force inline without probing, naming the variable", async () => {
+    const probe = vi.fn(ok());
+    const scoped = await decideStdioMode({ args: [], env: { ENGRAM_SCOPE: "hermes:career" }, probe });
+    expect(scoped).toMatchObject({ mode: "inline", reason: "ENGRAM_SCOPE=hermes:career is per-process; the daemon would ignore it" });
+    const read = await decideStdioMode({ args: [], env: { ENGRAM_READ_SCOPES: "global,hermes:career" }, probe });
+    expect(read).toMatchObject({ mode: "inline", reason: "ENGRAM_READ_SCOPES=global,hermes:career is per-process; the daemon would ignore it" });
+    expect(probe).not.toHaveBeenCalled();
+    // Blank values do not count.
+    expect((await decideStdioMode({ args: [], env: { ENGRAM_SCOPE: "  " }, probe })).mode).toBe("bridge");
+  });
+
+  it("ENGRAM_DB_PATH bridges only when the daemon reports the same database", async () => {
+    const daemon = (dbPath: string) => ok(200, JSON.stringify({ status: "ok", dbPath }));
+    const same = await decideStdioMode({ args: [], env: { ENGRAM_DB_PATH: "/data/a/./engram.db" }, probe: daemon("/data/a/engram.db") });
+    expect(same.mode).toBe("bridge");
+    const other = await decideStdioMode({ args: [], env: { ENGRAM_DB_PATH: "/data/b/engram.db" }, probe: daemon("/data/a/engram.db") });
+    expect(other).toMatchObject({ mode: "inline", reason: "ENGRAM_DB_PATH=/data/b/engram.db but the daemon serves /data/a/engram.db" });
+    // A daemon that does not report its database (pre-#87) keeps bridging.
+    expect((await decideStdioMode({ args: [], env: { ENGRAM_DB_PATH: "/data/b/engram.db" }, probe: ok() })).mode).toBe("bridge");
+  });
 });
 
 describe("bridge module stays light", () => {
@@ -337,6 +361,18 @@ describe("stdio entry end to end (real daemon, real child process)", () => {
     children.push(child);
     expect(child.stderr()).toContain("Engram MCP: running inline (ENGRAM_MCP_STANDALONE=1)");
     expect((await child.client.listTools()).tools).toHaveLength(16);
+  }, 60_000);
+
+  it("ENGRAM_SCOPE in the child's env runs inline even though the daemon is healthy (#87: Hermes profile isolation)", async () => {
+    const before = http.sessions.size;
+    const child = await spawnCli([], { ENGRAM_MCP_PORT: String(daemonPort), ENGRAM_SCOPE: "hermes:career" });
+    children.push(child);
+
+    expect(child.stderr()).toContain("Engram MCP: running inline (ENGRAM_SCOPE=hermes:career is per-process; the daemon would ignore it)");
+    expect(child.stderr()).not.toContain("bridging");
+    expect((await child.client.listTools()).tools).toHaveLength(16);
+    expect(child.trace()).toContain("/src/interfaces/mcp/server.ts");
+    expect(http.sessions.size).toBe(before);
   }, 60_000);
 
   it("exits 0 when the host closes stdin", async () => {
