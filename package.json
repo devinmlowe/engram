@@ -1,6 +1,6 @@
 {
   "name": "@devinmlowe/engram",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Cognitive memory system for Claude Code — episodic storage, semantic extraction, knowledge graph, and dream-state consolidation",
   "mcpName": "io.github.devinmlowe/engram",
   "type": "module",

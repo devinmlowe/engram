@@ -7,11 +7,16 @@ All notable changes to engram are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-21
+
+Tenant isolation and scoping fixes (#87, #106, #108, #109, #138): an env-pinned stdio child — every Hermes profile, or any host that sets `ENGRAM_SCOPE` / `ENGRAM_READ_SCOPES` — could previously read, write or forget across tenants through the daemon bridge, per-call `scope` / `read_scopes` params, the `forget` `scope: "global"` override, or a `memory_suppressions` row shared by every scope. Each path is closed below. Schema version 6 (`suppressions_scope_v1`, additive; `engram migrate` on update). The over-engineering burn-down (#114) entries under Changed / Removed also ship here. Windows note: `windows-latest` CI stays experimental — Node 22 `npm ci` still needs a compiler for better-sqlite3 13 (#84) and Node 24 has path-separator test failures (#74); neither is new in this release.
+
 ### Fixed
 - A stdio start no longer bridges its per-process scoping away (#87, P1). `engram mcp` / `dist/interfaces/mcp/server.js` with `ENGRAM_SCOPE` or `ENGRAM_READ_SCOPES` in the environment — every Hermes profile child, or any host following `docs/integrate-your-agent.md` — used to bridge to a healthy daemon, which ran each forwarded call under *its* env: every profile wrote `global` and read every scope, silently. Such a start now runs inline without probing, with the reason on stderr (`running inline (ENGRAM_SCOPE=hermes:career is per-process; the daemon would ignore it)`). The daemon's `/health` gained `dbPath`; with `ENGRAM_DB_PATH` set the bridge is used only when it matches the daemon's, otherwise inline (`ENGRAM_DB_PATH=… but the daemon serves …`). A daemon that does not report `dbPath` (older build) keeps bridging as before.
 - `forget` no longer honours `scope: "global"` as a scope override when the server's own env pins reads (`ENGRAM_SCOPE` / `ENGRAM_READ_SCOPES`): an env-pinned stdio child (the Hermes memory-provider transport) could pass it to delete, or search for and delete, another tenant's memories (#109). The override still works from an unrestricted server. The tool description says so; the `tool-schemas` snapshot is re-recorded for that sentence only.
 - Per-call `scope` / `read_scopes` could escape an env-pinned tenant (#108). When `ENGRAM_SCOPE` / `ENGRAM_READ_SCOPES` are set (a stdio child scoped by the Hermes plugin), `resolveCallScoping` now intersects `read_scopes` with the env read scopes (empty intersection is an error) and rejects a `scope` that is not one of them — a tenant may only write where it may read — instead of letting the params replace the env. The shared HTTP daemon, where the env is unset and the params are the tenant identity, is unchanged.
 - `memory_suppressions` was keyed on `content_hash` alone, so one tenant's `forget` suppressed re-extraction of the same sentence for every tenant and one tenant's `remember` lifted every tenant's suppression (#106). The table is rebuilt with `PRIMARY KEY (content_hash, scope)` (checkpoint `suppressions_scope_v1`, existing rows kept, schema version 6); dream extract matches suppressions in the conversation's scope or `global`, and `remember` / `restore` clear only their own scope's row. `clearSuppression` and `filterSuppressedFacts` take a `scope` argument.
+- The Hermes plugin's real-server end-to-end test spawns its engram child with `ENGRAM_MCP_STANDALONE=1` (#138), so a healthy daemon on the developer's machine is never bridged to and the live graph is never touched by the test.
 
 ### Changed
 - Test scaffolding shared instead of copied (#126, part of the #114 over-engineering burn-down). No behaviour change and no test lost: `tests/mocks/embeddings.ts` replaces eleven copies of the hash-based embeddings `vi.mock` factory, `tests/mocks/llm-fetch.ts` the four `stubFetch` / `makeAnthropicMock` copies in the `*-factory` suites, `tests/mocks/fake-worker.ts` the two `FakeWorker` classes; `tests/helpers.ts` gains the raw row inserts (`insertEntity`, `insertRelationship`, `insertCluster`, `insertBridgeScore`, `insertConversation`, `insertExchange`, `insertMemory`), `createTestMemory`, `makeExchanges` and the built-CLI guard (`builtCli`, `itBuilt`), and loses its `cosineSimilarity` copy (tests import `src/_core/search/vector.ts`) and the one-caller `createTestFixture` / `createSyntheticToolCall`. `vitest.config.ts` sets `test.unstubEnvs`, so suites isolate env with `vi.stubEnv(key, undefined)` instead of hand-rolled save/restore loops.
@@ -140,7 +145,8 @@ First release that ships the Claude Code plugin, the `engram mcp` daemon bridge,
 
 - Initial release: phases 1–7 — episodic archive and search, semantic extraction and consolidation, knowledge graph and reflection, dream-state pipeline, RLM recall sessions, file-analysis tools, commitments ledger, MCP stdio/HTTP server, CLI and web visualizer.
 
-[Unreleased]: https://github.com/devinmlowe/engram/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/devinmlowe/engram/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/devinmlowe/engram/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/devinmlowe/engram/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/devinmlowe/engram/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/devinmlowe/engram/releases/tag/v0.2.0
