@@ -5,12 +5,11 @@
  * carries `update: {current, available}`; the CLI prints the notice once on
  * stderr for a user-facing command and never with --json.
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { ENGRAM_VERSION, PACKAGE_NAME, PACKAGE_ROOT } from "../../../src/_core/version/index.js";
 import type { ExecResult } from "../../../src/interfaces/cli/services.js";
 import {
@@ -18,17 +17,15 @@ import {
   updateCheckDisabled, updateHealthField, updateNotice, updateNoticeFor, writeUpdateCheckCache, type UpdateCheckCache,
 } from "../../../src/interfaces/cli/update-check.js";
 import { createEngramHttpServer, type EngramHttpServer } from "../../../src/interfaces/mcp/http.js";
+import { builtCli as cli, itBuilt } from "../../helpers.js";
 
 let root: string;
-let savedEnv: string | undefined;
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "engram-update-check-"));
-  savedEnv = process.env[NO_UPDATE_CHECK_ENV];
-  delete process.env[NO_UPDATE_CHECK_ENV];
+  vi.stubEnv(NO_UPDATE_CHECK_ENV, undefined);
 });
 afterEach(() => {
   rmSync(root, { recursive: true, force: true });
-  if (savedEnv === undefined) delete process.env[NO_UPDATE_CHECK_ENV]; else process.env[NO_UPDATE_CHECK_ENV] = savedEnv;
 });
 
 /** An npm-install fake (no `.git` under packageRoot): `npm view` answers the dist-tag and counts calls. */
@@ -136,8 +133,6 @@ describe("daily cached version check (#65)", () => {
 });
 
 describe("engram CLI notice", () => {
-  const cli = fileURLToPath(new URL("../../../dist/interfaces/cli/index.js", import.meta.url));
-  const built = existsSync(cli);
   function run(args: string[], env: NodeJS.ProcessEnv = {}) {
     return spawnSync(process.execPath, [cli, ...args], {
       encoding: "utf8",
@@ -146,7 +141,7 @@ describe("engram CLI notice", () => {
   }
   const NOTICE = `engram 9.9.9 available (you have ${ENGRAM_VERSION}) — engram update`;
 
-  it.skipIf(!built)("stats prints the cached notice once on stderr, not with --json, not when disabled; mcp-free commands never call the network when the cache is fresh", () => {
+  itBuilt("stats prints the cached notice once on stderr, not with --json, not when disabled; mcp-free commands never call the network when the cache is fresh", () => {
     const dataDir = join(root, "cli-data");
     mkdirSync(dataDir, { recursive: true });
     writeUpdateCheckCache(dataDir, { checkedAt: new Date().toISOString(), current: ENGRAM_VERSION, available: "9.9.9", kind: "git", source: "git ls-remote --tags origin" });
@@ -163,7 +158,7 @@ describe("engram CLI notice", () => {
     expect(off.stderr).not.toContain(NOTICE);
   }, 60_000);
 
-  it.skipIf(!built)("update --check writes the cache and says so on the second run", () => {
+  itBuilt("update --check writes the cache and says so on the second run", () => {
     const first = run(["update", "--check"]);
     expect(first.status, first.stderr).toBe(0);
     expect(first.stdout).not.toContain("(cached ");

@@ -15,6 +15,7 @@ import {
   getLatestExtractFingerprints,
 } from "../../src/dream/scheduler.js";
 import { createTestDb } from "../helpers.js";
+import { insertConversation, insertExchange, insertMemory } from "../helpers.js";
 import type { TestDb } from "../helpers.js";
 import type { DreamReport } from "../../src/dream/types.js";
 
@@ -29,27 +30,6 @@ afterEach(() => {
 });
 
 // ─── Helpers ────────────────────────────────────────────────────
-
-/** Insert a conversation row for testing work queue functions. */
-function insertConversation(
-  id: string,
-  opts: { lastIndexed?: number; exchangeCount?: number } = {},
-): void {
-  t.db
-    .prepare(
-      "INSERT INTO conversations (id, project, last_indexed, exchange_count) VALUES (?, ?, ?, ?)",
-    )
-    .run(id, "test-project", opts.lastIndexed ?? null, opts.exchangeCount ?? 0);
-}
-
-/** Insert an active memory row for testing progress tracking. */
-function insertActiveMemory(id: string): void {
-  t.db
-    .prepare(
-      "INSERT INTO memories (id, type, content, confidence, importance, is_active) VALUES (?, 'fact', 'test', 0.5, 0.5, 1)",
-    )
-    .run(id);
-}
 
 function makeDreamReport(overrides: Partial<DreamReport> = {}): DreamReport {
   return {
@@ -352,9 +332,9 @@ describe("Work Queue", () => {
   describe("getUnprocessedConversations", () => {
     it("returns all conversations when none are checkpointed", () => {
       const runId = createRun(t.db);
-      insertConversation("conv-001");
-      insertConversation("conv-002");
-      insertConversation("conv-003");
+      insertConversation(t.db, "conv-001");
+      insertConversation(t.db, "conv-002");
+      insertConversation(t.db, "conv-003");
 
       const unprocessed = getUnprocessedConversations(t.db, runId);
 
@@ -366,9 +346,9 @@ describe("Work Queue", () => {
 
     it("excludes conversations that have been checkpointed", () => {
       const runId = createRun(t.db);
-      insertConversation("conv-001");
-      insertConversation("conv-002");
-      insertConversation("conv-003");
+      insertConversation(t.db, "conv-001");
+      insertConversation(t.db, "conv-002");
+      insertConversation(t.db, "conv-003");
 
       recordCheckpoint(t.db, runId, "extract", "conv-001");
       recordCheckpoint(t.db, runId, "extract", "conv-002");
@@ -383,8 +363,8 @@ describe("Work Queue", () => {
 
     it("returns empty array when all conversations are checkpointed", () => {
       const runId = createRun(t.db);
-      insertConversation("conv-001");
-      insertConversation("conv-002");
+      insertConversation(t.db, "conv-001");
+      insertConversation(t.db, "conv-002");
 
       recordCheckpoint(t.db, runId, "extract", "conv-001");
       recordCheckpoint(t.db, runId, "extract", "conv-002");
@@ -402,7 +382,7 @@ describe("Work Queue", () => {
     it("only considers checkpoints for the given run", () => {
       const runId1 = createRun(t.db);
       const runId2 = createRun(t.db);
-      insertConversation("conv-001");
+      insertConversation(t.db, "conv-001");
 
       recordCheckpoint(t.db, runId1, "extract", "conv-001");
 
@@ -423,9 +403,9 @@ describe("Work Queue", () => {
     });
 
     it("sorts by last_indexed descending (newest first)", () => {
-      insertConversation("conv-old", { lastIndexed: 1000 });
-      insertConversation("conv-mid", { lastIndexed: 2000 });
-      insertConversation("conv-new", { lastIndexed: 3000 });
+      insertConversation(t.db, "conv-old", { lastIndexed: 1000 });
+      insertConversation(t.db, "conv-mid", { lastIndexed: 2000 });
+      insertConversation(t.db, "conv-new", { lastIndexed: 3000 });
 
       const result = prioritizeConversations(t.db, [
         "conv-old",
@@ -437,11 +417,11 @@ describe("Work Queue", () => {
     });
 
     it("sorts by exchange_count when last_indexed is equal", () => {
-      insertConversation("conv-small", {
+      insertConversation(t.db, "conv-small", {
         lastIndexed: 1000,
         exchangeCount: 5,
       });
-      insertConversation("conv-large", {
+      insertConversation(t.db, "conv-large", {
         lastIndexed: 1000,
         exchangeCount: 50,
       });
@@ -455,8 +435,8 @@ describe("Work Queue", () => {
     });
 
     it("handles conversations with null last_indexed", () => {
-      insertConversation("conv-null", { lastIndexed: undefined });
-      insertConversation("conv-indexed", { lastIndexed: 1000 });
+      insertConversation(t.db, "conv-null", { lastIndexed: undefined });
+      insertConversation(t.db, "conv-indexed", { lastIndexed: 1000 });
 
       const result = prioritizeConversations(t.db, [
         "conv-null",
@@ -468,7 +448,7 @@ describe("Work Queue", () => {
     });
 
     it("only returns IDs that exist in the database", () => {
-      insertConversation("conv-exists");
+      insertConversation(t.db, "conv-exists");
 
       const result = prioritizeConversations(t.db, [
         "conv-exists",
@@ -486,9 +466,9 @@ describe("Resume after crash", () => {
   it("processes only unfinished work after resuming an incomplete run", () => {
     // Simulate: start a run, checkpoint 2 of 3 conversations, then "crash"
     const runId = createRun(t.db);
-    insertConversation("conv-001", { lastIndexed: 1000 });
-    insertConversation("conv-002", { lastIndexed: 2000 });
-    insertConversation("conv-003", { lastIndexed: 3000 });
+    insertConversation(t.db, "conv-001", { lastIndexed: 1000 });
+    insertConversation(t.db, "conv-002", { lastIndexed: 2000 });
+    insertConversation(t.db, "conv-003", { lastIndexed: 3000 });
 
     // Process first two
     recordCheckpoint(t.db, runId, "extract", "conv-001");
@@ -512,7 +492,7 @@ describe("Resume after crash", () => {
 
   it("returns no incomplete run after the run is completed", () => {
     const runId = createRun(t.db);
-    insertConversation("conv-001");
+    insertConversation(t.db, "conv-001");
 
     recordCheckpoint(t.db, runId, "extract", "conv-001");
     completeRun(t.db, runId, makeDreamReport());
@@ -524,47 +504,38 @@ describe("Resume after crash", () => {
 // ─── W12: conversation fingerprints on extract checkpoints ──────
 
 describe("computeConversationFingerprint / getLatestExtractFingerprints (W12)", () => {
-  function insertExchangeRow(id: string, convId: string, index: number, assistant = `Assistant ${index}`): void {
-    t.db
-      .prepare(
-        `INSERT INTO exchanges (id, conversation_id, project, timestamp, user_message, assistant_message, exchange_index, token_estimate)
-         VALUES (?, ?, 'p', '2026-09-16T00:00:00Z', ?, ?, ?, 10)`,
-      )
-      .run(id, convId, `User ${index}`, assistant, index);
-  }
-
   it("is a deterministic sha256 hex digest, distinct per conversation", () => {
-    insertConversation("conv-fp-a");
-    insertExchangeRow("a-1", "conv-fp-a", 1);
-    insertExchangeRow("a-0", "conv-fp-a", 0);
+    insertConversation(t.db, "conv-fp-a");
+    insertExchange(t.db, "a-1", "conv-fp-a", { index: 1 });
+    insertExchange(t.db, "a-0", "conv-fp-a", { index: 0 });
     const first = computeConversationFingerprint(t.db, "conv-fp-a");
     expect(first).toMatch(/^[0-9a-f]{64}$/);
     expect(computeConversationFingerprint(t.db, "conv-fp-a")).toBe(first);
 
-    insertConversation("conv-fp-b");
-    insertExchangeRow("b-0", "conv-fp-b", 0);
+    insertConversation(t.db, "conv-fp-b");
+    insertExchange(t.db, "b-0", "conv-fp-b", { index: 0 });
     expect(computeConversationFingerprint(t.db, "conv-fp-b")).not.toBe(first);
     // a conversation with no exchanges still fingerprints (stable empty digest)
-    insertConversation("conv-fp-empty");
+    insertConversation(t.db, "conv-fp-empty");
     expect(computeConversationFingerprint(t.db, "conv-fp-empty")).toMatch(/^[0-9a-f]{64}$/);
   });
 
   it("changes when an exchange is edited or added", () => {
-    insertConversation("conv-fp-c");
-    insertExchangeRow("c-0", "conv-fp-c", 0);
+    insertConversation(t.db, "conv-fp-c");
+    insertExchange(t.db, "c-0", "conv-fp-c", { index: 0 });
     const before = computeConversationFingerprint(t.db, "conv-fp-c");
 
     t.db.prepare("UPDATE exchanges SET assistant_message = 'edited, and longer' WHERE id = 'c-0'").run();
     const edited = computeConversationFingerprint(t.db, "conv-fp-c");
     expect(edited).not.toBe(before);
 
-    insertExchangeRow("c-1", "conv-fp-c", 1);
+    insertExchange(t.db, "c-1", "conv-fp-c", { index: 1 });
     expect(computeConversationFingerprint(t.db, "conv-fp-c")).not.toBe(edited);
   });
 
   it("changes on a same-length in-place edit and is stable when nothing changed (#23)", () => {
-    insertConversation("conv-fp-d");
-    insertExchangeRow("d-0", "conv-fp-d", 0, "abc");
+    insertConversation(t.db, "conv-fp-d");
+    insertExchange(t.db, "d-0", "conv-fp-d", { index: 0, assistantMessage: "abc" });
     const before = computeConversationFingerprint(t.db, "conv-fp-d");
     expect(computeConversationFingerprint(t.db, "conv-fp-d")).toBe(before);
 

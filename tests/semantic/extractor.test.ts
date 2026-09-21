@@ -10,16 +10,9 @@ import {
   type ConversationExchange,
   type ConversationMetadata,
 } from "../../src/semantic/extractor.js";
+import { makeExchanges } from "../helpers.js";
 
 // ─── Helpers ────────────────────────────────────────────────────
-
-function makeExchanges(count: number): ConversationExchange[] {
-  return Array.from({ length: count }, (_, i) => ({
-    index: i,
-    userMessage: `User message ${i}`,
-    assistantMessage: `Assistant response ${i}`,
-  }));
-}
 
 const defaultMetadata: ConversationMetadata = {
   project: "test-project",

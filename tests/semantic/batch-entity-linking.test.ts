@@ -7,45 +7,14 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createTestDb } from "../helpers.js";
+import { insertEntity } from "../helpers.js";
 import type { TestDb } from "../helpers.js";
 import { getMemory } from "../../src/semantic/memory.js";
 
 // Mock embeddings
-vi.mock("../../src/_core/embeddings/index.js", () => {
-  const dims = 256;
-
-  function deterministicVector(seed: string): number[] {
-    const vec = new Array(dims);
-    let hash = 0;
-    for (let i = 0; i < seed.length; i++) {
-      hash = ((hash << 5) - hash + seed.charCodeAt(i)) | 0;
-    }
-    for (let i = 0; i < dims; i++) {
-      hash = ((hash << 5) - hash + i) | 0;
-      vec[i] = (hash & 0xffff) / 0xffff - 0.5;
-    }
-    let norm = 0;
-    for (let i = 0; i < dims; i++) norm += vec[i] * vec[i];
-    norm = Math.sqrt(norm);
-    for (let i = 0; i < dims; i++) vec[i] /= norm;
-    return vec;
-  }
-
-  return {
-    initEmbeddings: vi.fn().mockResolvedValue(undefined),
-    embedQuery: vi.fn().mockImplementation((text: string) =>
-      Promise.resolve(deterministicVector(`query:${text}`)),
-    ),
-    embedDocument: vi.fn().mockImplementation((text: string) =>
-      Promise.resolve(deterministicVector(`doc:${text}`)),
-    ),
-    embedDocumentBatch: vi.fn().mockImplementation((texts: string[]) =>
-      Promise.resolve(texts.map((t) => deterministicVector(`doc:${t}`))),
-    ),
-    getActiveModel: vi.fn().mockReturnValue("mock-model"),
-    resetEmbeddings: vi.fn(),
-  };
-});
+vi.mock("../../src/_core/embeddings/index.js", async () =>
+  (await import("../mocks/embeddings.js")).deterministicEmbeddings(),
+);
 
 let t: TestDb;
 
@@ -57,19 +26,10 @@ afterEach(() => {
   t.cleanup();
 });
 
-/**
- * Helper: insert a test entity directly via SQL (no embedding needed for linking tests).
- */
-function insertTestEntity(
-  name: string,
-  type: string = "technology",
-  mentionCount: number = 5,
-): string {
+/** Insert an entity named after itself (no embedding needed for linking tests) and return its id. */
+function insertTestEntity(name: string, type: string = "technology", mentionCount: number = 5): string {
   const id = `ent-${name.toLowerCase().replace(/\s+/g, "-")}`;
-  t.db.prepare(`
-    INSERT INTO entities (id, name, type, description, aliases, first_seen, last_seen, mention_count, created_at)
-    VALUES (?, ?, ?, ?, '[]', unixepoch(), unixepoch(), ?, unixepoch())
-  `).run(id, name, type, `${name} description`, mentionCount);
+  insertEntity(t.db, id, name, type, { description: `${name} description`, mentionCount });
   return id;
 }
 

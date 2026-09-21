@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import Database from "better-sqlite3";
 import { validateEmbeddings, validateFTS } from "../../../src/interfaces/cli/validate.js";
-import { createTestDb } from "../../helpers.js";
+import { createTestDb, insertExchange as insertExchangeRow } from "../../helpers.js";
 import type { TestDb } from "../../helpers.js";
 
 // ─── Helpers ────────────────────────────────────────────────────
@@ -12,26 +12,17 @@ function randomNormalizedVector(dims: number = 256): number[] {
   return vec.map((v) => v / norm);
 }
 
+/** An exchange row plus its vec_exchanges embedding (random unit vector unless given). */
 function insertExchange(
   db: Database.Database,
   id: string,
   conversationId: string,
-  userMsg: string = "user message",
-  assistantMsg: string = "assistant message",
-  embedding?: number[],
+  userMessage: string = "user message",
+  assistantMessage: string = "assistant message",
+  embedding: number[] = randomNormalizedVector(),
 ): void {
-  db.prepare(
-    `INSERT OR REPLACE INTO exchanges
-       (id, conversation_id, project, timestamp, user_message, assistant_message, exchange_index, token_estimate)
-     VALUES (?, ?, 'test', '2026-01-15T10:00:00Z', ?, ?, 0, 50)`,
-  ).run(id, conversationId, userMsg, assistantMsg);
-
-  const vec = embedding ?? randomNormalizedVector();
-  db.prepare("DELETE FROM vec_exchanges WHERE id = ?").run(id);
-  db.prepare("INSERT INTO vec_exchanges(id, embedding) VALUES (?, ?)").run(
-    id,
-    Buffer.from(new Float32Array(vec).buffer),
-  );
+  insertExchangeRow(db, id, conversationId, { project: "test", timestamp: "2026-01-15T10:00:00Z", userMessage, assistantMessage });
+  db.prepare("INSERT INTO vec_exchanges(id, embedding) VALUES (?, ?)").run(id, Buffer.from(new Float32Array(embedding).buffer));
 }
 
 // ─── Tests ──────────────────────────────────────────────────────

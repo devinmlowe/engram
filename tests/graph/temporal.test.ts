@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import type Database from "better-sqlite3";
 import { createTestDb } from "../helpers.js";
+import { insertEntity, insertRelationship, insertCluster, insertBridgeScore } from "../helpers.js";
 import type { TestDb } from "../helpers.js";
 import {
   detectEntityBursts,
@@ -21,71 +22,6 @@ const DAY = 86400; // seconds per day
 const NOW = Math.floor(Date.now() / 1000);
 
 // ─── Test Helpers ─────────────────────────────────────────────────
-
-function insertTestEntity(
-  db: Database.Database,
-  id: string,
-  name: string,
-  type: string = "concept",
-  overrides: {
-    firstSeen?: number;
-    lastSeen?: number;
-    mentionCount?: number;
-  } = {},
-) {
-  db.prepare(
-    `INSERT INTO entities (id, name, type, aliases, first_seen, last_seen, mention_count, created_at)
-    VALUES (?, ?, ?, '[]', ?, ?, ?, ?)`,
-  ).run(
-    id,
-    name,
-    type,
-    overrides.firstSeen ?? NOW,
-    overrides.lastSeen ?? NOW,
-    overrides.mentionCount ?? 1,
-    NOW,
-  );
-}
-
-function insertTestRelationship(
-  db: Database.Database,
-  id: string,
-  source: string,
-  target: string,
-  type: string = "related_to",
-  weight: number = 1.0,
-  overrides: { createdAt?: number } = {},
-) {
-  db.prepare(
-    `INSERT INTO relationships (id, source_entity_id, target_entity_id, type, weight, source_memories, created_at)
-    VALUES (?, ?, ?, ?, ?, '[]', ?)`,
-  ).run(id, source, target, type, weight, overrides.createdAt ?? NOW);
-}
-
-function insertCluster(
-  db: Database.Database,
-  id: string,
-  name: string,
-  entityIds: string[],
-  generation: number,
-) {
-  db.prepare(
-    `INSERT INTO topic_clusters (id, name, entity_ids, memory_ids, coherence_score, created_at, updated_at, generation)
-    VALUES (?, ?, ?, '[]', 0.5, ?, ?, ?)`,
-  ).run(id, name, JSON.stringify(entityIds), NOW, NOW, generation);
-}
-
-function insertBridgeScore(
-  db: Database.Database,
-  entityId: string,
-  generation: number,
-  bridgeScore: number = 1.0,
-) {
-  db.prepare(
-    `INSERT INTO bridge_scores (entity_id, betweenness, community_span, bridge_score, generation)
-    VALUES (?, ?, ?, ?, ?)`,
-  ).run(entityId, 0.5, 2, bridgeScore, generation);
-}
 
 // ─── Tests ────────────────────────────────────────────────────────
 
@@ -113,7 +49,7 @@ describe("Temporal Pattern Analysis", () => {
 
       for (let w = 0; w < 4; w++) {
         const ts = (baseWindowIdx + w) * windowSeconds + 100;
-        insertTestEntity(t.db, `normal-${w}`, `Normal ${w}`, "concept", {
+        insertEntity(t.db, `normal-${w}`, `Normal ${w}`, "concept", {
           firstSeen: ts,
         });
       }
@@ -121,7 +57,7 @@ describe("Temporal Pattern Analysis", () => {
       // Burst window (the 5th window)
       const burstStart = (baseWindowIdx + 4) * windowSeconds + 100;
       for (let i = 0; i < 8; i++) {
-        insertTestEntity(t.db, `burst-${i}`, `Burst ${i}`, "concept", {
+        insertEntity(t.db, `burst-${i}`, `Burst ${i}`, "concept", {
           firstSeen: burstStart + i * 100,
         });
       }
@@ -146,7 +82,7 @@ describe("Temporal Pattern Analysis", () => {
       for (let week = 0; week < 3; week++) {
         const base = (baseWindowIdx + week) * windowSeconds + 100;
         for (let i = 0; i < 3; i++) {
-          insertTestEntity(
+          insertEntity(
             t.db,
             `w${week}-${i}`,
             `Week${week} Entity ${i}`,
@@ -167,7 +103,7 @@ describe("Temporal Pattern Analysis", () => {
 
     it("returns empty when only one time window exists", () => {
       for (let i = 0; i < 10; i++) {
-        insertTestEntity(t.db, `ent-${i}`, `Entity ${i}`, "concept", {
+        insertEntity(t.db, `ent-${i}`, `Entity ${i}`, "concept", {
           firstSeen: NOW + i * 100,
         });
       }
@@ -182,14 +118,14 @@ describe("Temporal Pattern Analysis", () => {
 
       for (let w = 0; w < 4; w++) {
         const ts = (baseWindowIdx + w) * windowSeconds + 100;
-        insertTestEntity(t.db, `n-${w}`, `Normal ${w}`, "concept", {
+        insertEntity(t.db, `n-${w}`, `Normal ${w}`, "concept", {
           firstSeen: ts,
         });
       }
 
       const burstStart = (baseWindowIdx + 4) * windowSeconds + 100;
       for (let i = 0; i < 8; i++) {
-        insertTestEntity(t.db, `b-${i}`, `Burst ${i}`, "concept", {
+        insertEntity(t.db, `b-${i}`, `Burst ${i}`, "concept", {
           firstSeen: burstStart + i * 100,
         });
       }
@@ -214,7 +150,7 @@ describe("Temporal Pattern Analysis", () => {
       const windowStart = windowIdx * windowSeconds + 100;
 
       for (let i = 0; i < 5; i++) {
-        insertTestEntity(
+        insertEntity(
           t.db,
           `cluster-${i}`,
           `Cluster Entity ${i}`,
@@ -224,7 +160,7 @@ describe("Temporal Pattern Analysis", () => {
       }
 
       // Add a relationship to boost confidence
-      insertTestRelationship(
+      insertRelationship(
         t.db,
         "rel-0-1",
         "cluster-0",
@@ -233,7 +169,7 @@ describe("Temporal Pattern Analysis", () => {
         1.0,
       );
 
-      insertTestEntity(t.db, "loner", "Loner", "concept", {
+      insertEntity(t.db, "loner", "Loner", "concept", {
         firstSeen: NOW - 30 * DAY,
       });
 
@@ -249,10 +185,10 @@ describe("Temporal Pattern Analysis", () => {
     });
 
     it("respects minEntities threshold", () => {
-      insertTestEntity(t.db, "pair-a", "Pair A", "concept", {
+      insertEntity(t.db, "pair-a", "Pair A", "concept", {
         firstSeen: NOW,
       });
-      insertTestEntity(t.db, "pair-b", "Pair B", "concept", {
+      insertEntity(t.db, "pair-b", "Pair B", "concept", {
         firstSeen: NOW + 100,
       });
 
@@ -270,13 +206,13 @@ describe("Temporal Pattern Analysis", () => {
       const windowIdx = Math.floor(NOW / windowSeconds);
       const base = windowIdx * windowSeconds + 100;
 
-      insertTestEntity(t.db, "e1", "TypeScript", "concept", {
+      insertEntity(t.db, "e1", "TypeScript", "concept", {
         firstSeen: base,
       });
-      insertTestEntity(t.db, "e2", "React", "concept", {
+      insertEntity(t.db, "e2", "React", "concept", {
         firstSeen: base + 100,
       });
-      insertTestEntity(t.db, "e3", "Node.js", "concept", {
+      insertEntity(t.db, "e3", "Node.js", "concept", {
         firstSeen: base + 200,
       });
 
@@ -297,14 +233,14 @@ describe("Temporal Pattern Analysis", () => {
 
       const base1 = baseWindowIdx * windowSeconds + 100;
       for (let i = 0; i < 3; i++) {
-        insertTestEntity(t.db, `g1-${i}`, `Group1 ${i}`, "concept", {
+        insertEntity(t.db, `g1-${i}`, `Group1 ${i}`, "concept", {
           firstSeen: base1 + i * 100,
         });
       }
 
       const base2 = (baseWindowIdx + 2) * windowSeconds + 100;
       for (let i = 0; i < 4; i++) {
-        insertTestEntity(t.db, `g2-${i}`, `Group2 ${i}`, "concept", {
+        insertEntity(t.db, `g2-${i}`, `Group2 ${i}`, "concept", {
           firstSeen: base2 + i * 100,
         });
       }
@@ -320,18 +256,18 @@ describe("Temporal Pattern Analysis", () => {
     it("flags old inactive entities", () => {
       const staleTime = NOW - 60 * DAY;
       for (let i = 0; i < 4; i++) {
-        insertTestEntity(t.db, `stale-${i}`, `Stale Entity ${i}`, "concept", {
+        insertEntity(t.db, `stale-${i}`, `Stale Entity ${i}`, "concept", {
           firstSeen: staleTime - 30 * DAY,
           lastSeen: staleTime + i * 100,
           mentionCount: 3,
         });
       }
 
-      insertTestEntity(t.db, "active-a", "Active A", "concept", {
+      insertEntity(t.db, "active-a", "Active A", "concept", {
         lastSeen: NOW,
         mentionCount: 5,
       });
-      insertTestEntity(t.db, "active-b", "Active B", "concept", {
+      insertEntity(t.db, "active-b", "Active B", "concept", {
         lastSeen: NOW,
         mentionCount: 5,
       });
@@ -352,7 +288,7 @@ describe("Temporal Pattern Analysis", () => {
     it("ignores entities with mention_count < 2", () => {
       const staleTime = NOW - 60 * DAY;
       for (let i = 0; i < 5; i++) {
-        insertTestEntity(t.db, `once-${i}`, `Once Entity ${i}`, "concept", {
+        insertEntity(t.db, `once-${i}`, `Once Entity ${i}`, "concept", {
           firstSeen: staleTime,
           lastSeen: staleTime,
           mentionCount: 1,
@@ -365,7 +301,7 @@ describe("Temporal Pattern Analysis", () => {
 
     it("does not flag recently active entities", () => {
       for (let i = 0; i < 5; i++) {
-        insertTestEntity(t.db, `recent-${i}`, `Recent ${i}`, "concept", {
+        insertEntity(t.db, `recent-${i}`, `Recent ${i}`, "concept", {
           lastSeen: NOW - 5 * DAY,
           mentionCount: 3,
         });
@@ -382,11 +318,11 @@ describe("Temporal Pattern Analysis", () => {
 
     it("respects minEntities threshold", () => {
       const staleTime = NOW - 60 * DAY;
-      insertTestEntity(t.db, "stale-a", "Stale A", "concept", {
+      insertEntity(t.db, "stale-a", "Stale A", "concept", {
         lastSeen: staleTime,
         mentionCount: 3,
       });
-      insertTestEntity(t.db, "stale-b", "Stale B", "concept", {
+      insertEntity(t.db, "stale-b", "Stale B", "concept", {
         lastSeen: staleTime,
         mentionCount: 3,
       });
@@ -532,12 +468,12 @@ describe("Temporal Pattern Analysis", () => {
 
   describe("detectBridgeFormation", () => {
     it("detects new bridge entity in latest generation", () => {
-      insertTestEntity(t.db, "old-bridge", "Old Bridge", "concept");
-      insertTestEntity(t.db, "new-bridge", "New Bridge", "concept");
+      insertEntity(t.db, "old-bridge", "Old Bridge", "concept");
+      insertEntity(t.db, "new-bridge", "New Bridge", "concept");
 
-      insertBridgeScore(t.db, "old-bridge", 1, 1.5);
-      insertBridgeScore(t.db, "old-bridge", 2, 1.5);
-      insertBridgeScore(t.db, "new-bridge", 2, 2.0);
+      insertBridgeScore(t.db, "old-bridge", 1, { bridgeScore: 1.5 });
+      insertBridgeScore(t.db, "old-bridge", 2, { bridgeScore: 1.5 });
+      insertBridgeScore(t.db, "new-bridge", 2, { bridgeScore: 2.0 });
 
       const patterns = detectBridgeFormation(t.db);
 
@@ -550,11 +486,11 @@ describe("Temporal Pattern Analysis", () => {
     });
 
     it("returns all bridges when first generation (no previous)", () => {
-      insertTestEntity(t.db, "bridge-a", "Bridge A", "concept");
-      insertTestEntity(t.db, "bridge-b", "Bridge B", "concept");
+      insertEntity(t.db, "bridge-a", "Bridge A", "concept");
+      insertEntity(t.db, "bridge-b", "Bridge B", "concept");
 
-      insertBridgeScore(t.db, "bridge-a", 1, 1.0);
-      insertBridgeScore(t.db, "bridge-b", 1, 2.0);
+      insertBridgeScore(t.db, "bridge-a", 1, { bridgeScore: 1.0 });
+      insertBridgeScore(t.db, "bridge-b", 1, { bridgeScore: 2.0 });
 
       const patterns = detectBridgeFormation(t.db);
 
@@ -570,10 +506,10 @@ describe("Temporal Pattern Analysis", () => {
     });
 
     it("returns empty when no new bridges formed", () => {
-      insertTestEntity(t.db, "same-bridge", "Same Bridge", "concept");
+      insertEntity(t.db, "same-bridge", "Same Bridge", "concept");
 
-      insertBridgeScore(t.db, "same-bridge", 1, 1.0);
-      insertBridgeScore(t.db, "same-bridge", 2, 1.5);
+      insertBridgeScore(t.db, "same-bridge", 1, { bridgeScore: 1.0 });
+      insertBridgeScore(t.db, "same-bridge", 2, { bridgeScore: 1.5 });
 
       const patterns = detectBridgeFormation(t.db);
       expect(patterns.length).toBe(0);

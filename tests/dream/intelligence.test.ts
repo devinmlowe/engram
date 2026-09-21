@@ -189,30 +189,30 @@ describe("buildIntelligenceConfig", () => {
 
   it("uses OLLAMA_HOST env var for ollamaUrl when set", () => {
     const original = process.env.OLLAMA_HOST;
-    process.env.OLLAMA_HOST = "http://remote-ollama:11434";
+    vi.stubEnv("OLLAMA_HOST", "http://remote-ollama:11434");
     try {
       const engramConfig = loadConfig();
       const ic = buildIntelligenceConfig(engramConfig);
       expect(ic.ollamaUrl).toBe("http://remote-ollama:11434");
     } finally {
       if (original === undefined) {
-        delete process.env.OLLAMA_HOST;
+        vi.stubEnv("OLLAMA_HOST", undefined);
       } else {
-        process.env.OLLAMA_HOST = original;
+        vi.stubEnv("OLLAMA_HOST", original);
       }
     }
   });
 
   it("defaults ollamaUrl to localhost:11434 when OLLAMA_HOST is not set", () => {
     const original = process.env.OLLAMA_HOST;
-    delete process.env.OLLAMA_HOST;
+    vi.stubEnv("OLLAMA_HOST", undefined);
     try {
       const engramConfig = loadConfig();
       const ic = buildIntelligenceConfig(engramConfig);
       expect(ic.ollamaUrl).toBe("http://localhost:11434");
     } finally {
       if (original !== undefined) {
-        process.env.OLLAMA_HOST = original;
+        vi.stubEnv("OLLAMA_HOST", original);
       }
     }
   });
@@ -717,20 +717,8 @@ describe("edge cases", () => {
 
 describe("cascade diagnostics", () => {
   const schema = { properties: { facts: { type: "array" } }, required: ["facts"] };
-  const savedEnv: Record<string, string | undefined> = {};
-
   beforeEach(() => {
-    for (const key of ["OPENROUTER_API_KEY", "ANTHROPIC_API_KEY"]) {
-      savedEnv[key] = process.env[key];
-      delete process.env[key];
-    }
-  });
-
-  afterEach(() => {
-    for (const [key, value] of Object.entries(savedEnv)) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
+    for (const key of ["OPENROUTER_API_KEY", "ANTHROPIC_API_KEY"]) vi.stubEnv(key, undefined);
   });
 
   /** Ollama down, OpenRouter rejects the key with 401. */
@@ -747,7 +735,7 @@ describe("cascade diagnostics", () => {
   }
 
   it("OpenRouter 401 with no Anthropic key throws a CascadeError naming OpenRouter and 401", async () => {
-    process.env.OPENROUTER_API_KEY = "sk-or-rejected";
+    vi.stubEnv("OPENROUTER_API_KEY", "sk-or-rejected");
     mockOllamaDownOpenRouter401();
 
     const config = makeConfig({ openrouterModel: "google/gemini-2.5-flash-lite" });
@@ -769,7 +757,7 @@ describe("cascade diagnostics", () => {
   });
 
   it("generate() reports the same per-tier failures", async () => {
-    process.env.OPENROUTER_API_KEY = "sk-or-rejected";
+    vi.stubEnv("OPENROUTER_API_KEY", "sk-or-rejected");
     mockOllamaDownOpenRouter401();
 
     const config = makeConfig({ openrouterModel: "google/gemini-2.5-flash-lite" });
@@ -780,7 +768,7 @@ describe("cascade diagnostics", () => {
   });
 
   it("warns 'skipped' for config-skipped tiers and 'failed' for runtime failures", async () => {
-    process.env.OPENROUTER_API_KEY = "sk-or-rejected";
+    vi.stubEnv("OPENROUTER_API_KEY", "sk-or-rejected");
     mockOllamaDownOpenRouter401();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
@@ -794,7 +782,7 @@ describe("cascade diagnostics", () => {
   });
 
   it("a later tier's success still returns a result after an earlier runtime failure", async () => {
-    process.env.OPENROUTER_API_KEY = "sk-or-rejected";
+    vi.stubEnv("OPENROUTER_API_KEY", "sk-or-rejected");
     mockOllamaDownOpenRouter401();
     setClient(makeMockClient(vi.fn().mockResolvedValue({
       content: [{ type: "tool_use", id: "t1", name: "structured_output", input: { facts: [] } }],
@@ -811,20 +799,8 @@ describe("cascade diagnostics", () => {
 
 describe("Ollama model fallbacks", () => {
   const schema = { properties: { facts: { type: "array" } }, required: ["facts"] };
-  const savedEnv: Record<string, string | undefined> = {};
-
   beforeEach(() => {
-    for (const key of ["OPENROUTER_API_KEY", "ANTHROPIC_API_KEY"]) {
-      savedEnv[key] = process.env[key];
-      delete process.env[key];
-    }
-  });
-
-  afterEach(() => {
-    for (const [key, value] of Object.entries(savedEnv)) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
+    for (const key of ["OPENROUTER_API_KEY", "ANTHROPIC_API_KEY"]) vi.stubEnv(key, undefined);
   });
 
   /** Ollama up with llama3.1:8b only; records the /api/generate bodies. */

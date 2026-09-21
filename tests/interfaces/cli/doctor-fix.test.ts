@@ -3,7 +3,7 @@
  * HOME / data dir with a fake shell, fake supervisor and fake probes; nothing
  * here touches ~/.config/engram, ~/.claude*, launchd or Ollama.
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,14 +18,12 @@ import { defaultHostContext, type HealthProbe, type HostContext } from "../../..
 import type { ExecResult, ServiceDeps } from "../../../src/interfaces/cli/services.js";
 
 const ENV_KEYS = ["ENGRAM_DATA_DIR", "ENGRAM_DB_PATH", "ENGRAM_MODEL_CACHE_DIR", "HF_HOME", "ENGRAM_MCP_PORT", "XDG_CONFIG_HOME", "ENGRAM_ENV_FILE", "OLLAMA_HOST", "ENGRAM_LOCAL_MODEL"];
-let saved: Record<string, string | undefined>;
 let root: string;
 let home: string;
 let pkg: string;
 
 beforeEach(() => {
-  saved = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
-  for (const k of ENV_KEYS) delete process.env[k];
+  for (const k of ENV_KEYS) vi.stubEnv(k, undefined);
   root = mkdtempSync(join(tmpdir(), "engram-doctor-fix-"));
   home = join(root, "home");
   pkg = join(root, "engram");
@@ -34,7 +32,6 @@ beforeEach(() => {
   writeFileSync(join(pkg, "dist", "interfaces", "cli", "index.js"), "// cli");
 });
 afterEach(() => {
-  for (const k of ENV_KEYS) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
   rmSync(root, { recursive: true, force: true });
 });
 

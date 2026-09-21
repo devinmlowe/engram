@@ -1,17 +1,18 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { rmSync } from "node:fs";
-import { dirname } from "node:path";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import {
   parseConversationFile,
   shouldSkipConversation,
 } from "../../src/episodic/parser.js";
-import { createTestFixture } from "../helpers.js";
 
 // Track fixtures for cleanup
 const fixtures: string[] = [];
 
 function fixture(content: string): string {
-  const path = createTestFixture(content);
+  const path = join(mkdtempSync(join(tmpdir(), "engram-fixture-")), "test-conversation.jsonl");
+  writeFileSync(path, content, "utf-8");
   fixtures.push(path);
   return path;
 }

@@ -26,13 +26,8 @@ import { classifyNli } from "../../src/semantic/nli.js";
 import { embedDocument } from "../../src/_core/embeddings/index.js";
 import type { Memory, ExtractedFact } from "../../src/semantic/types.js";
 import { createTestDb, type TestDb } from "../helpers.js";
+import { anthropicCalls, anthropicToolMock, stubFetch as stubLlmFetch, type StubFetchOptions } from "../mocks/llm-fetch.js";
 
-/** URLs the fetch stub saw that would have reached the real Anthropic Messages API (#118: the client is a plain fetch POST). */
-function anthropicCalls(): string[] {
-  return vi.mocked(fetch).mock.calls
-    .map((c) => (c[0] instanceof Request ? c[0].url : String(c[0])))
-    .filter((u) => u.includes("api.anthropic.com"));
-}
 const mockedClassifyNli = vi.mocked(classifyNli);
 const mockedEmbedDocument = vi.mocked(embedDocument);
 
@@ -81,100 +76,25 @@ function newFact(): ExtractedFact {
   };
 }
 
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status });
-}
-
-function urlOf(input: string | URL | Request): string {
-  return typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-}
-
-function stubFetch(opts: {
-  ollamaUp: boolean;
-  openrouter?: "ok" | "unauthorized";
-}): { calls: string[]; bodies: Array<Record<string, unknown>> } {
-  const calls: string[] = [];
-  const bodies: Array<Record<string, unknown>> = [];
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-      const url = urlOf(input);
-      calls.push(url);
-      if (init?.body) bodies.push(JSON.parse(String(init.body)));
-
-      if (url.endsWith("/api/tags")) {
-        if (!opts.ollamaUp) throw new Error("ECONNREFUSED (stubbed)");
-        return json({ models: [{ name: "qwen2.5:7b" }] });
-      }
-      if (url.endsWith("/api/generate")) {
-        return json({
-          response: JSON.stringify({
-            action: "update",
-            reasoning: "Ollama resolved: preference changed",
-            updated_content: "User prefers 4-space indentation",
-          }),
-        });
-      }
-      if (url.includes("openrouter.ai")) {
-        if (opts.openrouter === "unauthorized") return json({ error: "nope" }, 401);
-        return json({
-          model: "google/gemini-2.5-flash-lite",
-          choices: [
-            {
-              message: {
-                tool_calls: [
-                  {
-                    id: "call_1",
-                    type: "function",
-                    function: {
-                      name: "resolve_conflict",
-                      arguments: JSON.stringify({
-                        action: "keep_both",
-                        reasoning: "OpenRouter resolved: both valid",
-                      }),
-                    },
-                  },
-                ],
-              },
-              finish_reason: "tool_calls",
-            },
-          ],
-        });
-      }
-      throw new Error(`Unexpected fetch in test: ${url}`);
-    }),
-  );
-  return { calls, bodies };
-}
-
-function makeAnthropicMock(): ReturnType<typeof vi.fn> {
-  return vi.fn().mockResolvedValue({
-    content: [
-      {
-        type: "tool_use",
-        id: "toolu_1",
-        name: "resolve_conflict",
-        input: { action: "noop", reasoning: "Anthropic resolved: keep existing" },
-      },
-    ],
+const stubFetch = (opts: Pick<StubFetchOptions, "ollamaUp" | "openrouter">) =>
+  stubLlmFetch({
+    ...opts,
+    ollama: { action: "update", reasoning: "Ollama resolved: preference changed", updated_content: "User prefers 4-space indentation" },
+    tool: "resolve_conflict",
+    openrouterResult: { action: "keep_both", reasoning: "OpenRouter resolved: both valid" },
   });
-}
+const makeAnthropicMock = () => anthropicToolMock("resolve_conflict", { action: "noop", reasoning: "Anthropic resolved: keep existing" });
 
 // ─── Setup ──────────────────────────────────────────────────────
 
 const ENV_KEYS = ["ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "OLLAMA_HOST"] as const;
-let savedEnv: Record<string, string | undefined> = {};
 let t: TestDb;
 
 beforeEach(() => {
   t = createTestDb();
   resetConsolidator();
   vi.clearAllMocks();
-  savedEnv = {};
-  for (const k of ENV_KEYS) {
-    savedEnv[k] = process.env[k];
-    delete process.env[k];
-  }
+  for (const k of ENV_KEYS) vi.stubEnv(k, undefined);
 
   insertMemory(t.db, existingMemory(), baseEmbedding());
   mockedEmbedDocument.mockResolvedValue(nliBandEmbedding());
@@ -190,10 +110,6 @@ afterEach(() => {
   t.cleanup();
   resetConsolidator();
   vi.unstubAllGlobals();
-  for (const k of ENV_KEYS) {
-    if (savedEnv[k] === undefined) delete process.env[k];
-    else process.env[k] = savedEnv[k];
-  }
 });
 
 // ─── Tests ──────────────────────────────────────────────────────
@@ -224,7 +140,7 @@ describe("consolidator conflict resolution routes through the LLM factory", () =
   });
 
   it("falls back to OpenRouter when Ollama is unavailable, before Anthropic", async () => {
-    process.env.OPENROUTER_API_KEY = "test-openrouter-key";
+    vi.stubEnv("OPENROUTER_API_KEY", "test-openrouter-key");
     const { calls } = stubFetch({ ollamaUp: false, openrouter: "ok" });
     const mockCreate = makeAnthropicMock();
     setConsolidatorClient({ messages: { create: mockCreate } } as unknown as Anthropic);
@@ -241,7 +157,7 @@ describe("consolidator conflict resolution routes through the LLM factory", () =
   });
 
   it("falls through to Anthropic when both Ollama and OpenRouter fail", async () => {
-    process.env.OPENROUTER_API_KEY = "test-openrouter-key";
+    vi.stubEnv("OPENROUTER_API_KEY", "test-openrouter-key");
     const { calls } = stubFetch({ ollamaUp: false, openrouter: "unauthorized" });
     const mockCreate = makeAnthropicMock();
     setConsolidatorClient({ messages: { create: mockCreate } } as unknown as Anthropic);

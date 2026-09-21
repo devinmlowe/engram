@@ -5,7 +5,6 @@
  */
 
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { EventEmitter } from "node:events";
 import {
   argsDigest,
   createToolDispatcher,
@@ -18,45 +17,29 @@ import {
   type ToolResult,
 } from "../../../src/interfaces/mcp/dispatch.js";
 import { MCP_TOOL_NAMES } from "../../../src/interfaces/mcp/tool-names.js";
-import type { WorkerLike } from "../../../src/interfaces/mcp/worker-pool.js";
+import { FakeWorker, type Behaviour } from "../../mocks/fake-worker.js";
 
-class FakeWorker extends EventEmitter implements WorkerLike {
-  static instances: FakeWorker[] = [];
-  sent: Array<{ id: number; tool: string; args: unknown }> = [];
-  constructor(public readonly index: number) {
-    super();
-    FakeWorker.instances.push(this);
-    queueMicrotask(() => this.emit("message", { type: "ready" }));
-  }
-  postMessage(message: unknown): void {
-    const msg = message as { id: number; tool: string; args: unknown };
-    this.sent.push(msg);
-    const sid = (msg.args as { session_id?: string } | undefined)?.session_id;
-    const result: ToolResult =
-      msg.tool === "recall_session"
-        ? { content: [{ type: "text", text: "<engram_memory/>" }], sessionId: sid ?? `sess-from-worker-${this.index}` }
-        : { content: [{ type: "text", text: `${msg.tool}@worker${this.index}` }] };
-    queueMicrotask(() => this.emit("message", { id: msg.id, ok: true, result }));
-  }
-  terminate(): Promise<number> {
-    queueMicrotask(() => this.emit("exit", 0));
-    return Promise.resolve(0);
-  }
-}
+/** Answers every call from "its" worker; recall_session pins the session to it. */
+const dispatchReply: Behaviour = (msg, reply, self) => {
+  const sid = (msg.args as { session_id?: string } | undefined)?.session_id;
+  const result: ToolResult =
+    msg.tool === "recall_session"
+      ? { content: [{ type: "text", text: "<engram_memory/>" }], sessionId: sid ?? `sess-from-worker-${self.index}` }
+      : { content: [{ type: "text", text: `${msg.tool}@worker${self.index}` }] };
+  reply({ id: msg.id, ok: true, result });
+};
 
 let dispatchers: ToolDispatcher[] = [];
 const direct = vi.fn(async (name: string, args: unknown): Promise<ToolResult> => ({
   content: [{ type: "text", text: `${name}@main:${JSON.stringify(args)}` }],
 }));
-let spawnCount = 0;
-const spawn = vi.fn(() => new FakeWorker(spawnCount++));
+const spawn = vi.fn(() => new FakeWorker(dispatchReply));
 const silent = () => {};
 
 afterEach(async () => {
   await Promise.all(dispatchers.map((d) => d.close()));
   dispatchers = [];
   FakeWorker.instances = [];
-  spawnCount = 0;
   direct.mockClear();
   spawn.mockClear();
 });
@@ -149,20 +132,8 @@ describe("createToolDispatcher — worker mode", () => {
   });
 
   it("converts a worker failure into an isError tool result instead of throwing", async () => {
-    class Broken extends EventEmitter implements WorkerLike {
-      constructor() {
-        super();
-        queueMicrotask(() => this.emit("message", { type: "ready" }));
-      }
-      postMessage(message: unknown): void {
-        const { id } = message as { id: number };
-        queueMicrotask(() => this.emit("message", { id, ok: false, error: "sqlite exploded" }));
-      }
-      terminate() {
-        return Promise.resolve(0);
-      }
-    }
-    const d = createToolDispatcher({ workers: 1, direct, spawn: () => new Broken(), log: silent });
+    const broken: Behaviour = (msg, reply) => reply({ id: msg.id, ok: false, error: "sqlite exploded" });
+    const d = createToolDispatcher({ workers: 1, direct, spawn: () => new FakeWorker(broken), log: silent });
     dispatchers.push(d);
     const r = await d.call("recall", { query: "x" });
     expect(r.isError).toBe(true);

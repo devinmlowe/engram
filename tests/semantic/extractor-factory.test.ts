@@ -19,23 +19,10 @@ import {
   type ConversationExchange,
   type ConversationMetadata,
 } from "../../src/semantic/extractor.js";
-
-/** URLs the fetch stub saw that would have reached the real Anthropic Messages API (#118: the client is a plain fetch POST). */
-function anthropicCalls(): string[] {
-  return vi.mocked(fetch).mock.calls
-    .map((c) => (c[0] instanceof Request ? c[0].url : String(c[0])))
-    .filter((u) => u.includes("api.anthropic.com"));
-}
+import { anthropicCalls, anthropicToolMock, stubFetch as stubLlmFetch, type StubFetchOptions } from "../mocks/llm-fetch.js";
+import { makeExchanges } from "../helpers.js";
 
 // ─── Helpers ────────────────────────────────────────────────────
-
-function makeExchanges(count: number): ConversationExchange[] {
-  return Array.from({ length: count }, (_, i) => ({
-    index: i,
-    userMessage: `User message ${i}`,
-    assistantMessage: `Assistant response ${i}`,
-  }));
-}
 
 const metadata: ConversationMetadata = {
   project: "test-project",
@@ -64,110 +51,25 @@ const OPENROUTER_FACTS = {
   ],
 };
 
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status });
-}
-
-function urlOf(input: string | URL | Request): string {
-  return typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-}
-
-/**
- * Stub global fetch with a router. `ollamaUp` controls whether /api/tags
- * lists the configured model; `openrouter` controls the OpenRouter reply.
- */
-function stubFetch(opts: {
-  ollamaUp: boolean;
-  openrouter?: "ok" | "unauthorized";
-}): { calls: string[]; bodies: Array<Record<string, unknown>> } {
-  const calls: string[] = [];
-  const bodies: Array<Record<string, unknown>> = [];
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-      const url = urlOf(input);
-      calls.push(url);
-      if (init?.body) bodies.push(JSON.parse(String(init.body)));
-
-      if (url.endsWith("/api/tags")) {
-        if (!opts.ollamaUp) throw new Error("ECONNREFUSED (stubbed)");
-        return json({ models: [{ name: "qwen2.5:7b" }] });
-      }
-      if (url.endsWith("/api/generate")) {
-        return json({ response: JSON.stringify(OLLAMA_FACTS) });
-      }
-      if (url.includes("openrouter.ai")) {
-        if (opts.openrouter === "unauthorized") return json({ error: "nope" }, 401);
-        return json({
-          model: "google/gemini-2.5-flash-lite",
-          choices: [
-            {
-              message: {
-                tool_calls: [
-                  {
-                    id: "call_1",
-                    type: "function",
-                    function: {
-                      name: "extract_memories",
-                      arguments: JSON.stringify(OPENROUTER_FACTS),
-                    },
-                  },
-                ],
-              },
-              finish_reason: "tool_calls",
-            },
-          ],
-        });
-      }
-      throw new Error(`Unexpected fetch in test: ${url}`);
-    }),
-  );
-  return { calls, bodies };
-}
-
-function makeAnthropicMock(): ReturnType<typeof vi.fn> {
-  return vi.fn().mockResolvedValue({
-    content: [
-      {
-        type: "tool_use",
-        id: "toolu_1",
-        name: "extract_memories",
-        input: {
-          facts: [
-            {
-              type: "decision",
-              content: "Anthropic served this extraction.",
-              importance: 0.7,
-              source_exchange_indexes: [0],
-            },
-          ],
-        },
-      },
-    ],
+const stubFetch = (opts: Pick<StubFetchOptions, "ollamaUp" | "openrouter">) =>
+  stubLlmFetch({ ...opts, ollama: OLLAMA_FACTS, tool: "extract_memories", openrouterResult: OPENROUTER_FACTS });
+const makeAnthropicMock = () =>
+  anthropicToolMock("extract_memories", {
+    facts: [{ type: "decision", content: "Anthropic served this extraction.", importance: 0.7, source_exchange_indexes: [0] }],
   });
-}
 
 // ─── Env isolation ──────────────────────────────────────────────
 
 const ENV_KEYS = ["ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "OLLAMA_HOST", "ENGRAM_OPENAI_BASE_URL", "ENGRAM_OPENAI_MODEL", "OPENAI_API_KEY"] as const;
-let savedEnv: Record<string, string | undefined> = {};
 
 beforeEach(() => {
   resetExtractor();
-  savedEnv = {};
-  for (const k of ENV_KEYS) {
-    savedEnv[k] = process.env[k];
-    delete process.env[k];
-  }
+  for (const k of ENV_KEYS) vi.stubEnv(k, undefined);
 });
 
 afterEach(() => {
   resetExtractor();
   vi.unstubAllGlobals();
-  for (const k of ENV_KEYS) {
-    if (savedEnv[k] === undefined) delete process.env[k];
-    else process.env[k] = savedEnv[k];
-  }
 });
 
 // ─── Tests ──────────────────────────────────────────────────────
@@ -204,7 +106,7 @@ describe("semantic extractor routes through the LLM factory", () => {
   });
 
   it("falls back to OpenRouter when Ollama is unavailable, before Anthropic", async () => {
-    process.env.OPENROUTER_API_KEY = "test-openrouter-key";
+    vi.stubEnv("OPENROUTER_API_KEY", "test-openrouter-key");
     const { calls } = stubFetch({ ollamaUp: false, openrouter: "ok" });
     const mockCreate = makeAnthropicMock();
     setClient({ messages: { create: mockCreate } } as unknown as Anthropic);
@@ -227,7 +129,7 @@ describe("semantic extractor routes through the LLM factory", () => {
   });
 
   it("falls through to Anthropic when both Ollama and OpenRouter fail", async () => {
-    process.env.OPENROUTER_API_KEY = "test-openrouter-key";
+    vi.stubEnv("OPENROUTER_API_KEY", "test-openrouter-key");
     const { calls } = stubFetch({ ollamaUp: false, openrouter: "unauthorized" });
     const mockCreate = makeAnthropicMock();
     setClient({ messages: { create: mockCreate } } as unknown as Anthropic);
@@ -278,9 +180,9 @@ describe("semantic extractor routes through the LLM factory", () => {
 
   it("initExtractor accepts a configured OpenAI-compatible route on its own (#45)", async () => {
     stubFetch({ ollamaUp: false });
-    process.env.ENGRAM_OPENAI_BASE_URL = "http://127.0.0.1:8100/v1";
-    process.env.ENGRAM_OPENAI_MODEL = "/models/local";
-    process.env.OPENAI_API_KEY = "no-key-required";
+    vi.stubEnv("ENGRAM_OPENAI_BASE_URL", "http://127.0.0.1:8100/v1");
+    vi.stubEnv("ENGRAM_OPENAI_MODEL", "/models/local");
+    vi.stubEnv("OPENAI_API_KEY", "no-key-required");
     await expect(initExtractor()).resolves.toBeUndefined();
   });
 });

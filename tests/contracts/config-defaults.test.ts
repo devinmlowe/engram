@@ -9,7 +9,7 @@
  * and must survive the move.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { loadConfig, resolveDefaultDataDir, resolveModelCacheLocation } from "../../src/_core/config/index.js";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -17,8 +17,6 @@ import { join } from "node:path";
 const HOME = homedir();
 
 describe("Config Defaults Contract", () => {
-  const envBackup: Record<string, string | undefined> = {};
-
   // Platform data-dir vars also steer the default (LOCALAPPDATA is always set
   // on Windows CI), and HF_HOME steers the model cache, so they are cleared
   // alongside ENGRAM_* to pin the fallbacks.
@@ -27,23 +25,7 @@ describe("Config Defaults Contract", () => {
     key.startsWith("ENGRAM_") || PLATFORM_DIR_VARS.includes(key);
 
   beforeEach(() => {
-    // Save and clear all managed env vars
-    for (const key of Object.keys(process.env)) {
-      if (isManaged(key)) {
-        envBackup[key] = process.env[key];
-        delete process.env[key];
-      }
-    }
-  });
-
-  afterEach(() => {
-    // Restore env vars
-    for (const key of Object.keys(process.env)) {
-      if (isManaged(key)) delete process.env[key];
-    }
-    for (const [key, val] of Object.entries(envBackup)) {
-      if (val !== undefined) process.env[key] = val;
-    }
+    for (const key of Object.keys(process.env)) if (isManaged(key)) vi.stubEnv(key, undefined);
   });
 
   // ── Path Defaults ──────────────────────────────────────────────
@@ -101,7 +83,7 @@ describe("Config Defaults Contract", () => {
   });
 
   it("loadConfig derives every path from the platform default", () => {
-    process.env.XDG_DATA_HOME = "/xdg-home";
+    vi.stubEnv("XDG_DATA_HOME", "/xdg-home");
     const c = loadConfig();
     if (process.platform === "win32") {
       expect(c.dataDir).toBe(join(HOME, ".local", "share", "engram"));
@@ -114,9 +96,9 @@ describe("Config Defaults Contract", () => {
   });
 
   it("ENGRAM_DATA_DIR wins over XDG_DATA_HOME and LOCALAPPDATA", () => {
-    process.env.XDG_DATA_HOME = "/xdg-home";
-    process.env.LOCALAPPDATA = "/local-app-data";
-    process.env.ENGRAM_DATA_DIR = "/explicit";
+    vi.stubEnv("XDG_DATA_HOME", "/xdg-home");
+    vi.stubEnv("LOCALAPPDATA", "/local-app-data");
+    vi.stubEnv("ENGRAM_DATA_DIR", "/explicit");
     const c = loadConfig();
     expect(c.dataDir).toBe("/explicit");
     expect(c.dbPath).toBe(join("/explicit", "engram.db"));
@@ -163,9 +145,9 @@ describe("Config Defaults Contract", () => {
   });
 
   it("parses ENGRAM_LOCAL_MODEL_FALLBACKS as a trimmed, comma-separated list (#16)", () => {
-    process.env.ENGRAM_LOCAL_MODEL_FALLBACKS = " llama3.1:8b, qwen3:8b ,,";
+    vi.stubEnv("ENGRAM_LOCAL_MODEL_FALLBACKS", " llama3.1:8b, qwen3:8b ,,");
     expect(loadConfig().dream.localModelFallbacks).toEqual(["llama3.1:8b", "qwen3:8b"]);
-    process.env.ENGRAM_LOCAL_MODEL_FALLBACKS = "";
+    vi.stubEnv("ENGRAM_LOCAL_MODEL_FALLBACKS", "");
     expect(loadConfig().dream.localModelFallbacks).toEqual([]);
   });
 
@@ -186,13 +168,13 @@ describe("Config Defaults Contract", () => {
   // ── Environment Variable Overrides ─────────────────────────────
 
   it("ENGRAM_DB_PATH overrides dbPath", () => {
-    process.env.ENGRAM_DB_PATH = "/tmp/custom.db";
+    vi.stubEnv("ENGRAM_DB_PATH", "/tmp/custom.db");
     const c = loadConfig();
     expect(c.dbPath).toBe("/tmp/custom.db");
   });
 
   it("ENGRAM_DATA_DIR cascades to derived paths", () => {
-    process.env.ENGRAM_DATA_DIR = "/tmp/engram-custom";
+    vi.stubEnv("ENGRAM_DATA_DIR", "/tmp/engram-custom");
     const c = loadConfig();
     expect(c.dataDir).toBe("/tmp/engram-custom");
     expect(c.dbPath).toBe(join("/tmp/engram-custom", "engram.db"));
@@ -201,8 +183,8 @@ describe("Config Defaults Contract", () => {
   });
 
   it("explicit env vars override cascaded paths", () => {
-    process.env.ENGRAM_DATA_DIR = "/tmp/engram-custom";
-    process.env.ENGRAM_DB_PATH = "/other/path.db";
+    vi.stubEnv("ENGRAM_DATA_DIR", "/tmp/engram-custom");
+    vi.stubEnv("ENGRAM_DB_PATH", "/other/path.db");
     const c = loadConfig();
     expect(c.dataDir).toBe("/tmp/engram-custom");
     expect(c.dbPath).toBe("/other/path.db"); // explicit wins over cascade
@@ -219,32 +201,32 @@ describe("Config Defaults Contract", () => {
   });
 
   it("modelCacheDir follows ENGRAM_DATA_DIR", () => {
-    process.env.ENGRAM_DATA_DIR = "/tmp/engram-custom";
+    vi.stubEnv("ENGRAM_DATA_DIR", "/tmp/engram-custom");
     expect(loadConfig().modelCacheDir).toBe(join("/tmp/engram-custom", "models"));
   });
 
   it("ENGRAM_MODEL_CACHE_DIR overrides modelCacheDir", () => {
-    process.env.ENGRAM_MODEL_CACHE_DIR = "/tmp/engram-models";
+    vi.stubEnv("ENGRAM_MODEL_CACHE_DIR", "/tmp/engram-models");
     expect(loadConfig().modelCacheDir).toBe("/tmp/engram-models");
   });
 
   it("HF_HOME resolves to $HF_HOME/hub, above the default and below ENGRAM_MODEL_CACHE_DIR", () => {
-    process.env.HF_HOME = "/hf";
+    vi.stubEnv("HF_HOME", "/hf");
     expect(loadConfig().modelCacheDir).toBe(join("/hf", "hub"));
-    process.env.ENGRAM_MODEL_CACHE_DIR = "/tmp/engram-models";
+    vi.stubEnv("ENGRAM_MODEL_CACHE_DIR", "/tmp/engram-models");
     expect(loadConfig().modelCacheDir).toBe("/tmp/engram-models");
   });
 
   it("a programmatic override sits between ENGRAM_MODEL_CACHE_DIR and HF_HOME", () => {
-    process.env.HF_HOME = "/hf";
+    vi.stubEnv("HF_HOME", "/hf");
     expect(loadConfig({ modelCacheDir: "/from/overrides" }).modelCacheDir).toBe("/from/overrides");
-    process.env.ENGRAM_MODEL_CACHE_DIR = "/tmp/engram-models";
+    vi.stubEnv("ENGRAM_MODEL_CACHE_DIR", "/tmp/engram-models");
     expect(loadConfig({ modelCacheDir: "/from/overrides" }).modelCacheDir).toBe("/tmp/engram-models");
   });
 
   it("blank ENGRAM_MODEL_CACHE_DIR and HF_HOME are treated as unset", () => {
-    process.env.ENGRAM_MODEL_CACHE_DIR = "   ";
-    process.env.HF_HOME = "";
+    vi.stubEnv("ENGRAM_MODEL_CACHE_DIR", "   ");
+    vi.stubEnv("HF_HOME", "");
     const c = loadConfig();
     expect(c.modelCacheDir).toBe(join(c.dataDir, "models"));
     expect(loadConfig({ modelCacheDir: "/from/overrides" }).modelCacheDir).toBe("/from/overrides");
@@ -262,28 +244,28 @@ describe("Config Defaults Contract", () => {
 
   it("loadConfig keeps the winning tier as modelCacheSource", () => {
     expect(loadConfig().modelCacheSource).toBe("default");
-    process.env.HF_HOME = "/hf";
+    vi.stubEnv("HF_HOME", "/hf");
     expect(loadConfig()).toMatchObject({ modelCacheDir: join("/hf", "hub"), modelCacheSource: "HF_HOME" });
     expect(loadConfig({ modelCacheDir: "/ovr" }).modelCacheSource).toBe("override");
-    process.env.ENGRAM_MODEL_CACHE_DIR = "/explicit";
+    vi.stubEnv("ENGRAM_MODEL_CACHE_DIR", "/explicit");
     expect(loadConfig()).toMatchObject({ modelCacheDir: "/explicit", modelCacheSource: "ENGRAM_MODEL_CACHE_DIR" });
   });
 
   it("ENGRAM_EMBEDDING_DIMS overrides dimensions", () => {
-    process.env.ENGRAM_EMBEDDING_DIMS = "768";
+    vi.stubEnv("ENGRAM_EMBEDDING_DIMS", "768");
     const c = loadConfig();
     expect(c.embedding.dimensions).toBe(768);
   });
 
   it("ENGRAM_RERANK_ENABLED=false disables reranking", () => {
-    process.env.ENGRAM_RERANK_ENABLED = "false";
+    vi.stubEnv("ENGRAM_RERANK_ENABLED", "false");
     const c = loadConfig();
     expect(c.search.rerankEnabled).toBe(false);
     expect(c.search.reranker.enabled).toBe(false);
   });
 
   it("ENGRAM_RERANK_ENABLED=0 disables reranking", () => {
-    process.env.ENGRAM_RERANK_ENABLED = "0";
+    vi.stubEnv("ENGRAM_RERANK_ENABLED", "0");
     const c = loadConfig();
     expect(c.search.rerankEnabled).toBe(false);
   });
@@ -291,7 +273,7 @@ describe("Config Defaults Contract", () => {
   // ── Override Precedence ────────────────────────────────────────
 
   it("env vars take precedence over programmatic overrides", () => {
-    process.env.ENGRAM_DB_PATH = "/env/wins.db";
+    vi.stubEnv("ENGRAM_DB_PATH", "/env/wins.db");
     const c = loadConfig({ dbPath: "/override/loses.db" });
     expect(c.dbPath).toBe("/env/wins.db");
   });

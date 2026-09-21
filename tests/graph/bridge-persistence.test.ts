@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import type Database from "better-sqlite3";
 import { createTestDb } from "../helpers.js";
+import { insertEntity, insertRelationship } from "../helpers.js";
 import type { TestDb } from "../helpers.js";
 import {
   loadGraph,
@@ -13,30 +14,6 @@ import {
 
 // ─── Helpers ─────────────────────────────────────────────────────
 
-function insertTestEntity(
-  db: Database.Database,
-  id: string,
-  name: string,
-  type: string,
-) {
-  db.prepare(
-    "INSERT INTO entities (id, name, type, aliases, first_seen, last_seen, mention_count, created_at) VALUES (?, ?, ?, '[]', unixepoch(), unixepoch(), 1, unixepoch())",
-  ).run(id, name, type);
-}
-
-function insertTestRelationship(
-  db: Database.Database,
-  id: string,
-  sourceId: string,
-  targetId: string,
-  type: string,
-  weight: number,
-) {
-  db.prepare(
-    "INSERT INTO relationships (id, source_entity_id, target_entity_id, type, weight, source_memories, created_at) VALUES (?, ?, ?, ?, ?, '[]', unixepoch())",
-  ).run(id, sourceId, targetId, type, weight);
-}
-
 /**
  * Build two cliques connected by a bridge node.
  *
@@ -46,35 +23,35 @@ function insertTestRelationship(
  */
 function buildTwoCliquesWithBridge(db: Database.Database) {
   // Clique A nodes
-  insertTestEntity(db, "a1", "Alpha 1", "technology");
-  insertTestEntity(db, "a2", "Alpha 2", "technology");
-  insertTestEntity(db, "a3", "Alpha 3", "technology");
+  insertEntity(db, "a1", "Alpha 1", "technology");
+  insertEntity(db, "a2", "Alpha 2", "technology");
+  insertEntity(db, "a3", "Alpha 3", "technology");
 
   // Clique A edges (fully connected)
-  insertTestRelationship(db, "rel-a1-a2", "a1", "a2", "related_to", 2.0);
-  insertTestRelationship(db, "rel-a1-a3", "a1", "a3", "related_to", 2.0);
-  insertTestRelationship(db, "rel-a2-a3", "a2", "a3", "related_to", 2.0);
+  insertRelationship(db, "rel-a1-a2", "a1", "a2", "related_to", 2.0);
+  insertRelationship(db, "rel-a1-a3", "a1", "a3", "related_to", 2.0);
+  insertRelationship(db, "rel-a2-a3", "a2", "a3", "related_to", 2.0);
 
   // Bridge node
-  insertTestEntity(db, "bridge", "Bridge Node", "concept");
+  insertEntity(db, "bridge", "Bridge Node", "concept");
 
   // Clique B nodes
-  insertTestEntity(db, "b1", "Beta 1", "tool");
-  insertTestEntity(db, "b2", "Beta 2", "tool");
-  insertTestEntity(db, "b3", "Beta 3", "tool");
-  insertTestEntity(db, "b4", "Beta 4", "tool");
+  insertEntity(db, "b1", "Beta 1", "tool");
+  insertEntity(db, "b2", "Beta 2", "tool");
+  insertEntity(db, "b3", "Beta 3", "tool");
+  insertEntity(db, "b4", "Beta 4", "tool");
 
   // Clique B edges (fully connected)
-  insertTestRelationship(db, "rel-b1-b2", "b1", "b2", "related_to", 2.0);
-  insertTestRelationship(db, "rel-b1-b3", "b1", "b3", "related_to", 2.0);
-  insertTestRelationship(db, "rel-b1-b4", "b1", "b4", "related_to", 2.0);
-  insertTestRelationship(db, "rel-b2-b3", "b2", "b3", "related_to", 2.0);
-  insertTestRelationship(db, "rel-b2-b4", "b2", "b4", "related_to", 2.0);
-  insertTestRelationship(db, "rel-b3-b4", "b3", "b4", "related_to", 2.0);
+  insertRelationship(db, "rel-b1-b2", "b1", "b2", "related_to", 2.0);
+  insertRelationship(db, "rel-b1-b3", "b1", "b3", "related_to", 2.0);
+  insertRelationship(db, "rel-b1-b4", "b1", "b4", "related_to", 2.0);
+  insertRelationship(db, "rel-b2-b3", "b2", "b3", "related_to", 2.0);
+  insertRelationship(db, "rel-b2-b4", "b2", "b4", "related_to", 2.0);
+  insertRelationship(db, "rel-b3-b4", "b3", "b4", "related_to", 2.0);
 
   // Bridge connections (low weight to encourage community separation)
-  insertTestRelationship(db, "rel-a1-bridge", "a1", "bridge", "related_to", 0.5);
-  insertTestRelationship(db, "rel-bridge-b1", "bridge", "b1", "related_to", 0.5);
+  insertRelationship(db, "rel-a1-bridge", "a1", "bridge", "related_to", 0.5);
+  insertRelationship(db, "rel-bridge-b1", "bridge", "b1", "related_to", 0.5);
 }
 
 // ─── Tests ───────────────────────────────────────────────────────

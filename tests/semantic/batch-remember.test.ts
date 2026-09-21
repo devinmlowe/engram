@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { createTestDb } from "../helpers.js";
+import { createTestDb, createTestMemory } from "../helpers.js";
 import type { TestDb } from "../helpers.js";
 import {
   insertMemory,
@@ -16,41 +16,9 @@ import type { Memory } from "../../src/semantic/types.js";
 import type { MemorySource } from "../../src/_core/types/index.js";
 
 // Mock embeddings
-vi.mock("../../src/_core/embeddings/index.js", () => {
-  const dims = 256;
-
-  function deterministicVector(seed: string): number[] {
-    const vec = new Array(dims);
-    let hash = 0;
-    for (let i = 0; i < seed.length; i++) {
-      hash = ((hash << 5) - hash + seed.charCodeAt(i)) | 0;
-    }
-    for (let i = 0; i < dims; i++) {
-      hash = ((hash << 5) - hash + i) | 0;
-      vec[i] = (hash & 0xffff) / 0xffff - 0.5;
-    }
-    let norm = 0;
-    for (let i = 0; i < dims; i++) norm += vec[i] * vec[i];
-    norm = Math.sqrt(norm);
-    for (let i = 0; i < dims; i++) vec[i] /= norm;
-    return vec;
-  }
-
-  return {
-    initEmbeddings: vi.fn().mockResolvedValue(undefined),
-    embedQuery: vi.fn().mockImplementation((text: string) =>
-      Promise.resolve(deterministicVector(`query:${text}`)),
-    ),
-    embedDocument: vi.fn().mockImplementation((text: string) =>
-      Promise.resolve(deterministicVector(`doc:${text}`)),
-    ),
-    embedDocumentBatch: vi.fn().mockImplementation((texts: string[]) =>
-      Promise.resolve(texts.map((t) => deterministicVector(`doc:${t}`))),
-    ),
-    getActiveModel: vi.fn().mockReturnValue("mock-model"),
-    resetEmbeddings: vi.fn(),
-  };
-});
+vi.mock("../../src/_core/embeddings/index.js", async () =>
+  (await import("../mocks/embeddings.js")).deterministicEmbeddings(),
+);
 
 let t: TestDb;
 
@@ -66,23 +34,6 @@ function randomEmbedding(dims: number = 256): number[] {
   const vec = Array.from({ length: dims }, () => Math.random() - 0.5);
   const norm = Math.sqrt(vec.reduce((s, v) => s + v * v, 0));
   return vec.map((v) => v / norm);
-}
-
-function createTestMemory(overrides: Partial<Memory> = {}): Memory {
-  const id = overrides.id ?? `mem-${Math.random().toString(36).slice(2, 10)}`;
-  return {
-    id,
-    type: "fact",
-    content: "TypeScript uses structural typing",
-    confidence: 0.5,
-    importance: 0.5,
-    accessCount: 0,
-    createdAt: Math.floor(Date.now() / 1000),
-    sourceExchanges: [],
-    isActive: true,
-    source: "user",
-    ...overrides,
-  };
 }
 
 // ─── Source Tracking Tests ────────────────────────────────────────

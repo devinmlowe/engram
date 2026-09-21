@@ -9,6 +9,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createTestDb, type TestDb } from "../helpers.js";
+import { deterministicVector as vec } from "../mocks/embeddings.js";
 import {
   insertMemory,
   findNearestMemories,
@@ -45,29 +46,9 @@ import { recordEntityMention } from "../../src/graph/entity.js";
 import { findOrCreateRelationship } from "../../src/graph/relationship.js";
 import type { Memory } from "../../src/semantic/types.js";
 
-// ─── Deterministic embeddings ───────────────────────────────────
-
-const DIMS = 256;
-function vec(seed: string): number[] {
-  const v = new Array(DIMS);
-  let hash = 0;
-  for (let i = 0; i < seed.length; i++) hash = ((hash << 5) - hash + seed.charCodeAt(i)) | 0;
-  for (let i = 0; i < DIMS; i++) {
-    hash = ((hash << 5) - hash + i) | 0;
-    v[i] = (hash & 0xffff) / 0xffff - 0.5;
-  }
-  const norm = Math.sqrt(v.reduce((s: number, x: number) => s + x * x, 0));
-  return v.map((x: number) => x / norm);
-}
-
-vi.mock("../../src/_core/embeddings/index.js", () => ({
-  initEmbeddings: vi.fn().mockResolvedValue(undefined),
-  embedQuery: vi.fn().mockImplementation((text: string) => Promise.resolve(vec(`doc:${text}`))),
-  embedDocument: vi.fn().mockImplementation((text: string) => Promise.resolve(vec(`doc:${text}`))),
-  embedDocumentBatch: vi.fn().mockImplementation((texts: string[]) => Promise.resolve(texts.map((t) => vec(`doc:${t}`)))),
-  getActiveModel: vi.fn().mockReturnValue("mock-model"),
-  resetEmbeddings: vi.fn(),
-}));
+vi.mock("../../src/_core/embeddings/index.js", async () =>
+  (await import("../mocks/embeddings.js")).deterministicEmbeddings(),
+);
 
 // ─── Fixtures ───────────────────────────────────────────────────
 

@@ -41,14 +41,13 @@ const llmSayingAlan: CommitmentsLlm = async (prompt) => {
 
 describe("commitments pass", () => {
   let t: TestDb;
-  const savedEnv = { ...process.env };
 
   beforeEach(() => {
     t = createTestDb();
-    delete process.env.OPENROUTER_API_KEY;
-    delete process.env.ANTHROPIC_API_KEY;
-    delete process.env.ENGRAM_LOCAL_MODEL;
-    delete process.env.ENGRAM_COMMITMENTS_MAX_CONVERSATIONS;
+    vi.stubEnv("OPENROUTER_API_KEY", undefined);
+    vi.stubEnv("ANTHROPIC_API_KEY", undefined);
+    vi.stubEnv("ENGRAM_LOCAL_MODEL", undefined);
+    vi.stubEnv("ENGRAM_COMMITMENTS_MAX_CONVERSATIONS", undefined);
     // Isolate from a developer's live Ollama: the pass probes it when no
     // cloud provider is configured and no LLM is injected
     vi.stubGlobal(
@@ -62,7 +61,6 @@ describe("commitments pass", () => {
   afterEach(() => {
     t.cleanup();
     vi.unstubAllGlobals();
-    process.env = { ...savedEnv };
   });
 
   it("skips entirely (no throw, nothing written) when no provider is configured", async () => {

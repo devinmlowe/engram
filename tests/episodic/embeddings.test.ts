@@ -7,7 +7,7 @@ import {
   embedExchange,
   getActiveModel,
 } from "../../src/_core/embeddings/index.js";
-import { cosineSimilarity } from "../helpers.js";
+import { cosineSimilarity } from "../../src/_core/search/vector.js";
 
 describe("Embeddings", () => {
   beforeAll(async () => {

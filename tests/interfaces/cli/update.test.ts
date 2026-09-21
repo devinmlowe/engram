@@ -3,12 +3,11 @@
  * Every supervisor and shell call is a fake; the data dir and database are
  * real files in a temp dir so the move/backup/snapshot logic is exercised.
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 import { loadConfig } from "../../../src/_core/config/index.js";
 import { initDatabase } from "../../../src/_core/db/index.js";
@@ -35,18 +34,16 @@ import {
   writeRollbackPlan, ROLLBACK_PLANS_KEPT, type RollbackPlan,
 } from "../../../src/interfaces/cli/rollback.js";
 import { SCHEMA_MIGRATIONS, SCHEMA_VERSION, BREAKING_MIGRATIONS } from "../../../src/_core/db/schema.js";
+import { builtCli as cli, itBuilt } from "../../helpers.js";
 
 const ENV_KEYS = ["ENGRAM_DATA_DIR", "ENGRAM_DB_PATH", "ENGRAM_MODEL_CACHE_DIR", "HF_HOME", "ENGRAM_MCP_PORT", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "LOCALAPPDATA", "ENGRAM_ENV_FILE", "PORT"];
-let saved: Record<string, string | undefined>;
 let root: string;
 
 beforeEach(() => {
-  saved = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
-  for (const k of ENV_KEYS) delete process.env[k];
+  for (const k of ENV_KEYS) vi.stubEnv(k, undefined);
   root = mkdtempSync(join(tmpdir(), "engram-update-"));
 });
 afterEach(() => {
-  for (const k of ENV_KEYS) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -178,7 +175,7 @@ describe("supervisor adapters", () => {
 
   it("systemd: unit files under $XDG_CONFIG_HOME/systemd/user and is-active decide installed/running", async () => {
     const xdg = join(root, "xdg");
-    process.env.XDG_CONFIG_HOME = xdg;
+    vi.stubEnv("XDG_CONFIG_HOME", xdg);
     mkdirSync(join(xdg, "systemd", "user"), { recursive: true });
     writeFileSync(join(xdg, "systemd", "user", "engram-mcp.service"), "[Unit]");
     const { exec, calls } = fakeExec([
@@ -220,8 +217,8 @@ describe("supervisor adapters", () => {
   });
 
   it("ports follow ENGRAM_MCP_PORT / PORT", () => {
-    process.env.ENGRAM_MCP_PORT = "9910";
-    process.env.PORT = "4001";
+    vi.stubEnv("ENGRAM_MCP_PORT", "9910");
+    vi.stubEnv("PORT", "4001");
     expect(portFor("mcp", process.env)).toEqual({ port: 9910, path: "/health" });
     expect(portFor("visualizer", process.env)).toEqual({ port: 4001, path: "/api/health" });
     expect(portFor("dream", process.env)).toBeNull();
@@ -347,7 +344,7 @@ describe("migrate model-cache and schema", () => {
 
     // ENGRAM_MODEL_CACHE_DIR set + a legacy cache: the weights move rather than re-download
     legacyCache(pkg);
-    process.env.ENGRAM_MODEL_CACHE_DIR = explicit; // the tier is read off the loaded config
+    vi.stubEnv("ENGRAM_MODEL_CACHE_DIR", explicit); // the tier is read off the loaded config
     const env = { ENGRAM_MODEL_CACHE_DIR: explicit };
     const withLegacy = planModelCache({ config: loadConfig({ dataDir: join(root, "data") }), env, platform: "linux", home }, pkg);
     expect(withLegacy).toMatchObject({ durable: true, source: "ENGRAM_MODEL_CACHE_DIR", hasModels: true });
@@ -363,7 +360,7 @@ describe("migrate model-cache and schema", () => {
     const envFile = join(home, ".config", "engram", "env");
     mkdirSync(join(home, ".config", "engram"), { recursive: true });
     writeFileSync(envFile, "#ANTHROPIC_API_KEY=\n");
-    process.env.ENGRAM_MODEL_CACHE_DIR = legacy; // the tier is read off the loaded config
+    vi.stubEnv("ENGRAM_MODEL_CACHE_DIR", legacy); // the tier is read off the loaded config
     const env = { ENGRAM_MODEL_CACHE_DIR: legacy };
     const cfg = loadConfig({ dataDir: join(root, "data") });
     const plan = planModelCache({ config: cfg, env, platform: "linux", home }, pkg);
@@ -417,7 +414,7 @@ describe("update --plan", () => {
     mkdirSync(join(home, ".hermes", "profiles", "work", "plugins", "engram"), { recursive: true });
     mkdirSync(join(root, ".git"));
     const xdg = join(root, "xdg");
-    process.env.XDG_DATA_HOME = xdg;
+    vi.stubEnv("XDG_DATA_HOME", xdg);
     const cfg = loadConfig({ dataDir: join(xdg, "engram") });
     const { exec } = fakeExec([
       [/rev-parse --abbrev-ref/, () => ({ stdout: "main\n" })],
@@ -465,7 +462,7 @@ describe("update --plan", () => {
     const home = join(root, "home");
     seedDb(join(home, ".local", "share", "engram"));
     const xdg = join(root, "xdg");
-    process.env.XDG_DATA_HOME = xdg;
+    vi.stubEnv("XDG_DATA_HOME", xdg);
     seedDb(join(xdg, "engram"));
     mkdirSync(join(root, ".git"));
     const { exec } = fakeExec([
@@ -541,7 +538,7 @@ describe("update run (git install, macOS, legacy data dir)", () => {
     writeFileSync(join(home, "Library", "LaunchAgents", "com.engram.mcp.plist"), "<plist/>");
     mkdirSync(join(root, ".git"));
     const xdg = join(root, "xdg");
-    process.env.XDG_DATA_HOME = xdg;
+    vi.stubEnv("XDG_DATA_HOME", xdg);
     const cfg = loadConfig({ dataDir: join(xdg, "engram") });
     let mcpUp = true;
     const probe = async (port: number) => port === 9907 && mcpUp;
@@ -696,7 +693,7 @@ describe("rollback plan file (#65)", () => {
     writeFileSync(join(home, "Library", "LaunchAgents", "com.engram.mcp.plist"), "<plist/>");
     mkdirSync(join(root, ".git"));
     const xdg = join(root, "xdg");
-    process.env.XDG_DATA_HOME = xdg;
+    vi.stubEnv("XDG_DATA_HOME", xdg);
     const cfg = loadConfig({ dataDir: join(xdg, "engram") });
     let mcpUp = true;
     const probe = async (port: number) => port === 9907 && mcpUp;
@@ -826,7 +823,7 @@ describe("engram update --rollback (#65, decision #66)", () => {
     writeFileSync(join(home, "Library", "LaunchAgents", "com.engram.mcp.plist"), "<plist/>");
     mkdirSync(join(root, ".git"));
     const xdg = join(root, "xdg");
-    process.env.XDG_DATA_HOME = xdg;
+    vi.stubEnv("XDG_DATA_HOME", xdg);
     const dataDir = join(xdg, "engram");
     const cfg = loadConfig({ dataDir });
     const state = { mcpUp: true, probesSinceLoad: 0, onNewBuild: false, healthBrokenOnNewBuild: false };
@@ -1043,8 +1040,6 @@ describe("engram update --rollback (#65, decision #66)", () => {
 // ─── CLI surface ─────────────────────────────────────────────────────
 
 describe("engram migrate / update CLI", () => {
-  const cli = fileURLToPath(new URL("../../../dist/interfaces/cli/index.js", import.meta.url));
-  const built = existsSync(cli);
   function run(args: string[], env: NodeJS.ProcessEnv = {}) {
     return spawnSync(process.execPath, [cli, ...args], {
       encoding: "utf8",
@@ -1052,7 +1047,7 @@ describe("engram migrate / update CLI", () => {
     });
   }
 
-  it.skipIf(!built)("migrate --dry-run lists every action and changes nothing", () => {
+  itBuilt("migrate --dry-run lists every action and changes nothing", () => {
     const home = join(root, "home");
     const legacy = join(home, ".local", "share", "engram");
     seedDb(legacy);
@@ -1065,7 +1060,7 @@ describe("engram migrate / update CLI", () => {
     expect(existsSync(join(root, "xdg", "engram", "engram.db"))).toBe(false);
   });
 
-  it.skipIf(!built)("the legacy conversation-index importer is gone: no import-legacy command, no migrate --source (#115)", () => {
+  itBuilt("the legacy conversation-index importer is gone: no import-legacy command, no migrate --source (#115)", () => {
     const r = run(["migrate", "--source", join(root, "missing.sqlite"), "--dry-run"]);
     expect(r.status).not.toBe(0);
     expect(r.stderr).toContain("unknown option '--source'");
@@ -1075,7 +1070,7 @@ describe("engram migrate / update CLI", () => {
     expect(run(["--help"]).stdout).not.toContain("import-legacy");
   });
 
-  it.skipIf(!built)("update --check and --plan are read-only and exit 0", () => {
+  itBuilt("update --check and --plan are read-only and exit 0", () => {
     const c = run(["update", "--check"]);
     expect(c.status, c.stderr).toBe(0);
     expect(c.stdout).toMatch(/^engram \d+\.\d+\.\d+ \((git checkout|npm install)/);

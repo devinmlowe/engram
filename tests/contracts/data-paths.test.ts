@@ -15,7 +15,7 @@
  * overrides at all, and with an explicit config.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { join } from "node:path";
 import { loadConfig } from "../../src/_core/config/index.js";
 import { resolveDreamLogPath, resolvePendingFactsDir } from "../../src/dream/daemon.js";
@@ -24,28 +24,12 @@ const MANAGED = ["XDG_DATA_HOME", "LOCALAPPDATA"];
 const isManaged = (key: string) => key.startsWith("ENGRAM_") || MANAGED.includes(key);
 
 describe("Data Path Agreement Contract", () => {
-  const envBackup: Record<string, string | undefined> = {};
-
   beforeEach(() => {
-    for (const key of Object.keys(process.env)) {
-      if (isManaged(key)) {
-        envBackup[key] = process.env[key];
-        delete process.env[key];
-      }
-    }
-  });
-
-  afterEach(() => {
-    for (const key of Object.keys(process.env)) {
-      if (isManaged(key)) delete process.env[key];
-    }
-    for (const [key, val] of Object.entries(envBackup)) {
-      if (val !== undefined) process.env[key] = val;
-    }
+    for (const key of Object.keys(process.env)) if (isManaged(key)) vi.stubEnv(key, undefined);
   });
 
   it("dream daemon paths follow ENGRAM_DATA_DIR and re-resolve when it changes", () => {
-    process.env.ENGRAM_DATA_DIR = join("/tmp", "engram-contract");
+    vi.stubEnv("ENGRAM_DATA_DIR", join("/tmp", "engram-contract"));
     const config = loadConfig();
 
     expect(resolveDreamLogPath()).toBe(join(config.logsDir, "dream.log"));
@@ -53,14 +37,14 @@ describe("Data Path Agreement Contract", () => {
     expect(resolvePendingFactsDir()).toBe(join("/tmp", "engram-contract", "tmp"));
 
     // Resolved per call, not cached at import
-    process.env.ENGRAM_DATA_DIR = join("/tmp", "second");
+    vi.stubEnv("ENGRAM_DATA_DIR", join("/tmp", "second"));
     expect(resolveDreamLogPath()).toBe(join("/tmp", "second", "logs", "dream.log"));
   });
 
   it("explicit ENGRAM_LOGS_DIR is honored; the scratch dir still follows ENGRAM_DATA_DIR", () => {
-    process.env.ENGRAM_DATA_DIR = join("/tmp", "engram-contract");
-    process.env.ENGRAM_DB_PATH = join("/elsewhere", "graph.db");
-    process.env.ENGRAM_LOGS_DIR = join("/var", "log", "engram");
+    vi.stubEnv("ENGRAM_DATA_DIR", join("/tmp", "engram-contract"));
+    vi.stubEnv("ENGRAM_DB_PATH", join("/elsewhere", "graph.db"));
+    vi.stubEnv("ENGRAM_LOGS_DIR", join("/var", "log", "engram"));
 
     expect(resolveDreamLogPath()).toBe(join("/var", "log", "engram", "dream.log"));
     expect(resolvePendingFactsDir()).toBe(join("/tmp", "engram-contract", "tmp"));

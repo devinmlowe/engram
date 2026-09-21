@@ -11,41 +11,9 @@ import { createTestDb, createSyntheticExchange, createTestEntity } from "../help
 import type { TestDb } from "../helpers.js";
 
 // Mock embeddings
-vi.mock("../../src/_core/embeddings/index.js", () => {
-  const dims = 256;
-
-  function deterministicVector(seed: string): Float32Array {
-    const vec = new Float32Array(dims);
-    let hash = 0;
-    for (let i = 0; i < seed.length; i++) {
-      hash = ((hash << 5) - hash + seed.charCodeAt(i)) | 0;
-    }
-    for (let i = 0; i < dims; i++) {
-      hash = ((hash << 5) - hash + i) | 0;
-      vec[i] = (hash & 0xffff) / 0xffff - 0.5;
-    }
-    let norm = 0;
-    for (let i = 0; i < dims; i++) norm += vec[i] * vec[i];
-    norm = Math.sqrt(norm);
-    for (let i = 0; i < dims; i++) vec[i] /= norm;
-    return vec;
-  }
-
-  return {
-    initEmbeddings: vi.fn().mockResolvedValue(undefined),
-    embedQuery: vi.fn().mockImplementation((text: string) =>
-      Promise.resolve(deterministicVector(`query:${text}`)),
-    ),
-    embedDocument: vi.fn().mockImplementation((text: string) =>
-      Promise.resolve(deterministicVector(`doc:${text}`)),
-    ),
-    embedDocumentBatch: vi.fn().mockImplementation((texts: string[]) =>
-      Promise.resolve(texts.map((t) => deterministicVector(`doc:${t}`))),
-    ),
-    getActiveModel: vi.fn().mockReturnValue("mock-model"),
-    resetEmbeddings: vi.fn(),
-  };
-});
+vi.mock("../../src/_core/embeddings/index.js", async () =>
+  (await import("../mocks/embeddings.js")).deterministicEmbeddings(),
+);
 
 // Mock config to use test database (pass through to real loadConfig so createTestDb works)
 vi.mock("../../src/_core/config/index.js", async () => {
