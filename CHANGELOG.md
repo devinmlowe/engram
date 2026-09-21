@@ -7,6 +7,9 @@ All notable changes to engram are documented here. The format follows
 
 ## [Unreleased]
 
+### Removed
+- Scripts and packaging dead weight (#125, part of the #114 over-engineering burn-down). `scripts/preflight.cjs` drops the per-Node-ABI bookkeeping (`NODE_ABI_MAJORS`, `PREBUILT_NODE_MAJORS`, `nearestPrebuiltMajor`, the `nvm use <major>` hint) and the node-gyp forensics: every native module is N-API, so the verdict is the static target table, confirmed against the shipped binary when the package is on disk (better-sqlite3 still reports `compiled locally` when node-gyp built it). Printed verdicts are unchanged; `--json` no longer carries `target.nodeMajor`. `scripts/sync-manifests.cjs --check` now checks the versions, `package.json` `mcpName` and the registry's 100-character description cap only — manifest shape is `claude plugin validate` / `mcp-publisher validate`'s job in the same CI jobs. Deleted `scripts/check-deps.sh` (no caller), `prompts/reflect.md` and `prompts/summarize.md` (never read), the `integrations/hermes-plugin/README.md` tombstone, the 2.8 MB `assets/galaxy-view.webp` duplicate (the README hero now uses `assets/view-galaxy.webp`), the `sync-manifests` npm script (the `version` hook and `check-manifests` cover both modes) and `.mcp.json` from the npm tarball (it exists for developing inside the checkout).
+
 ## [0.4.0] - 2026-09-18
 
 First release that ships the Claude Code plugin, the `engram mcp` daemon bridge, `engram mcp install`, `forget`, `engram setup`, `doctor --fix` and `update --rollback` (PRD issues #50 #53 #55 #58 #61 #63 #65) plus the Dependabot majors (#68–#73, #72). The 0.3.0 tarball on npm predates all of it, so the plugin's `npx -y @devinmlowe/engram@<version> mcp` pin only works from this version on. Windows + Node 22 note: see the better-sqlite3 13 entry below (#84).
