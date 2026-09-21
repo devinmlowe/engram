@@ -9,7 +9,6 @@ import { EventEmitter } from "node:events";
 import {
   argsDigest,
   createToolDispatcher,
-  extractSessionId,
   parseWorkerCount,
   parseTimeoutMs,
   toolTimeoutMs,
@@ -35,7 +34,7 @@ class FakeWorker extends EventEmitter implements WorkerLike {
     const sid = (msg.args as { session_id?: string } | undefined)?.session_id;
     const result: ToolResult =
       msg.tool === "recall_session"
-        ? { content: [{ type: "text", text: `<session id="${sid ?? `sess-from-worker-${this.index}`}" budget_remaining="1" />\n<engram_memory/>` }] }
+        ? { content: [{ type: "text", text: "<engram_memory/>" }], sessionId: sid ?? `sess-from-worker-${this.index}` }
         : { content: [{ type: "text", text: `${msg.tool}@worker${this.index}` }] };
     queueMicrotask(() => this.emit("message", { id: msg.id, ok: true, result }));
   }
@@ -118,7 +117,7 @@ describe("createToolDispatcher — worker mode", () => {
 
     // Occupy nothing; just create sessions and see which worker each lands on.
     const created = await d.call("recall_session", { query: "first" });
-    const sid = extractSessionId(created)!;
+    const sid = created.sessionId!;
     expect(sid).toMatch(/^sess-from-worker-\d$/);
     const owner = Number(sid.slice(-1));
 
@@ -199,11 +198,6 @@ describe("timeouts and env parsing", () => {
     expect(parseTimeoutMs("12000", 8000)).toBe(12000);
     expect(parseTimeoutMs("0", 8000)).toBe(8000);
     expect(parseTimeoutMs("nope", 8000)).toBe(8000);
-  });
-
-  it("extracts the session id from a recall_session result", () => {
-    expect(extractSessionId({ content: [{ type: "text", text: '<session id="abc-123" budget_remaining="9" />' }] })).toBe("abc-123");
-    expect(extractSessionId({ content: [{ type: "text", text: "<engram_memory/>" }] })).toBeUndefined();
   });
 
   it("argsDigest renders args on one line and caps the length", () => {

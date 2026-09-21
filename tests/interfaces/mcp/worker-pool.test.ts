@@ -5,13 +5,7 @@
 
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { EventEmitter } from "node:events";
-import {
-  WorkerPool,
-  WorkerTimeoutError,
-  WorkerCrashedError,
-  WorkerPoolClosedError,
-  type WorkerLike,
-} from "../../../src/interfaces/mcp/worker-pool.js";
+import { WorkerPool, type WorkerLike } from "../../../src/interfaces/mcp/worker-pool.js";
 
 // ─── Fake worker ────────────────────────────────────────────────
 
@@ -141,7 +135,7 @@ describe("WorkerPool", () => {
     const pool = makePool({ size: 1, spawn: () => new FakeWorker(never), timeoutMs: 100 });
     await vi.advanceTimersByTimeAsync(1); // let ready land
     const call = pool.run("recall", {});
-    const rejection = expect(call).rejects.toBeInstanceOf(WorkerTimeoutError);
+    const rejection = expect(call).rejects.toThrow(/timed out after \d+ms in worker/);
     await vi.advanceTimersByTimeAsync(101);
     await rejection;
     expect(FakeWorker.instances).toHaveLength(1);
@@ -156,7 +150,7 @@ describe("WorkerPool", () => {
     const pool = makePool({ size: 1, spawn: () => new FakeWorker(never), timeoutMs: 100 });
     await vi.advanceTimersByTimeAsync(1);
     const call = pool.run("recall", {});
-    const rejection = expect(call).rejects.toBeInstanceOf(WorkerTimeoutError);
+    const rejection = expect(call).rejects.toThrow(/timed out after \d+ms in worker/);
     await vi.advanceTimersByTimeAsync(101);
     await rejection;
     const w = FakeWorker.instances[0];
@@ -175,7 +169,7 @@ describe("WorkerPool", () => {
     const pool = makePool({ size: 1, spawn: () => new FakeWorker(never), timeoutMs: 100 });
     await vi.advanceTimersByTimeAsync(1);
     const hung = pool.run("recall", {});
-    const rejection = expect(hung).rejects.toBeInstanceOf(WorkerTimeoutError);
+    const rejection = expect(hung).rejects.toThrow(/timed out after \d+ms in worker/);
     await vi.advanceTimersByTimeAsync(101);
     await rejection;
     expect(FakeWorker.instances).toHaveLength(1);
@@ -200,7 +194,7 @@ describe("WorkerPool", () => {
     const call = pool.run("recall", {});
     await new Promise((r) => setTimeout(r, 2));
     FakeWorker.instances[0].crash(9);
-    await expect(call).rejects.toBeInstanceOf(WorkerCrashedError);
+    await expect(call).rejects.toThrow(/worker exited with code 9/);
     await pool.whenReady();
     expect(FakeWorker.instances).toHaveLength(2);
     expect(pool.stats().respawns).toBe(1);
@@ -218,10 +212,10 @@ describe("WorkerPool", () => {
     const queued = pool.run("recall", {});
     await new Promise((r) => setTimeout(r, 2));
     await pool.close();
-    await expect(inflight).rejects.toBeInstanceOf(WorkerPoolClosedError);
-    await expect(queued).rejects.toBeInstanceOf(WorkerPoolClosedError);
+    await expect(inflight).rejects.toThrow(/pool is closed/);
+    await expect(queued).rejects.toThrow(/pool is closed/);
     expect(FakeWorker.instances[0].terminated).toBe(true);
-    await expect(pool.run("recall", {})).rejects.toBeInstanceOf(WorkerPoolClosedError);
+    await expect(pool.run("recall", {})).rejects.toThrow(/pool is closed/);
   });
 
   it("rejects an invalid pool size", () => {
