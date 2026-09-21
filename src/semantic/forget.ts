@@ -61,7 +61,8 @@ export interface ScopeGate {
   readScopes?: readonly string[];
   /**
    * Explicit per-call scope. `"global"` is the documented override: it acts
-   * on a memory in any scope even when `readScopes` would hide it.
+   * on a memory in any scope even when `readScopes` would hide it. Callers
+   * whose reads are pinned by the process env must not pass it through (#109).
    */
   scope?: string;
 }

@@ -184,6 +184,11 @@ Scoping has a per-process default and a per-call override.
 | `ENGRAM_SCOPE` | Default write scope stamped on every `remember` / `remember_batch`. |
 | `ENGRAM_READ_SCOPES` | Comma-separated scopes `recall` may return by default. When unset but `ENGRAM_SCOPE` is set, defaults to `global` plus the write scope. |
 
+Either variable in a stdio server's env makes that start run inline even when
+the HTTP daemon is up (#87): the bridge forwards calls verbatim and the daemon
+would resolve them under its own env. A shared daemon is scoped per call with
+the `scope` / `read_scopes` parameters instead.
+
 Per call, `recall` and `recall_session` accept `scope` (reads then default to
 `global` + that scope) and `read_scopes` (explicit list); `remember` and
 `remember_batch` accept `scope`; `ingest_turn` requires `scope`. With the

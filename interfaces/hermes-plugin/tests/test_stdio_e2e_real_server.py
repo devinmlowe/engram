@@ -1,6 +1,8 @@
 """End-to-end: EngramMemoryProvider against the REAL built engram MCP server.
 
-Uses a temp SQLite DB (ENGRAM_DB_PATH) — the live graph is never touched.
+Uses a temp SQLite DB (ENGRAM_DB_PATH) and forces the child inline
+(ENGRAM_MCP_STANDALONE=1) so it never bridges to a running daemon (#138) —
+the live graph is never touched.
 Requires dist/interfaces/mcp/server.js (npm run build) and the local
 embedding model cache; skips cleanly when the build is absent.
 """
@@ -34,6 +36,7 @@ def make_provider(tmp_path, profile):
             "repo_path": REPO_ROOT,
             "db_path": str(tmp_path / "e2e-engram.db"),
             "budget": 800,
+            "extra_env": {"ENGRAM_MCP_STANDALONE": "1"},
         })
     )
     p = EngramMemoryProvider()

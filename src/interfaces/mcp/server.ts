@@ -30,7 +30,7 @@ import { updateHealthField } from "../cli/update-check.js";
 import { escapeXml } from "../../_core/search/index.js";
 import { initEmbeddings } from "../../_core/embeddings/index.js";
 import { rememberFact, storeMemoryBatch } from "../shared/remember.js";
-import { resolveCallScoping } from "./scoping.js";
+import { getTenantScoping, resolveCallScoping } from "./scoping.js";
 import { ingestTurn, DEFAULT_TURN_SOURCE } from "../../episodic/ingest-turn.js";
 import {
   forgetMemory,
@@ -680,7 +680,8 @@ export const MCP_TOOL_DEFINITIONS: Tool[] = ([
       "out of every recall path immediately, is logged in the change log with " +
       "this client's name, and will not be re-extracted from the same " +
       "conversation. hard: true deletes it outright. Only memories within " +
-      "read_scopes can be forgotten unless scope is \"global\".",
+      "read_scopes can be forgotten; scope \"global\" lifts that only when the " +
+      "server's own env (ENGRAM_SCOPE / ENGRAM_READ_SCOPES) is unrestricted.",
     schema: ForgetInputSchema,
     annotations: {
       title: "Forget Memory",
@@ -1199,6 +1200,10 @@ type ForgetParams = z.infer<typeof ForgetInputSchema>;
 async function handleForget(params: ForgetParams, context?: ToolCallContext): Promise<ToolResult> {
   const actor = context?.clientName ?? UNKNOWN_MCP_ACTOR;
   const scoping = resolveCallScoping(process.env, params);
+  // #109: scope "global" is only an override when the process env does not
+  // pin reads; an env-pinned tenant must not widen itself out of its scopes.
+  const envPinned = getTenantScoping(process.env).readScopes !== undefined;
+  const scope = envPinned ? undefined : params.scope;
   const db = getDb();
 
   const act = (memoryId: string): ToolResult => {
@@ -1207,7 +1212,7 @@ async function handleForget(params: ForgetParams, context?: ToolCallContext): Pr
       actor,
       hard: params.hard,
       readScopes: scoping.readScopes,
-      scope: params.scope,
+      scope,
     });
     return { content: [{ type: "text", text: formatForgottenXml(result, actor) }] };
   };
@@ -1229,7 +1234,7 @@ async function handleForget(params: ForgetParams, context?: ToolCallContext): Pr
       mode: "hybrid",
       limit: FORGET_CANDIDATE_LIMIT,
       budget: 4000,
-      scopes: params.scope === "global" ? undefined : scoping.readScopes,
+      scopes: scope === "global" ? undefined : scoping.readScopes,
       reinforce: false,
     },
     config,
@@ -1380,8 +1385,11 @@ export async function startMcpServer(args: string[] = process.argv.slice(2)): Pr
       registerHandlers: (srv) => registerToolHandlers(srv, dispatcher.call),
       health: () => {
         const stats = dispatcher.stats();
-        // #65: the daily version check the CLI caches (never the network from here)
-        return { workers: stats ?? { size: 0 }, update: updateHealthField((config ??= loadConfig()).dataDir) };
+        config ??= loadConfig();
+        // #65: the daily version check the CLI caches (never the network from here).
+        // #87: the database this daemon serves, so a scoped stdio start with another
+        // ENGRAM_DB_PATH runs inline instead of bridging into the wrong database.
+        return { workers: stats ?? { size: 0 }, dbPath: config.dbPath, update: updateHealthField(config.dataDir) };
       },
     });
 

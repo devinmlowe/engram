@@ -475,7 +475,7 @@ Four domains with shared core infrastructure:
 | `commitments` | List tracked commitments (promises, intentions, follow-ups owed by others) — overdue first; honours `read_scopes` |
 | `commitments_update` | Mark a commitment done, dropped, or superseded |
 | `ingest_turn` | Record one user/assistant turn of an external agent session (`session_id`, `turn_index`, `scope`, `user_text`, `assistant_text`) — idempotent upsert into the episodic layer; extracted memories inherit the scope |
-| `forget` | Remove a memory the user says is wrong or stale (#55): `memory_id` (the `id` on every recalled `<semantic>`) acts in one call; `query` returns candidates with ids and only acts with `confirm: true` and a single unambiguous match. Soft delete kept for `ENGRAM_FORGET_RETENTION_DAYS` (vector/FTS rows removed at once, change-logged with the client's name, not re-extracted by dream); `hard: true` deletes outright; honours `read_scopes` unless `scope: "global"` |
+| `forget` | Remove a memory the user says is wrong or stale (#55): `memory_id` (the `id` on every recalled `<semantic>`) acts in one call; `query` returns candidates with ids and only acts with `confirm: true` and a single unambiguous match. Soft delete kept for `ENGRAM_FORGET_RETENTION_DAYS` (vector/FTS rows removed at once, change-logged with the client's name, not re-extracted by dream); `hard: true` deletes outright; honours `read_scopes`; `scope: "global"` overrides that only when the server env does not pin reads (#109) |
 
 ### Transports: stdio (default) and HTTP
 
@@ -519,7 +519,10 @@ Engram MCP: running inline (no daemon on :9907 (ECONNREFUSED))
 ```
 
 `engram mcp --standalone` (or `ENGRAM_MCP_STANDALONE=1` in the server's env)
-forces inline. The bridge forwards `Authorization: Bearer $ENGRAM_MCP_TOKEN`
+forces inline, and so do `ENGRAM_SCOPE` / `ENGRAM_READ_SCOPES` in that env (they
+scope *this* process; the daemon would ignore them, #87). With `ENGRAM_DB_PATH`
+set, the bridge is used only when the daemon's `/health` reports the same
+`dbPath`. The bridge forwards `Authorization: Bearer $ENGRAM_MCP_TOKEN`
 from its own environment when the daemon requires a token, re-opens its daemon
 session under the host's `clientInfo` (so `forget` still records the real
 actor) and survives a daemon restart (`engram update`) with one reconnect.
