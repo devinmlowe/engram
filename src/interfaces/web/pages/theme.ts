@@ -9,7 +9,6 @@ export const BG         = '#1e2326';  // bg_dim — main background (matches iTe
 export const BG_SURFACE = '#272e33';  // bg0 — raised surfaces, panels, inputs
 export const BG_OVERLAY = '#2e383c';  // bg1 — overlays, hover states
 export const BG_BORDER  = '#374145';  // bg2 — borders, dividers
-export const BG_MUTED   = '#414b50';  // bg3 — muted UI chrome
 export const BG_SUBTLE  = '#495156';  // bg4 — subtle highlights
 
 // Foreground / Text
@@ -17,7 +16,6 @@ export const FG       = '#d3c6aa';  // primary text
 export const FG_MUTED = '#9da9a0';  // grey2 — secondary text
 export const FG_DIM   = '#859289';  // grey1 — tertiary text
 export const FG_FAINT = '#7a8478';  // grey0 — comments, inactive
-export const FG_GHOST = '#5b6560';  // very faint
 
 // Accents
 export const RED    = '#e67e80';
@@ -39,6 +37,16 @@ export const TYPE_COLORS: Record<string, string> = {
   repo:       AQUA,
 };
 
+// Relationship type colors (graph links)
+export const REL_COLORS: Record<string, string> = {
+  uses:          BLUE,
+  depends_on:    RED,
+  related_to:    PURPLE,
+  part_of:       GREEN,
+  configured_by: ORANGE,
+  solved_by:     YELLOW,
+};
+
 export const DEFAULT_COLOR = BG_SUBTLE;
 
 // Word cloud / multi-color palette (12 slots)
@@ -47,3 +55,8 @@ export const PALETTE = [
   AQUA, YELLOW, FG_MUTED, FG, FG_DIM,
   '#b6c19e', '#c1a8b4',
 ];
+
+/** `#rrggbb` → `[r, g, b]`, for pages that blend colours in JavaScript. */
+export function hexToRgb(hex: string): [number, number, number] {
+  return [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)];
+}
