@@ -140,108 +140,142 @@ const ReadScopesParamSchema = z
   .array(z.string().trim().min(1, "read_scopes entries must be non-empty scope strings"))
   .min(1, "read_scopes must contain at least one scope");
 
+// The `.describe()` strings below are what ListTools advertises: every tool's
+// inputSchema is generated from its zod schema (toInputSchema), so a
+// description or default lives in exactly one place.
+const SCOPE_READ_DESC =
+  "Tenant identity for this call (e.g. \"hermes:career\"); reads " +
+  "default to global + this scope. Overrides ENGRAM_SCOPE for this call only.";
+const SCOPE_GRAPH_DESC =
+  "Tenant identity for this call (e.g. \"hermes:career\"); derives the read default global + own";
+const SCOPE_WRITE_DESC =
+  "Tenant scope to stamp on this write (e.g. \"hermes:career\"). " +
+  "Overrides the ENGRAM_SCOPE env default for this call only.";
+const READ_SCOPES_DESC =
+  "Explicit scopes to read from (e.g. [\"global\", \"hermes:career\"]). " +
+  "Overrides ENGRAM_READ_SCOPES for this call only.";
+const READ_SCOPES_GRAPH_DESC = `${READ_SCOPES_DESC.slice(0, -1)} (#25).`;
+const REINFORCE_DESC =
+  "Reinforce the semantic memories this call returns (FSRS: bumps " +
+  "access_count/last_accessed and grows stability). Set false for " +
+  "read-only or diagnostic callers that must not mutate the store.";
+const MEMORY_SOURCES_DESC = "Source of this memory (user, dream, rlm, import, hermes-mirror)";
+const RELATIONSHIP_TYPES_DESC = "Filter by relationship types";
+const SESSION_ID_DESC = "Optional session ID for token budget tracking";
+
+const MemoryTypeSchema = z.enum(["preference", "decision", "pattern", "fact", "solution", "convention"]);
+const SearchSourcesSchema = z.array(z.enum(["episodic", "semantic", "graph"]));
+const RelationshipTypesSchema = z
+  .array(z.enum(["uses", "depends_on", "related_to", "part_of", "configured_by", "solved_by", "contains"]))
+  .optional()
+  .describe(RELATIONSHIP_TYPES_DESC);
+
 const CommitmentsInputSchema = z.object({
-  status: z.enum(["pending", "done", "dropped", "superseded", "all"]).optional(),
-  include_due_within_days: z.number().min(0).max(3650).optional(),
-  limit: z.number().int().min(1).max(500).optional(),
-  budget: z.number().int().min(100).max(10000).optional(),
-  scope: ScopeParamSchema.optional(),
-  read_scopes: ReadScopesParamSchema.optional(),
+  status: z.enum(["pending", "done", "dropped", "superseded", "all"]).optional().default("pending").describe("Lifecycle state to list"),
+  include_due_within_days: z.number().min(0).max(3650).optional().describe("Only items with a due date within this many days (overdue items included)"),
+  limit: z.number().int().min(1).max(500).optional().default(20).describe("Max items"),
+  budget: z.number().int().min(100).max(10000).optional().default(1500).describe("Token budget for the XML response"),
+  scope: ScopeParamSchema.optional().describe(SCOPE_GRAPH_DESC),
+  read_scopes: ReadScopesParamSchema.optional().describe(READ_SCOPES_GRAPH_DESC),
 });
 
 const CommitmentsUpdateInputSchema = z.object({
-  id: z.string().min(6, "Commitment id (or a unique prefix of at least 6 characters) is required"),
-  status: z.enum(["done", "dropped", "superseded"]),
-  superseded_by: z.string().min(6).optional(),
+  id: z.string().min(6, "Commitment id (or a unique prefix of at least 6 characters) is required").describe("Commitment id (from the commitments tool) or a unique prefix"),
+  status: z.enum(["done", "dropped", "superseded"]).describe("Resolution"),
+  superseded_by: z.string().min(6).optional().describe("Id of the commitment that replaces this one (required when status is superseded)"),
 });
 
 // Per-request tenant scoping (ADR-010 / W1). Same rules as the env path:
 // trimmed, non-empty. Absent → env defaults apply.
 const IngestTurnInputSchema = z.object({
-  session_id: z.string().trim().min(1, "session_id is required"),
-  turn_index: z.number().int("turn_index must be an integer").min(0, "turn_index must be >= 0"),
-  scope: ScopeParamSchema,
-  user_text: z.string(),
-  assistant_text: z.string(),
+  session_id: z.string().trim().min(1, "session_id is required").describe("Caller's conversation/session identifier (stable across turns)"),
+  turn_index: z.number().int("turn_index must be an integer").min(0, "turn_index must be >= 0").describe("0-based position of this turn within the session"),
+  scope: ScopeParamSchema.describe("Tenant scope of the conversation (e.g. \"hermes:career\")"),
+  user_text: z.string().describe("The user's message for this turn"),
+  assistant_text: z.string().describe("The assistant's reply for this turn"),
   tool_calls: z
     .array(
       z.object({
         name: z.string().trim().min(1, "tool_calls[].name is required"),
-        input: z.unknown().optional(),
-        output: z.unknown().optional(),
+        input: z.unknown().optional().describe("Tool input (any JSON)"),
+        output: z.unknown().optional().describe("Tool output/result summary (any JSON)"),
       }),
     )
-    .optional(),
+    .optional()
+    .describe("Tools invoked during the turn (input/output are truncated to 1000 chars)"),
   timestamp: z
     .string()
     .refine((v) => !Number.isNaN(new Date(v).getTime()), "timestamp must be an ISO-8601 date string")
-    .optional(),
-  source: z.string().trim().min(1, "source must be a non-empty label").optional(),
+    .optional()
+    .describe("ISO-8601 time of the turn (default: now)"),
+  source: z.string().trim().min(1, "source must be a non-empty label").optional().default(DEFAULT_TURN_SOURCE).describe("Platform/source label; part of the conversation key (default \"hermes\")"),
   author: z
     .object({
-      id: z.string().optional(),
-      name: z.string().optional(),
-      is_bot: z.boolean().optional(),
+      id: z.string().optional().describe("Platform user id"),
+      name: z.string().optional().describe("Display name"),
+      is_bot: z.boolean().optional().describe("True when the author is a bot"),
     })
     .strict()
-    .optional(),
+    .optional()
+    .describe("Who authored the user side of the turn (stored as JSON on the exchange)"),
 });
 
 const RecallInputSchema = z.object({
   query: z.string().min(2, "Query must be at least 2 characters"),
-  scope: ScopeParamSchema.optional(),
-  read_scopes: ReadScopesParamSchema.optional(),
-  budget: z.number().int().min(100).max(5000).optional(),
+  scope: ScopeParamSchema.optional().describe(SCOPE_READ_DESC),
+  read_scopes: ReadScopesParamSchema.optional().describe(READ_SCOPES_DESC),
+  budget: z.number().int().min(100).max(5000).optional().default(1500).describe("Max tokens in response"),
   after: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD")
-    .optional(),
+    .optional()
+    .describe("Only results after this date (YYYY-MM-DD)"),
   before: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD")
-    .optional(),
-  dateHint: z.string().trim().min(1).max(200).optional(),
-  dateBasis: z.enum(["filed", "event"]).optional(),
-  depth: z.enum(["shallow", "deep"]).optional(),
-  sources: z
-    .array(z.enum(["episodic", "semantic", "graph"]))
-    .optional(),
-  reinforce: z.boolean().optional(),
+    .optional()
+    .describe("Only results before this date (YYYY-MM-DD; that day is excluded)"),
+  dateHint: z.string().trim().min(1).max(200).optional().describe(
+    "Natural-language date window, resolved in UTC: today, yesterday, " +
+    "this/last week|month|year, N days|weeks|months ago, this day last year, " +
+    "in <month>, <month> <year>, since <phrase>, before <phrase>, " +
+    "on this day (same month/day across all years), or an ISO date/month. " +
+    "Explicit after/before take precedence over the hint. Unrecognized " +
+    "hints apply no filter and are reported in <date_filter note>.",
+  ),
+  dateBasis: z.enum(["filed", "event"]).optional().default("filed").describe(
+    "What the dates refer to: 'filed' = when the memory was recorded " +
+    "(memories IN March); 'event' = when the described events happened, " +
+    "via source-exchange timestamps (memories ABOUT March). Episodic " +
+    "results are identical under both.",
+  ),
+  depth: z.enum(["shallow", "deep"]).optional().default("shallow"),
+  sources: SearchSourcesSchema.optional().default(["episodic", "semantic"]).describe("Which memory stores to search. Defaults to episodic and semantic."),
+  reinforce: z.boolean().optional().default(true).describe(REINFORCE_DESC),
 });
 
 const RememberInputSchema = z.object({
-  content: z.string().min(1, "Content is required"),
-  scope: ScopeParamSchema.optional(),
-  type: z.enum([
-    "preference",
-    "decision",
-    "pattern",
-    "fact",
-    "solution",
-    "convention",
-  ]).optional().default("fact"),
-  importance: z.number().min(0).max(1).optional().default(0.7),
-  source: z.enum(VALID_MEMORY_SOURCES).optional().default("user"),
-  context: z.string().trim().max(500, "context must be at most 500 characters").optional(),
+  content: z.string().min(1, "Content is required").describe("The fact, preference, or knowledge to remember"),
+  scope: ScopeParamSchema.optional().describe(SCOPE_WRITE_DESC),
+  type: MemoryTypeSchema.optional().default("fact").describe("Type of memory"),
+  importance: z.number().min(0).max(1).optional().default(0.7).describe("Importance score (0-1)"),
+  source: z.enum(VALID_MEMORY_SOURCES).optional().default("user").describe(MEMORY_SOURCES_DESC),
+  context: z.string().trim().max(500, "context must be at most 500 characters").optional().describe("Provenance note stored alongside the memory (e.g. what produced this write)"),
 });
 
 const RememberBatchInputSchema = z.object({
   memories: z.array(z.object({
-    content: z.string().min(1, "Content is required"),
-    type: z.enum([
-      "preference",
-      "decision",
-      "pattern",
-      "fact",
-      "solution",
-      "convention",
-    ]).optional().default("fact"),
-    importance: z.number().min(0).max(1).optional(),
-    source: z.enum(VALID_MEMORY_SOURCES).optional(),
-    context: z.string().trim().max(500, "context must be at most 500 characters").optional(),
-    relates_to_entities: z.array(z.string()).max(10).optional(),
-  }).strict()).min(1, "At least one memory is required").max(50, "Maximum batch size is 50"),
-  scope: ScopeParamSchema.optional(),
+    content: z.string().min(1, "Content is required").describe("The fact, preference, or knowledge to remember"),
+    type: MemoryTypeSchema.optional().default("fact").describe("Type of memory"),
+    importance: z.number().min(0).max(1).optional().describe("Importance score (0-1)"),
+    source: z.enum(VALID_MEMORY_SOURCES).optional().describe(MEMORY_SOURCES_DESC),
+    context: z.string().trim().max(500, "context must be at most 500 characters").optional().describe("Provenance note stored alongside the memory"),
+    relates_to_entities: z.array(z.string()).max(10).optional().describe(
+      "Entity names to link this memory to. Bumps mention counts " +
+      "and creates pairwise related_to relationships between entities.",
+    ),
+  }).strict()).min(1, "At least one memory is required").max(50, "Maximum batch size is 50").describe("Array of memories to store (max 50)"),
+  scope: ScopeParamSchema.optional().describe(SCOPE_WRITE_DESC),
 });
 
 const ShowInputSchema = z.object({
@@ -251,70 +285,44 @@ const ShowInputSchema = z.object({
 });
 
 const ExploreInputSchema = z.object({
-  entity: z.string().min(1, "Entity name is required"),
-  depth: z.number().int().min(1).max(3).optional().default(1),
-  limit: z.number().int().min(1).max(50).optional().default(25),
-  budget: z.number().int().min(100).max(5000).optional().default(1500),
-  relationship_types: z
-    .array(
-      z.enum([
-        "uses",
-        "depends_on",
-        "related_to",
-        "part_of",
-        "configured_by",
-        "solved_by",
-        "contains",
-      ]),
-    )
-    .optional(),
-  scope: ScopeParamSchema.optional(),
-  read_scopes: ReadScopesParamSchema.optional(),
+  entity: z.string().min(1, "Entity name is required").describe("Entity name to explore (e.g., 'TypeScript', 'engram', 'SQLite')"),
+  depth: z.number().int().min(1).max(3).optional().default(1).describe("Number of hops to traverse (1-3)"),
+  limit: z.number().int().min(1).max(50).optional().default(25).describe("Max neighbors to return, sorted by weight (1-50)"),
+  budget: z.number().int().min(100).max(5000).optional().default(1500).describe("Max tokens in response"),
+  relationship_types: RelationshipTypesSchema,
+  scope: ScopeParamSchema.optional().describe(SCOPE_GRAPH_DESC),
+  read_scopes: ReadScopesParamSchema.optional().describe(READ_SCOPES_GRAPH_DESC),
 });
 
 const RecallSessionInputSchema = z.object({
-  query: z.string().min(2, "Query must be at least 2 characters"),
-  scope: ScopeParamSchema.optional(),
-  read_scopes: ReadScopesParamSchema.optional(),
-  session_id: z.string().uuid().optional(),
-  budget: z.number().int().min(100).max(10000).optional(),
-  sources: z
-    .array(z.enum(["episodic", "semantic", "graph"]))
-    .optional(),
-  reinforce: z.boolean().optional(),
+  query: z.string().min(2, "Query must be at least 2 characters").describe("Search query"),
+  scope: ScopeParamSchema.optional().describe(SCOPE_READ_DESC),
+  read_scopes: ReadScopesParamSchema.optional().describe(READ_SCOPES_DESC),
+  session_id: z.string().uuid().optional().describe("Existing session ID to refine (omit to create new)"),
+  budget: z.number().int().min(100).max(10000).optional().default(3000).describe("Max total token budget for this session"),
+  sources: SearchSourcesSchema.optional().default(["episodic", "semantic"]).describe("Which memory stores to search"),
+  reinforce: z.boolean().optional().default(true).describe(REINFORCE_DESC),
 });
 
 const RecallDrillInputSchema = z.object({
-  session_id: z.string().uuid("Invalid session ID"),
-  result_index: z.number().int().min(0, "Result index must be >= 0"),
-  reinforce: z.boolean().optional(),
+  session_id: z.string().uuid("Invalid session ID").describe("Session ID from recall_session"),
+  result_index: z.number().int().min(0, "Result index must be >= 0").describe("0-based index into session results"),
+  reinforce: z.boolean().optional().default(true).describe(REINFORCE_DESC),
 });
 
 const ExploreSelectiveInputSchema = z.object({
-  entity: z.string().min(1, "Entity name is required"),
-  criteria: z.string().min(1, "Criteria is required"),
-  max_depth: z.number().int().min(1).max(5).optional().default(3),
-  max_nodes: z.number().int().min(1).max(50).optional().default(50),
-  relationship_types: z
-    .array(
-      z.enum([
-        "uses",
-        "depends_on",
-        "related_to",
-        "part_of",
-        "configured_by",
-        "solved_by",
-        "contains",
-      ]),
-    )
-    .optional(),
-  scope: ScopeParamSchema.optional(),
-  read_scopes: ReadScopesParamSchema.optional(),
+  entity: z.string().min(1, "Entity name is required").describe("Starting entity name (e.g., 'TypeScript', 'engram', 'SQLite')"),
+  criteria: z.string().min(1, "Criteria is required").describe("What makes a neighbor relevant (e.g., 'build tooling', 'performance optimization')"),
+  max_depth: z.number().int().min(1).max(5).optional().default(3).describe("Maximum traversal depth (1-5)"),
+  max_nodes: z.number().int().min(1).max(50).optional().default(50).describe("Safety cap on total nodes returned (1-50)"),
+  relationship_types: RelationshipTypesSchema,
+  scope: ScopeParamSchema.optional().describe(SCOPE_GRAPH_DESC),
+  read_scopes: ReadScopesParamSchema.optional().describe(READ_SCOPES_GRAPH_DESC),
 });
 
 const ReflectInputSchema = z.object({
-  mode: z.enum(["communities", "bridges", "temporal", "health", "all"]).optional().default("all"),
-  refresh: z.boolean().optional().default(false),
+  mode: z.enum(["communities", "bridges", "temporal", "health", "all"]).optional().default("all").describe("What to reflect on."),
+  refresh: z.boolean().optional().default(false).describe("Force a fresh analysis instead of using cached results."),
 });
 
 const FetchSnippetsInputSchema = z.object({
@@ -322,40 +330,82 @@ const FetchSnippetsInputSchema = z.object({
   ranges: z.array(z.object({
     start: z.number().int().min(1),
     end: z.number().int().min(1),
-  })).min(1).max(20),
-  context: z.number().int().min(0).max(50).optional().default(0),
-  session_id: z.string().uuid().optional(),
+  })).min(1).max(20).describe("Line ranges to fetch (max 20)"),
+  context: z.number().int().min(0).max(50).optional().default(0).describe("Number of padding lines around each range (0-50)"),
+  session_id: z.string().uuid().optional().describe(SESSION_ID_DESC),
 });
 
 const ScanFileInputSchema = z.object({
-  path: z.string().min(1, "Path is required"),
-  patterns: z.array(z.string()).min(1, "At least one pattern is required").max(10, "Maximum 10 patterns allowed"),
-  context_lines: z.number().int().min(0).max(10).optional().default(2),
-  group_by: z.enum(["pattern", "location"]).optional().default("location"),
-  max_matches: z.number().int().min(1).max(500).optional().default(100),
-  deduplicate_overlaps: z.boolean().optional().default(true),
-  session_id: z.string().uuid().optional(),
+  path: z.string().min(1, "Path is required").describe("Absolute path to the file to scan"),
+  patterns: z.array(z.string()).min(1, "At least one pattern is required").max(10, "Maximum 10 patterns allowed").describe("Regex patterns to search for (max 10)"),
+  context_lines: z.number().int().min(0).max(10).optional().default(2).describe("Lines of context before and after each match (0-10)"),
+  group_by: z.enum(["pattern", "location"]).optional().default("location").describe("Order results by file location or grouped by pattern"),
+  max_matches: z.number().int().min(1).max(500).optional().default(100).describe("Maximum matches to return (1-500)"),
+  deduplicate_overlaps: z.boolean().optional().default(true).describe("Merge overlapping context windows to avoid duplicate lines"),
+  session_id: z.string().uuid().optional().describe(SESSION_ID_DESC),
 });
 
 const IndexFileStructureInputSchema = z.object({
-  path: z.string().min(1, "Path is required"),
+  path: z.string().min(1, "Path is required").describe("Absolute path to the source file to index"),
 });
 
 // #55: exactly one of memory_id / query. Query mode only acts with
 // confirm: true AND an unambiguous single match (see handleForget).
 const ForgetInputSchema = z
   .object({
-    memory_id: z.string().trim().min(6, "memory_id must be a memory id (or a unique prefix of at least 6 characters)").optional(),
-    query: z.string().trim().min(2, "query must be at least 2 characters").optional(),
-    confirm: z.boolean().optional().default(false),
-    hard: z.boolean().optional().default(false),
-    scope: ScopeParamSchema.optional(),
-    read_scopes: ReadScopesParamSchema.optional(),
+    memory_id: z.string().trim().min(6, "memory_id must be a memory id (or a unique prefix of at least 6 characters)").optional().describe("Id of the memory to forget (from recall's <semantic id>), or a unique prefix of 6+ characters"),
+    query: z.string().trim().min(2, "query must be at least 2 characters").optional().describe("Find candidate memories instead of naming one; returns ids, deletes nothing unless confirm + a single match"),
+    confirm: z.boolean().optional().default(false).describe("In query mode: forget the match when exactly one memory matches"),
+    hard: z.boolean().optional().default(false).describe("Delete the row outright instead of the soft delete + retention purge"),
+    scope: ScopeParamSchema.optional().describe(
+      "Tenant identity for this call (e.g. \"hermes:career\"); reads default to " +
+      "global + this scope. \"global\" acts on a memory in any scope.",
+    ),
+    read_scopes: ReadScopesParamSchema.optional().describe("Scopes this call may act on (e.g. [\"global\", \"hermes:career\"]). Overrides ENGRAM_READ_SCOPES for this call only."),
   })
   .strict()
   .refine((v) => (v.memory_id !== undefined) !== (v.query !== undefined), {
     message: "Pass exactly one of memory_id or query",
   });
+
+/** Every tool's zod input schema, keyed by tool name; ListTools advertises the JSON Schema generated from it. */
+export const MCP_TOOL_INPUT_SCHEMAS: Record<string, z.ZodType> = {
+  recall: RecallInputSchema,
+  remember: RememberInputSchema,
+  remember_batch: RememberBatchInputSchema,
+  show: ShowInputSchema,
+  explore: ExploreInputSchema,
+  reflect: ReflectInputSchema,
+  recall_session: RecallSessionInputSchema,
+  recall_drill: RecallDrillInputSchema,
+  explore_selective: ExploreSelectiveInputSchema,
+  fetch_snippets: FetchSnippetsInputSchema,
+  scan_file: ScanFileInputSchema,
+  index_file_structure: IndexFileStructureInputSchema,
+  commitments: CommitmentsInputSchema,
+  commitments_update: CommitmentsUpdateInputSchema,
+  ingest_turn: IngestTurnInputSchema,
+  forget: ForgetInputSchema,
+};
+
+/**
+ * JSON Schema for ListTools, generated from the zod input schema (io: "input",
+ * so defaulted fields stay optional). Dropped as noise: the `$schema` marker,
+ * the safe-integer bounds zod adds to every unbounded `.int()`, and the regex
+ * it repeats next to `format: "uuid"`. The top-level object is closed the way
+ * every hand-written schema was — the validator still strips unknown keys
+ * (Hermes' warm-up recall sends `limit`).
+ */
+export function toInputSchema(schema: z.ZodType): Tool["inputSchema"] {
+  const json = JSON.parse(JSON.stringify(z.toJSONSchema(schema, { io: "input" })), function (this: Record<string, unknown>, key, value) {
+    if (key === "$schema") return undefined;
+    if (key === "maximum" && value === Number.MAX_SAFE_INTEGER) return undefined;
+    if (key === "minimum" && value === -Number.MAX_SAFE_INTEGER) return undefined;
+    if (key === "pattern" && this.format === "uuid") return undefined;
+    return value;
+  });
+  return { ...json, additionalProperties: false };
+}
 
 /** Candidates returned by forget's query mode before anything is deleted. */
 const FORGET_CANDIDATE_LIMIT = 10;
