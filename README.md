@@ -933,7 +933,7 @@ Run via `engram dream`, the web UI dream button, or nightly at 02:00 via `script
 
 ```bash
 npm run build        # TypeScript compilation
-npm run test:run     # Run tests (vitest, 111 test files)
+npm run test:run     # Run tests (vitest, 131 test files)
 npm run mcp          # Start MCP server
 npm run dev          # Dev CLI via tsx
 npm run dream        # Run dream consolidation

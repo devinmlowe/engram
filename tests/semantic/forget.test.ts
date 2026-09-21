@@ -32,6 +32,11 @@ import {
   MemoryScopeError,
   MemoryAlreadyForgottenError,
 } from "../../src/semantic/forget.js";
+
+/** Whether the content's hash is in memory_suppressions (the check dream extract runs). */
+function isSuppressed(db: TestDb["db"], content: string): boolean {
+  return db.prepare("SELECT 1 FROM memory_suppressions WHERE content_hash = ?").get(contentHash(content)) !== undefined;
+}
 import { listMemories, getMemoryProvenance, listMemoryChanges, resolveMemoryId } from "../../src/semantic/inspect.js";
 import { drillIntoResult } from "../../src/_core/search/drill.js";
 import { pruneOrphanEntities } from "../../src/graph/reflection.js";
