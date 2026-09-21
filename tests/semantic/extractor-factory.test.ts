@@ -3,15 +3,14 @@
  * factory so the configured cascade (Ollama → OpenRouter → Anthropic)
  * applies. SPEC.md INV-3: no cloud dependency when a local LLM is available.
  *
- * The Anthropic SDK constructor is mocked at module level so we can prove
- * it is never instantiated when a lower tier serves the request.
+ * Every fetch is stubbed and recorded so we can prove the Anthropic API
+ * is never called when a lower tier serves the request.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-vi.mock("@anthropic-ai/sdk", () => ({ default: vi.fn() }));
 
-import Anthropic from "@anthropic-ai/sdk";
+import type { AnthropicClient as Anthropic } from "../../src/_core/llm/index.js";
 import {
   extractFromConversation,
   initExtractor,
@@ -21,7 +20,12 @@ import {
   type ConversationMetadata,
 } from "../../src/semantic/extractor.js";
 
-const AnthropicCtor = vi.mocked(Anthropic);
+/** URLs the fetch stub saw that would have reached the real Anthropic Messages API (#118: the client is a plain fetch POST). */
+function anthropicCalls(): string[] {
+  return vi.mocked(fetch).mock.calls
+    .map((c) => (c[0] instanceof Request ? c[0].url : String(c[0])))
+    .filter((u) => u.includes("api.anthropic.com"));
+}
 
 // ─── Helpers ────────────────────────────────────────────────────
 
@@ -150,7 +154,6 @@ let savedEnv: Record<string, string | undefined> = {};
 
 beforeEach(() => {
   resetExtractor();
-  AnthropicCtor.mockClear();
   savedEnv = {};
   for (const k of ENV_KEYS) {
     savedEnv[k] = process.env[k];
@@ -188,7 +191,7 @@ describe("semantic extractor routes through the LLM factory", () => {
     expect(result.facts).toHaveLength(1);
     expect(result.facts[0].content).toBe("The user prefers local inference.");
 
-    expect(AnthropicCtor).not.toHaveBeenCalled();
+    expect(anthropicCalls()).toEqual([]);
     expect(calls.some((u) => u.includes("openrouter.ai"))).toBe(false);
 
     // Structured-output contract preserved on the local path
@@ -220,7 +223,7 @@ describe("semantic extractor routes through the LLM factory", () => {
     expect(calls[0]).toMatch(/\/api\/tags$/);
     expect(calls[1]).toContain("openrouter.ai");
     expect(mockCreate).not.toHaveBeenCalled();
-    expect(AnthropicCtor).not.toHaveBeenCalled();
+    expect(anthropicCalls()).toEqual([]);
   });
 
   it("falls through to Anthropic when both Ollama and OpenRouter fail", async () => {

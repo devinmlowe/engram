@@ -7,14 +7,13 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-vi.mock("@anthropic-ai/sdk", () => ({ default: vi.fn() }));
 vi.mock("../../src/semantic/nli.js", () => ({ classifyNli: vi.fn() }));
 vi.mock("../../src/_core/embeddings/index.js", () => ({
   embedDocument: vi.fn(),
   initEmbeddings: vi.fn(),
 }));
 
-import Anthropic from "@anthropic-ai/sdk";
+import type { AnthropicClient as Anthropic } from "../../src/_core/llm/index.js";
 import {
   deduplicateFact,
   initConsolidator,
@@ -28,7 +27,12 @@ import { embedDocument } from "../../src/_core/embeddings/index.js";
 import type { Memory, ExtractedFact } from "../../src/semantic/types.js";
 import { createTestDb, type TestDb } from "../helpers.js";
 
-const AnthropicCtor = vi.mocked(Anthropic);
+/** URLs the fetch stub saw that would have reached the real Anthropic Messages API (#118: the client is a plain fetch POST). */
+function anthropicCalls(): string[] {
+  return vi.mocked(fetch).mock.calls
+    .map((c) => (c[0] instanceof Request ? c[0].url : String(c[0])))
+    .filter((u) => u.includes("api.anthropic.com"));
+}
 const mockedClassifyNli = vi.mocked(classifyNli);
 const mockedEmbedDocument = vi.mocked(embedDocument);
 
@@ -165,7 +169,6 @@ let t: TestDb;
 beforeEach(() => {
   t = createTestDb();
   resetConsolidator();
-  AnthropicCtor.mockClear();
   vi.clearAllMocks();
   savedEnv = {};
   for (const k of ENV_KEYS) {
@@ -208,7 +211,7 @@ describe("consolidator conflict resolution routes through the LLM factory", () =
     expect(old!.isActive).toBe(false);
     expect(old!.supersededBy).toBe(result.memoryId);
 
-    expect(AnthropicCtor).not.toHaveBeenCalled();
+    expect(anthropicCalls()).toEqual([]);
     expect(calls.some((u) => u.includes("openrouter.ai"))).toBe(false);
 
     // Structured-output contract on the local path: schema + token cap preserved
@@ -234,7 +237,7 @@ describe("consolidator conflict resolution routes through the LLM factory", () =
     expect(calls[0]).toMatch(/\/api\/tags$/);
     expect(calls[1]).toContain("openrouter.ai");
     expect(mockCreate).not.toHaveBeenCalled();
-    expect(AnthropicCtor).not.toHaveBeenCalled();
+    expect(anthropicCalls()).toEqual([]);
   });
 
   it("falls through to Anthropic when both Ollama and OpenRouter fail", async () => {

@@ -21,7 +21,7 @@ Unified LLM client factory with tiered provider cascade. Abstracts provider diff
 - `providers/` — Provider-specific implementations
   - `anthropic.ts` — Anthropic API client
   - `openai-compatible.ts` — Generic OpenAI chat-completions client + the `openai` tier (OpenAI, LiteLLM, self-hosted gateways; endpoint/model/key-env-var from `ENGRAM_OPENAI_*`, #45)
-  - `openrouter.ts` — OpenRouter tier: a preconfigured route over the generic client
+  - `openrouter.ts` — OpenRouter tier: one route constant (endpoint, attribution headers, temperature 0) served by the generic client's tier wrappers
   - `ollama.ts` — Ollama local LLM client
 
 ## See Also
