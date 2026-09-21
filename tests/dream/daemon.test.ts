@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createTestDb } from "../helpers.js";
+import { insertConversation, insertExchange, insertMemory } from "../helpers.js";
 import type { TestDb } from "../helpers.js";
 import type { DreamPhase } from "../../src/dream/types.js";
 
@@ -158,64 +159,11 @@ afterEach(() => {
 
 // ─── Helpers ─────────────────────────────────────────────────────
 
-function insertConversation(
-  id: string,
-  opts: { project?: string; exchangeCount?: number } = {},
-): void {
-  t.db
-    .prepare(
-      "INSERT INTO conversations (id, project, last_indexed, exchange_count) VALUES (?, ?, ?, ?)",
-    )
-    .run(id, opts.project ?? "test-project", Math.floor(Date.now() / 1000), opts.exchangeCount ?? 3);
-}
-
-function insertExchange(
-  id: string,
-  conversationId: string,
-  index: number,
-  opts: {
-    userMessage?: string;
-    assistantMessage?: string;
-    project?: string;
-  } = {},
-): void {
-  t.db
-    .prepare(
-      `INSERT INTO exchanges (id, conversation_id, project, timestamp, user_message, assistant_message, exchange_index, token_estimate)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      id,
-      conversationId,
-      opts.project ?? "test-project",
-      new Date().toISOString(),
-      opts.userMessage ?? `User message ${index}`,
-      opts.assistantMessage ?? `Assistant response ${index}`,
-      index,
-      50,
-    );
-}
-
-function insertActiveMemory(
-  id: string,
-  opts: {
-    confidence?: number;
-    importance?: number;
-  } = {},
-): void {
-  t.db
-    .prepare(
-      `INSERT INTO memories (id, type, content, confidence, importance, access_count, is_active, source_exchanges)
-       VALUES (?, 'fact', 'test memory content', ?, ?, 1, 1, '[]')`,
-    )
-    .run(id, opts.confidence ?? 0.5, opts.importance ?? 0.5);
-}
-
 /** Set up a conversation with exchanges so the extract phase has work to do. */
 function seedConversation(convId: string, exchangeCount = 3): void {
-  insertConversation(convId, { exchangeCount });
+  insertConversation(t.db, convId, { lastIndexed: Math.floor(Date.now() / 1000), exchangeCount });
   for (let i = 0; i < exchangeCount; i++) {
-    insertExchange(`${convId}-exch-${i}`, convId, i);
+    insertExchange(t.db, `${convId}-exch-${i}`, convId, { index: i });
   }
 }
 
@@ -843,8 +791,8 @@ describe("Phase runners", () => {
 
   describe("Prune phase", () => {
     it("scans active memories", async () => {
-      insertActiveMemory("mem-001");
-      insertActiveMemory("mem-002");
+      insertMemory(t.db, "mem-001");
+      insertMemory(t.db, "mem-002");
 
       await runDream(t.db, t.config, { phases: ["prune"] });
 
@@ -853,8 +801,8 @@ describe("Phase runners", () => {
     });
 
     it("deactivates memories below threshold", async () => {
-      insertActiveMemory("mem-001", { confidence: 0.05 });
-      insertActiveMemory("mem-002", { confidence: 0.8 });
+      insertMemory(t.db, "mem-001", { confidence: 0.05 });
+      insertMemory(t.db, "mem-002", { confidence: 0.8 });
 
       // Make the first memory prune-eligible
       vi.mocked(isPruneEligible).mockImplementation((memory: { id: string }) => {
@@ -879,9 +827,9 @@ describe("Phase runners", () => {
     });
 
     it("reports correct prune count in report", async () => {
-      insertActiveMemory("mem-001");
-      insertActiveMemory("mem-002");
-      insertActiveMemory("mem-003");
+      insertMemory(t.db, "mem-001");
+      insertMemory(t.db, "mem-002");
+      insertMemory(t.db, "mem-003");
 
       vi.mocked(isPruneEligible).mockReturnValue(true);
 
@@ -920,7 +868,7 @@ describe("Forget suppression + retention purge (#55)", () => {
   });
 
   it("prune hard-deletes forgotten memories past ENGRAM_FORGET_RETENTION_DAYS and reports the stale fast path", async () => {
-    insertActiveMemory("mem-live");
+    insertMemory(t.db, "mem-live");
     t.db
       .prepare(
         `INSERT INTO memories (id, type, content, confidence, importance, access_count, is_active, source_exchanges, deleted_at, deleted_by)
@@ -1014,8 +962,8 @@ describe("Run lifecycle", () => {
 
 describe("Prune phase honours persisted stability (W9b)", () => {
   it("passes memories.stability through to isPruneEligible", async () => {
-    insertActiveMemory("mem-transient");
-    insertActiveMemory("mem-durable");
+    insertMemory(t.db, "mem-transient");
+    insertMemory(t.db, "mem-durable");
     t.db.prepare("UPDATE memories SET stability = 7 WHERE id = 'mem-transient'").run();
 
     await runDream(t.db, t.config, { phases: ["prune"] });
@@ -1120,7 +1068,7 @@ describe("Extract phase skips unchanged conversations (W12)", () => {
     await runDream(t.db, t.config, { phases: ["extract"] });
     vi.mocked(extractFromConversation).mockClear();
 
-    insertExchange("conv-grown-exch-2", "conv-grown", 2);
+    insertExchange(t.db, "conv-grown-exch-2", "conv-grown", { index: 2 });
 
     await runDream(t.db, t.config, { phases: ["extract"] });
     expect(extractFromConversation).toHaveBeenCalledTimes(1);

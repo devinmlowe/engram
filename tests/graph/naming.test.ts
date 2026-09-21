@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type Database from "better-sqlite3";
 import { createTestDb } from "../helpers.js";
+import { insertEntity, insertRelationship } from "../helpers.js";
 import type { TestDb } from "../helpers.js";
 import type { CommunityResult } from "../../src/graph/types.js";
 import { persistAnalysis, analyzeGraph } from "../../src/graph/analyzer.js";
@@ -30,30 +31,6 @@ const mockedGenerateStructured = vi.mocked(generateStructured);
 
 // ─── Helpers ─────────────────────────────────────────────────────
 
-function insertTestEntity(
-  db: Database.Database,
-  id: string,
-  name: string,
-  type: string,
-) {
-  db.prepare(
-    "INSERT INTO entities (id, name, type, aliases, first_seen, last_seen, mention_count, created_at) VALUES (?, ?, ?, '[]', unixepoch(), unixepoch(), 1, unixepoch())",
-  ).run(id, name, type);
-}
-
-function insertTestRelationship(
-  db: Database.Database,
-  id: string,
-  sourceId: string,
-  targetId: string,
-  type: string,
-  weight: number,
-) {
-  db.prepare(
-    "INSERT INTO relationships (id, source_entity_id, target_entity_id, type, weight, source_memories, created_at) VALUES (?, ?, ?, ?, ?, '[]', unixepoch())",
-  ).run(id, sourceId, targetId, type, weight);
-}
-
 const TEST_CONFIG: IntelligenceConfig = {
   ollamaUrl: "http://localhost:11434",
   ollamaModel: "qwen2.5:7b",
@@ -67,11 +44,11 @@ const TEST_CONFIG: IntelligenceConfig = {
  * Returns the entity IDs.
  */
 function buildTestCommunity(db: Database.Database): string[] {
-  insertTestEntity(db, "ts-1", "TypeScript", "technology");
-  insertTestEntity(db, "react-1", "React", "technology");
-  insertTestEntity(db, "node-1", "Node.js", "technology");
-  insertTestRelationship(db, "rel-ts-react", "ts-1", "react-1", "uses", 2.0);
-  insertTestRelationship(db, "rel-ts-node", "ts-1", "node-1", "depends_on", 1.5);
+  insertEntity(db, "ts-1", "TypeScript", "technology");
+  insertEntity(db, "react-1", "React", "technology");
+  insertEntity(db, "node-1", "Node.js", "technology");
+  insertRelationship(db, "rel-ts-react", "ts-1", "react-1", "uses", 2.0);
+  insertRelationship(db, "rel-ts-node", "ts-1", "node-1", "depends_on", 1.5);
   return ["ts-1", "react-1", "node-1"];
 }
 
@@ -83,14 +60,14 @@ function buildTwoCommunities(db: Database.Database): {
   communityB: string[];
 } {
   // Community A: web tech
-  insertTestEntity(db, "ts-1", "TypeScript", "technology");
-  insertTestEntity(db, "react-1", "React", "technology");
-  insertTestRelationship(db, "rel-ts-react", "ts-1", "react-1", "uses", 2.0);
+  insertEntity(db, "ts-1", "TypeScript", "technology");
+  insertEntity(db, "react-1", "React", "technology");
+  insertRelationship(db, "rel-ts-react", "ts-1", "react-1", "uses", 2.0);
 
   // Community B: databases
-  insertTestEntity(db, "pg-1", "PostgreSQL", "technology");
-  insertTestEntity(db, "sqlite-1", "SQLite", "technology");
-  insertTestRelationship(db, "rel-pg-sql", "pg-1", "sqlite-1", "related_to", 1.0);
+  insertEntity(db, "pg-1", "PostgreSQL", "technology");
+  insertEntity(db, "sqlite-1", "SQLite", "technology");
+  insertRelationship(db, "rel-pg-sql", "pg-1", "sqlite-1", "related_to", 1.0);
 
   return {
     communityA: ["ts-1", "react-1"],
@@ -348,9 +325,9 @@ describe("Community Naming", () => {
   describe("persistAnalysis with communityNames", () => {
     it("uses LLM-generated names when communityNames provided", () => {
       // Build entities so analyzeGraph can detect communities
-      insertTestEntity(t.db, "a1", "Alpha", "technology");
-      insertTestEntity(t.db, "a2", "Beta", "technology");
-      insertTestRelationship(t.db, "rel-a1-a2", "a1", "a2", "related_to", 2.0);
+      insertEntity(t.db, "a1", "Alpha", "technology");
+      insertEntity(t.db, "a2", "Beta", "technology");
+      insertRelationship(t.db, "rel-a1-a2", "a1", "a2", "related_to", 2.0);
 
       const analysis = analyzeGraph(t.db);
       expect(analysis.communities.length).toBeGreaterThanOrEqual(1);
@@ -378,10 +355,10 @@ describe("Community Naming", () => {
     });
 
     it("falls back to generic names for communities without naming", () => {
-      insertTestEntity(t.db, "a1", "Alpha", "technology");
-      insertTestEntity(t.db, "a2", "Beta", "technology");
-      insertTestEntity(t.db, "b1", "Gamma", "concept");
-      insertTestRelationship(t.db, "rel-a", "a1", "a2", "related_to", 2.0);
+      insertEntity(t.db, "a1", "Alpha", "technology");
+      insertEntity(t.db, "a2", "Beta", "technology");
+      insertEntity(t.db, "b1", "Gamma", "concept");
+      insertRelationship(t.db, "rel-a", "a1", "a2", "related_to", 2.0);
 
       const analysis = analyzeGraph(t.db);
 
@@ -416,9 +393,9 @@ describe("Community Naming", () => {
     });
 
     it("works without communityNames (backward compatible)", () => {
-      insertTestEntity(t.db, "a1", "Alpha", "technology");
-      insertTestEntity(t.db, "a2", "Beta", "technology");
-      insertTestRelationship(t.db, "rel-a", "a1", "a2", "related_to", 2.0);
+      insertEntity(t.db, "a1", "Alpha", "technology");
+      insertEntity(t.db, "a2", "Beta", "technology");
+      insertRelationship(t.db, "rel-a", "a1", "a2", "related_to", 2.0);
 
       const analysis = analyzeGraph(t.db);
 

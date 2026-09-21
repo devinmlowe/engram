@@ -7,6 +7,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createTestDb } from "../helpers.js";
+import { insertEntity } from "../helpers.js";
 import type { TestDb } from "../helpers.js";
 import { getMemory } from "../../src/semantic/memory.js";
 
@@ -25,19 +26,10 @@ afterEach(() => {
   t.cleanup();
 });
 
-/**
- * Helper: insert a test entity directly via SQL (no embedding needed for linking tests).
- */
-function insertTestEntity(
-  name: string,
-  type: string = "technology",
-  mentionCount: number = 5,
-): string {
+/** Insert an entity named after itself (no embedding needed for linking tests) and return its id. */
+function insertTestEntity(name: string, type: string = "technology", mentionCount: number = 5): string {
   const id = `ent-${name.toLowerCase().replace(/\s+/g, "-")}`;
-  t.db.prepare(`
-    INSERT INTO entities (id, name, type, description, aliases, first_seen, last_seen, mention_count, created_at)
-    VALUES (?, ?, ?, ?, '[]', unixepoch(), unixepoch(), ?, unixepoch())
-  `).run(id, name, type, `${name} description`, mentionCount);
+  insertEntity(t.db, id, name, type, { description: `${name} description`, mentionCount });
   return id;
 }
 

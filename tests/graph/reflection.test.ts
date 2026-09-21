@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type Database from "better-sqlite3";
 import { createTestDb } from "../helpers.js";
-import { insertFtsRow } from "../../src/_core/db/index.js";
+import { insertEntity, insertRelationship, insertMemory, insertExchange, insertCluster, insertBridgeScore } from "../helpers.js";
 import type { TestDb } from "../helpers.js";
 import type { ReflectionObservation } from "../../src/graph/types.js";
 
@@ -54,151 +54,6 @@ const NOW = Math.floor(Date.now() / 1000);
 const DAY = 86400;
 
 // ─── Helpers ──────────────────────────────────────────────────────
-
-function insertEntity(
-  db: Database.Database,
-  id: string,
-  name: string,
-  opts: {
-    type?: string;
-    firstSeen?: number;
-    lastSeen?: number;
-    mentionCount?: number;
-  } = {},
-) {
-  db.prepare(
-    `INSERT INTO entities (id, name, type, aliases, first_seen, last_seen, mention_count, created_at)
-    VALUES (?, ?, ?, '[]', ?, ?, ?, ?)`,
-  ).run(
-    id,
-    name,
-    opts.type ?? "concept",
-    opts.firstSeen ?? NOW,
-    opts.lastSeen ?? NOW,
-    opts.mentionCount ?? 1,
-    NOW,
-  );
-  // Mirror production insertEntity: entities_fts is external-content, so a
-  // row must be indexed before any later delete/merge touches its tokens
-  const { rowid } = db.prepare("SELECT rowid FROM entities WHERE id = ?").get(id) as { rowid: number };
-  insertFtsRow(db, "entities_fts", rowid, { name, description: null });
-}
-
-function insertRelationship(
-  db: Database.Database,
-  id: string,
-  sourceId: string,
-  targetId: string,
-  opts: {
-    type?: string;
-    weight?: number;
-    // `source_memories` actually stores conversation ids. Production data
-    // mixes flat strings and nested one-element arrays, so both shapes
-    // are accepted here.
-    sourceMemories?: Array<string | string[]>;
-  } = {},
-) {
-  db.prepare(
-    `INSERT INTO relationships (id, source_entity_id, target_entity_id, type, weight, source_memories, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    id,
-    sourceId,
-    targetId,
-    opts.type ?? "related_to",
-    opts.weight ?? 1.0,
-    JSON.stringify(opts.sourceMemories ?? []),
-    NOW,
-  );
-}
-
-function insertMemory(
-  db: Database.Database,
-  id: string,
-  opts: {
-    isActive?: number;
-    confidence?: number;
-    importance?: number;
-    sourceExchanges?: string[];
-  } = {},
-) {
-  db.prepare(
-    `INSERT INTO memories (id, type, content, confidence, importance, access_count, is_active, created_at, source_exchanges)
-    VALUES (?, 'fact', 'Test memory content', ?, ?, 0, ?, ?, ?)`,
-  ).run(
-    id,
-    opts.confidence ?? 0.8,
-    opts.importance ?? 0.7,
-    opts.isActive ?? 1,
-    NOW,
-    JSON.stringify(opts.sourceExchanges ?? []),
-  );
-}
-
-function insertExchange(
-  db: Database.Database,
-  id: string,
-  conversationId: string,
-  opts: { project?: string; timestamp?: string } = {},
-) {
-  db.prepare(
-    `INSERT INTO exchanges (id, conversation_id, project, timestamp)
-    VALUES (?, ?, ?, ?)`,
-  ).run(
-    id,
-    conversationId,
-    opts.project ?? "test",
-    opts.timestamp ?? new Date(NOW * 1000).toISOString(),
-  );
-}
-
-function insertCluster(
-  db: Database.Database,
-  id: string,
-  name: string,
-  entityIds: string[],
-  generation: number,
-  opts: { memoryIds?: string[]; coherenceScore?: number } = {},
-) {
-  db.prepare(
-    `INSERT INTO topic_clusters (id, name, description, entity_ids, memory_ids, coherence_score, created_at, updated_at, generation)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    id,
-    name,
-    `Description of ${name}`,
-    JSON.stringify(entityIds),
-    JSON.stringify(opts.memoryIds ?? []),
-    opts.coherenceScore ?? 0.8,
-    NOW,
-    NOW,
-    generation,
-  );
-}
-
-function insertBridgeScore(
-  db: Database.Database,
-  entityId: string,
-  generation: number,
-  opts: {
-    betweenness?: number;
-    communitySpan?: number;
-    bridgeScore?: number;
-    narrative?: string;
-  } = {},
-) {
-  db.prepare(
-    `INSERT INTO bridge_scores (entity_id, betweenness, community_span, bridge_score, narrative, generation)
-    VALUES (?, ?, ?, ?, ?, ?)`,
-  ).run(
-    entityId,
-    opts.betweenness ?? 0.5,
-    opts.communitySpan ?? 2,
-    opts.bridgeScore ?? 1.0,
-    opts.narrative ?? null,
-    generation,
-  );
-}
 
 function insertObservation(
   db: Database.Database,
@@ -265,7 +120,7 @@ describe("Reflection Orchestration", () => {
       insertEntity(t.db, "e2", "Beta");
 
       // Nested one-element array, mimicking the mixed shape seen in prod
-      insertRelationship(t.db, "rel-1", "e1", "e2", {
+      insertRelationship(t.db, "rel-1", "e1", "e2", "related_to", 1.0, {
         sourceMemories: [["conv-1"]],
       });
 
@@ -291,7 +146,7 @@ describe("Reflection Orchestration", () => {
       insertEntity(t.db, "e1", "Alpha");
       insertEntity(t.db, "e2", "Beta");
 
-      insertRelationship(t.db, "rel-1", "e1", "e2", {
+      insertRelationship(t.db, "rel-1", "e1", "e2", "related_to", 1.0, {
         sourceMemories: ["conv-1"],
       });
 
@@ -321,10 +176,10 @@ describe("Reflection Orchestration", () => {
       insertMemory(t.db, "mem-unique", { sourceExchanges: ["exch-unique"] });
 
       // Two relationships referencing the same conversation
-      insertRelationship(t.db, "rel-1", "e1", "e2", {
+      insertRelationship(t.db, "rel-1", "e1", "e2", "related_to", 1.0, {
         sourceMemories: ["conv-shared", "conv-unique"],
       });
-      insertRelationship(t.db, "rel-2", "e2", "e3", {
+      insertRelationship(t.db, "rel-2", "e2", "e3", "related_to", 1.0, {
         sourceMemories: ["conv-shared"],
       });
 
@@ -352,7 +207,7 @@ describe("Reflection Orchestration", () => {
         sourceExchanges: ["exch-3"],
       });
 
-      insertRelationship(t.db, "rel-1", "e1", "e2", {
+      insertRelationship(t.db, "rel-1", "e1", "e2", "related_to", 1.0, {
         sourceMemories: ["conv-3"],
       });
 
@@ -381,7 +236,7 @@ describe("Reflection Orchestration", () => {
       insertExchange(t.db, "exch-2", "conv-2");
       insertMemory(t.db, "mem-legacy", { sourceExchanges: ["3", "4"] });
 
-      insertRelationship(t.db, "rel-1", "e1", "e2", {
+      insertRelationship(t.db, "rel-1", "e1", "e2", "related_to", 1.0, {
         sourceMemories: ["conv-2"],
       });
 
@@ -404,16 +259,13 @@ describe("Reflection Orchestration", () => {
 
   describe("recomputeEdgeWeights", () => {
     it("updates weights based on edge weight factors", () => {
-      insertEntity(t.db, "e1", "Alpha", { lastSeen: NOW, mentionCount: 5 });
-      insertEntity(t.db, "e2", "Beta", { lastSeen: NOW, mentionCount: 3 });
+      insertEntity(t.db, "e1", "Alpha", "concept", { lastSeen: NOW, mentionCount: 5 });
+      insertEntity(t.db, "e2", "Beta", "concept", { lastSeen: NOW, mentionCount: 3 });
 
       insertMemory(t.db, "mem-1", { confidence: 0.9, importance: 0.8 });
       insertMemory(t.db, "mem-2", { confidence: 0.7, importance: 0.6 });
 
-      insertRelationship(t.db, "rel-1", "e1", "e2", {
-        weight: 0.5,
-        sourceMemories: ["mem-1", "mem-2"],
-      });
+      insertRelationship(t.db, "rel-1", "e1", "e2", "related_to", 0.5, { sourceMemories: ["mem-1", "mem-2"] });
 
       const result = recomputeEdgeWeights(t.db);
 
@@ -435,10 +287,7 @@ describe("Reflection Orchestration", () => {
       insertEntity(t.db, "e1", "Alpha");
       insertEntity(t.db, "e2", "Beta");
 
-      insertRelationship(t.db, "rel-1", "e1", "e2", {
-        weight: 1.0,
-        sourceMemories: [],
-      });
+      insertRelationship(t.db, "rel-1", "e1", "e2", "related_to", 1.0, { sourceMemories: [] });
 
       const result = recomputeEdgeWeights(t.db);
 
@@ -615,9 +464,9 @@ describe("Reflection Orchestration", () => {
   describe("buildReflectResultFromCache", () => {
     it("returns data from pre-populated tables", () => {
       // Set up entities
-      insertEntity(t.db, "e1", "TypeScript", { type: "technology", mentionCount: 5 });
-      insertEntity(t.db, "e2", "React", { type: "technology", mentionCount: 3 });
-      insertEntity(t.db, "e3", "Node.js", { type: "technology", mentionCount: 4 });
+      insertEntity(t.db, "e1", "TypeScript", "technology", { mentionCount: 5 });
+      insertEntity(t.db, "e2", "React", "technology", { mentionCount: 3 });
+      insertEntity(t.db, "e3", "Node.js", "technology", { mentionCount: 4 });
 
       // Relationships
       insertRelationship(t.db, "rel-1", "e1", "e2");
@@ -703,9 +552,9 @@ describe("Reflection Orchestration", () => {
 
   describe("mergeRedundantEntities", () => {
     it("merges exact name matches case-insensitively", () => {
-      insertEntity(t.db, "e1", "TypeScript", { mentionCount: 10 });
-      insertEntity(t.db, "e2", "typescript", { mentionCount: 3 });
-      insertEntity(t.db, "e3", "TYPESCRIPT", { mentionCount: 1 });
+      insertEntity(t.db, "e1", "TypeScript", "concept", { mentionCount: 10 });
+      insertEntity(t.db, "e2", "typescript", "concept", { mentionCount: 3 });
+      insertEntity(t.db, "e3", "TYPESCRIPT", "concept", { mentionCount: 1 });
 
       const result = mergeRedundantEntities(t.db);
 
@@ -721,8 +570,8 @@ describe("Reflection Orchestration", () => {
     });
 
     it("redirects relationships from duplicates to survivor", () => {
-      insertEntity(t.db, "e1", "TypeScript", { mentionCount: 10 });
-      insertEntity(t.db, "e2", "typescript", { mentionCount: 3 });
+      insertEntity(t.db, "e1", "TypeScript", "concept", { mentionCount: 10 });
+      insertEntity(t.db, "e2", "typescript", "concept", { mentionCount: 3 });
       insertEntity(t.db, "e3", "React");
 
       // Relationship pointing to the duplicate
@@ -739,8 +588,8 @@ describe("Reflection Orchestration", () => {
     });
 
     it("merges when survivor and duplicate share the same edge (unique-index collision)", () => {
-      insertEntity(t.db, "e1", "TypeScript", { mentionCount: 10 });
-      insertEntity(t.db, "e2", "typescript", { mentionCount: 3 });
+      insertEntity(t.db, "e1", "TypeScript", "concept", { mentionCount: 10 });
+      insertEntity(t.db, "e2", "typescript", "concept", { mentionCount: 3 });
       insertEntity(t.db, "e3", "React");
 
       // Both spellings already relate to React the same way — the common
@@ -784,13 +633,13 @@ describe("Reflection Orchestration", () => {
   describe("pruneOrphanEntities", () => {
     it("deletes isolated old entities with low mention count", () => {
       // Old orphan with low mentions — should be pruned
-      insertEntity(t.db, "orphan-1", "Orphan", {
+      insertEntity(t.db, "orphan-1", "Orphan", "concept", {
         mentionCount: 1,
         lastSeen: NOW - 120 * DAY,
       });
 
       // Recent orphan — should be preserved
-      insertEntity(t.db, "orphan-recent", "Recent Orphan", {
+      insertEntity(t.db, "orphan-recent", "Recent Orphan", "concept", {
         mentionCount: 1,
         lastSeen: NOW,
       });
@@ -810,11 +659,11 @@ describe("Reflection Orchestration", () => {
     });
 
     it("preserves connected entities even if old", () => {
-      insertEntity(t.db, "connected", "Connected", {
+      insertEntity(t.db, "connected", "Connected", "concept", {
         mentionCount: 1,
         lastSeen: NOW - 120 * DAY,
       });
-      insertEntity(t.db, "partner", "Partner", {
+      insertEntity(t.db, "partner", "Partner", "concept", {
         mentionCount: 1,
         lastSeen: NOW - 120 * DAY,
       });
@@ -832,7 +681,7 @@ describe("Reflection Orchestration", () => {
     });
 
     it("preserves entities with high mention count", () => {
-      insertEntity(t.db, "popular", "Popular Entity", {
+      insertEntity(t.db, "popular", "Popular Entity", "concept", {
         mentionCount: 10,
         lastSeen: NOW - 120 * DAY,
       });
@@ -934,8 +783,8 @@ describe("Reflection Orchestration", () => {
       }
 
       // Entities with different conversation coverage
-      insertEntity(t.db, "e1", "Alpha", { mentionCount: 10 });
-      insertEntity(t.db, "e2", "Beta", { mentionCount: 20 });
+      insertEntity(t.db, "e1", "Alpha", "concept", { mentionCount: 10 });
+      insertEntity(t.db, "e2", "Beta", "concept", { mentionCount: 20 });
 
       // entity_conversations: Alpha in 1 conv (discriminative), Beta in 3 (moderate)
       t.db.prepare("INSERT INTO entity_conversations (entity_id, conversation_id) VALUES (?, ?)").run("e1", "conv-1");

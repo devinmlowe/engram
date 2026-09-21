@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import type Database from "better-sqlite3";
 import { createTestDb } from "../helpers.js";
+import { insertEntity, insertRelationship } from "../helpers.js";
 import type { TestDb } from "../helpers.js";
 import {
   loadGraph,
@@ -15,30 +16,6 @@ import {
 
 // ─── Helpers ─────────────────────────────────────────────────────
 
-function insertTestEntity(
-  db: Database.Database,
-  id: string,
-  name: string,
-  type: string,
-) {
-  db.prepare(
-    "INSERT INTO entities (id, name, type, aliases, first_seen, last_seen, mention_count, created_at) VALUES (?, ?, ?, '[]', unixepoch(), unixepoch(), 1, unixepoch())",
-  ).run(id, name, type);
-}
-
-function insertTestRelationship(
-  db: Database.Database,
-  id: string,
-  sourceId: string,
-  targetId: string,
-  type: string,
-  weight: number,
-) {
-  db.prepare(
-    "INSERT INTO relationships (id, source_entity_id, target_entity_id, type, weight, source_memories, created_at) VALUES (?, ?, ?, ?, ?, '[]', unixepoch())",
-  ).run(id, sourceId, targetId, type, weight);
-}
-
 /**
  * Build a star graph: one center node connected to N leaf nodes.
  *
@@ -51,10 +28,10 @@ function insertTestRelationship(
  *       L5
  */
 function buildStarGraph(db: Database.Database, leafCount: number = 5) {
-  insertTestEntity(db, "center", "Center", "concept");
+  insertEntity(db, "center", "Center", "concept");
   for (let i = 1; i <= leafCount; i++) {
-    insertTestEntity(db, `leaf-${i}`, `Leaf ${i}`, "concept");
-    insertTestRelationship(
+    insertEntity(db, `leaf-${i}`, `Leaf ${i}`, "concept");
+    insertRelationship(
       db,
       `rel-center-leaf-${i}`,
       "center",
@@ -74,35 +51,35 @@ function buildStarGraph(db: Database.Database, leafCount: number = 5) {
  */
 function buildTwoCliquesWithBridge(db: Database.Database) {
   // Clique A nodes
-  insertTestEntity(db, "a1", "Alpha 1", "technology");
-  insertTestEntity(db, "a2", "Alpha 2", "technology");
-  insertTestEntity(db, "a3", "Alpha 3", "technology");
+  insertEntity(db, "a1", "Alpha 1", "technology");
+  insertEntity(db, "a2", "Alpha 2", "technology");
+  insertEntity(db, "a3", "Alpha 3", "technology");
 
   // Clique A edges (fully connected)
-  insertTestRelationship(db, "rel-a1-a2", "a1", "a2", "related_to", 2.0);
-  insertTestRelationship(db, "rel-a1-a3", "a1", "a3", "related_to", 2.0);
-  insertTestRelationship(db, "rel-a2-a3", "a2", "a3", "related_to", 2.0);
+  insertRelationship(db, "rel-a1-a2", "a1", "a2", "related_to", 2.0);
+  insertRelationship(db, "rel-a1-a3", "a1", "a3", "related_to", 2.0);
+  insertRelationship(db, "rel-a2-a3", "a2", "a3", "related_to", 2.0);
 
   // Bridge node
-  insertTestEntity(db, "bridge", "Bridge Node", "concept");
+  insertEntity(db, "bridge", "Bridge Node", "concept");
 
   // Clique B nodes
-  insertTestEntity(db, "b1", "Beta 1", "tool");
-  insertTestEntity(db, "b2", "Beta 2", "tool");
-  insertTestEntity(db, "b3", "Beta 3", "tool");
-  insertTestEntity(db, "b4", "Beta 4", "tool");
+  insertEntity(db, "b1", "Beta 1", "tool");
+  insertEntity(db, "b2", "Beta 2", "tool");
+  insertEntity(db, "b3", "Beta 3", "tool");
+  insertEntity(db, "b4", "Beta 4", "tool");
 
   // Clique B edges (fully connected)
-  insertTestRelationship(db, "rel-b1-b2", "b1", "b2", "related_to", 2.0);
-  insertTestRelationship(db, "rel-b1-b3", "b1", "b3", "related_to", 2.0);
-  insertTestRelationship(db, "rel-b1-b4", "b1", "b4", "related_to", 2.0);
-  insertTestRelationship(db, "rel-b2-b3", "b2", "b3", "related_to", 2.0);
-  insertTestRelationship(db, "rel-b2-b4", "b2", "b4", "related_to", 2.0);
-  insertTestRelationship(db, "rel-b3-b4", "b3", "b4", "related_to", 2.0);
+  insertRelationship(db, "rel-b1-b2", "b1", "b2", "related_to", 2.0);
+  insertRelationship(db, "rel-b1-b3", "b1", "b3", "related_to", 2.0);
+  insertRelationship(db, "rel-b1-b4", "b1", "b4", "related_to", 2.0);
+  insertRelationship(db, "rel-b2-b3", "b2", "b3", "related_to", 2.0);
+  insertRelationship(db, "rel-b2-b4", "b2", "b4", "related_to", 2.0);
+  insertRelationship(db, "rel-b3-b4", "b3", "b4", "related_to", 2.0);
 
   // Bridge connections (low weight to encourage community separation)
-  insertTestRelationship(db, "rel-a1-bridge", "a1", "bridge", "related_to", 0.5);
-  insertTestRelationship(db, "rel-bridge-b1", "bridge", "b1", "related_to", 0.5);
+  insertRelationship(db, "rel-a1-bridge", "a1", "bridge", "related_to", 0.5);
+  insertRelationship(db, "rel-bridge-b1", "bridge", "b1", "related_to", 0.5);
 }
 
 // ─── Tests ───────────────────────────────────────────────────────
@@ -130,7 +107,7 @@ describe("Graph Analyzer", () => {
     });
 
     it("preserves node attributes (name, type)", () => {
-      insertTestEntity(t.db, "node-1", "Test Node", "technology");
+      insertEntity(t.db, "node-1", "Test Node", "technology");
       const graph = loadGraph(t.db);
 
       expect(graph.getNodeAttribute("node-1", "name")).toBe("Test Node");
@@ -138,9 +115,9 @@ describe("Graph Analyzer", () => {
     });
 
     it("preserves edge attributes (type, weight)", () => {
-      insertTestEntity(t.db, "src", "Source", "concept");
-      insertTestEntity(t.db, "tgt", "Target", "concept");
-      insertTestRelationship(t.db, "rel-1", "src", "tgt", "depends_on", 3.5);
+      insertEntity(t.db, "src", "Source", "concept");
+      insertEntity(t.db, "tgt", "Target", "concept");
+      insertRelationship(t.db, "rel-1", "src", "tgt", "depends_on", 3.5);
 
       const graph = loadGraph(t.db);
       const edgeKey = graph.edge("src", "tgt");
@@ -158,11 +135,11 @@ describe("Graph Analyzer", () => {
     });
 
     it("skips duplicate undirected edges", () => {
-      insertTestEntity(t.db, "n1", "Node 1", "concept");
-      insertTestEntity(t.db, "n2", "Node 2", "concept");
+      insertEntity(t.db, "n1", "Node 1", "concept");
+      insertEntity(t.db, "n2", "Node 2", "concept");
       // Insert the same edge twice (source/target swapped)
-      insertTestRelationship(t.db, "rel-1", "n1", "n2", "related_to", 1.0);
-      insertTestRelationship(t.db, "rel-2", "n2", "n1", "related_to", 1.0);
+      insertRelationship(t.db, "rel-1", "n1", "n2", "related_to", 1.0);
+      insertRelationship(t.db, "rel-2", "n2", "n1", "related_to", 1.0);
 
       const graph = loadGraph(t.db);
       expect(graph.size).toBe(1); // only one edge
@@ -211,7 +188,7 @@ describe("Graph Analyzer", () => {
     });
 
     it("handles single-node graph", () => {
-      insertTestEntity(t.db, "solo", "Solo Node", "concept");
+      insertEntity(t.db, "solo", "Solo Node", "concept");
       const graph = loadGraph(t.db);
       const result = detectCommunities(graph);
 
@@ -247,12 +224,12 @@ describe("Graph Analyzer", () => {
   describe("computeCoherence", () => {
     it("returns 1.0 for fully connected clique with no external edges", () => {
       // Build a 3-node clique with no external connections
-      insertTestEntity(t.db, "c1", "Clique 1", "concept");
-      insertTestEntity(t.db, "c2", "Clique 2", "concept");
-      insertTestEntity(t.db, "c3", "Clique 3", "concept");
-      insertTestRelationship(t.db, "r12", "c1", "c2", "related_to", 1.0);
-      insertTestRelationship(t.db, "r13", "c1", "c3", "related_to", 1.0);
-      insertTestRelationship(t.db, "r23", "c2", "c3", "related_to", 1.0);
+      insertEntity(t.db, "c1", "Clique 1", "concept");
+      insertEntity(t.db, "c2", "Clique 2", "concept");
+      insertEntity(t.db, "c3", "Clique 3", "concept");
+      insertRelationship(t.db, "r12", "c1", "c2", "related_to", 1.0);
+      insertRelationship(t.db, "r13", "c1", "c3", "related_to", 1.0);
+      insertRelationship(t.db, "r23", "c2", "c3", "related_to", 1.0);
 
       const graph = loadGraph(t.db);
       const coherence = computeCoherence(graph, ["c1", "c2", "c3"]);
@@ -271,8 +248,8 @@ describe("Graph Analyzer", () => {
     });
 
     it("returns 0 for isolated nodes with no edges", () => {
-      insertTestEntity(t.db, "iso1", "Isolated 1", "concept");
-      insertTestEntity(t.db, "iso2", "Isolated 2", "concept");
+      insertEntity(t.db, "iso1", "Isolated 1", "concept");
+      insertEntity(t.db, "iso2", "Isolated 2", "concept");
 
       const graph = loadGraph(t.db);
       const coherence = computeCoherence(graph, ["iso1", "iso2"]);
