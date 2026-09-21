@@ -115,10 +115,10 @@ jobs:
 
   # Distribution manifests (#58): plugin.json / marketplace.json / server.json
   # must agree with package.json and validate with the Claude Code CLI. The
-  # shape checks in scripts/sync-manifests.cjs --check always run (no
-  # dependency); `claude plugin validate` runs when the CLI installs
-  # non-interactively (it needs no login), and is skipped with a notice —
-  # not silently — if the install itself fails on the runner.
+  # version checks in scripts/sync-manifests.cjs --check always run (no
+  # dependency); the manifest shape is `claude plugin validate`'s job, which
+  # runs when the CLI installs non-interactively (it needs no login) and is
+  # skipped with a notice — not silently — if the install itself fails.
   manifests:
     name: plugin + marketplace + registry manifests
     runs-on: ubuntu-latest
@@ -146,9 +146,9 @@ jobs:
           claude plugin validate .claude-plugin/marketplace.json --strict
           claude plugin validate commands --strict
 
-      - name: claude CLI unavailable — manifests were still shape-checked above
+      - name: claude CLI unavailable — manifest versions were still checked above
         if: steps.claude-cli.outcome != 'success'
-        run: echo "::warning::@anthropic-ai/claude-code did not install on this runner; skipped claude plugin validate (scripts/sync-manifests.cjs --check passed)"
+        run: echo "::warning::@anthropic-ai/claude-code did not install on this runner; skipped claude plugin validate, so the manifest shape was not checked this run (scripts/sync-manifests.cjs --check covered the versions)"
 
   # Alpine / musl is documented as NOT supported: better-sqlite3 ships
   # linuxmusl-* prebuilds (and loads), but sqlite-vec and onnxruntime-node
