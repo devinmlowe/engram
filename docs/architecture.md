@@ -116,7 +116,6 @@ Claude Code conversations (~/.claude/projects/*/...)
   ├── Chunk conversations (20-30 turns, 5-turn overlap)
   ├── LLM extraction → atomic facts (type, content, importance)
   ├── LLM extraction → entities + relationships
-  ├── Optional reflexion pass for completeness
   │
   ▼ [dream --phase consolidate]
   │
@@ -189,7 +188,7 @@ Claude Code conversations (~/.claude/projects/*/...)
 | `analyzer.ts` | Community detection (Louvain), centrality analysis, bridge detection |
 | `naming.ts` | LLM-based community naming |
 | `reflection.ts` | Reflection orchestration — communities, bridges, temporal, observations |
-| `temporal.ts` | Temporal pattern detection (phase transitions, co-occurrence) |
+| `temporal.ts` | Temporal pattern detection (bursts, emergence, decay, community shifts, bridges) |
 | `types.ts` | Graph layer-specific types (ReflectResult, CommunityInfo, etc.) |
 
 ### `src/dream/` — Dream State Daemon
@@ -271,7 +270,6 @@ For each new conversation:
 3. Extract atomic facts with type, content, importance, source exchanges
 4. Extract entities with type, name, description, aliases
 5. Extract relationships between entities
-6. Optional reflexion pass for completeness
 
 ### Phase 3: CONSOLIDATE
 
@@ -292,7 +290,7 @@ For entities: resolve aliases, merge duplicates, normalize names.
 2. Louvain community detection → topic clusters with coherence scores
 3. LLM-generated community names and descriptions
 4. Betweenness centrality → bridge entities spanning communities
-5. Temporal co-occurrence analysis → phase transitions, activity patterns
+5. Temporal co-occurrence analysis → activity patterns
 6. LLM-generated higher-order observations
 
 ### Phase 5: PRUNE

@@ -30,7 +30,7 @@ const defaultMetadata: ConversationMetadata = {
 // ─── chunkConversation() ────────────────────────────────────────
 
 describe("chunkConversation", () => {
-  it("returns single chunk for conversations under maxTurns (100)", () => {
+  it("returns single chunk for conversations under the chunk size", () => {
     const exchanges = makeExchanges(50);
     const chunks = chunkConversation(exchanges);
 

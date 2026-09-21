@@ -212,19 +212,6 @@ export function updateEntity(
 }
 
 /**
- * Update the embedding for an entity in vec_entities.
- * Uses delete+insert because vec0 doesn't support UPDATE.
- */
-export function updateEntityEmbedding(
-  db: Database.Database,
-  id: string,
-  embedding: number[],
-): void {
-  // insertVector handles delete+insert atomically
-  insertVector(db, "vec_entities", id, embedding);
-}
-
-/**
  * Get a single entity by ID.
  */
 export function getEntity(

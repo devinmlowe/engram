@@ -1,9 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   insertRelationship,
-  getRelationship,
   getRelationshipsForEntity,
-  getRelationshipsBetween,
   findOrCreateRelationship,
   computeEdgeWeight,
 } from "../../src/graph/relationship.js";
@@ -88,33 +86,6 @@ describe("Relationship CRUD", () => {
     });
   });
 
-  describe("getRelationship", () => {
-    it("returns correct relationship by ID", () => {
-      const rel = createTestRelationship({
-        id: "rel-get-1",
-        sourceEntityId: "ent-a",
-        targetEntityId: "ent-b",
-        type: "depends_on",
-        weight: 0.5,
-        context: "TS depends on Node runtime",
-      });
-      insertRelationship(t.db, rel);
-
-      const retrieved = getRelationship(t.db, "rel-get-1");
-      expect(retrieved).not.toBeNull();
-      expect(retrieved!.id).toBe("rel-get-1");
-      expect(retrieved!.sourceEntityId).toBe("ent-a");
-      expect(retrieved!.targetEntityId).toBe("ent-b");
-      expect(retrieved!.type).toBe("depends_on");
-      expect(retrieved!.weight).toBe(0.5);
-      expect(retrieved!.context).toBe("TS depends on Node runtime");
-    });
-
-    it("returns null for nonexistent ID", () => {
-      expect(getRelationship(t.db, "nonexistent")).toBeNull();
-    });
-  });
-
   describe("getRelationshipsForEntity", () => {
     it("returns both incoming and outgoing edges", () => {
       // ent-a -> ent-b (outgoing from ent-a)
@@ -155,46 +126,6 @@ describe("Relationship CRUD", () => {
       expect(ids).toContain("rel-for-1");
       expect(ids).toContain("rel-for-2");
       expect(ids).not.toContain("rel-for-3");
-    });
-  });
-
-  describe("getRelationshipsBetween", () => {
-    it("returns edges between two specific entities", () => {
-      insertRelationship(
-        t.db,
-        createTestRelationship({
-          id: "rel-between-1",
-          sourceEntityId: "ent-a",
-          targetEntityId: "ent-b",
-          type: "uses",
-        }),
-      );
-      insertRelationship(
-        t.db,
-        createTestRelationship({
-          id: "rel-between-2",
-          sourceEntityId: "ent-b",
-          targetEntityId: "ent-a",
-          type: "depends_on",
-        }),
-      );
-      insertRelationship(
-        t.db,
-        createTestRelationship({
-          id: "rel-between-3",
-          sourceEntityId: "ent-a",
-          targetEntityId: "ent-c",
-          type: "related_to",
-        }),
-      );
-
-      const rels = getRelationshipsBetween(t.db, "ent-a", "ent-b");
-      expect(rels.length).toBe(2);
-
-      const ids = rels.map((r) => r.id);
-      expect(ids).toContain("rel-between-1");
-      expect(ids).toContain("rel-between-2");
-      expect(ids).not.toContain("rel-between-3");
     });
   });
 

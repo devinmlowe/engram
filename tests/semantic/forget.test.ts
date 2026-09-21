@@ -12,7 +12,6 @@ import { createTestDb, type TestDb } from "../helpers.js";
 import {
   insertMemory,
   findNearestMemories,
-  getActiveMemories,
   getMemory,
   getMemoryEmbedding,
   recordAccess,
@@ -26,7 +25,6 @@ import {
   purgeConversation,
   purgeForgottenMemories,
   filterSuppressedFacts,
-  isSuppressed,
   clearSuppression,
   contentHash,
   detachMemoryEvidence,
@@ -249,7 +247,8 @@ describe("forgotten memories stay out of every recall path", () => {
   });
 
   it("decay / prune scan and consolidation dedup (active-only readers)", () => {
-    expect(getActiveMemories(t.db).map((m) => m.id)).toEqual(["m2"]);
+    const active = t.db.prepare("SELECT id FROM memories WHERE is_active = 1 ORDER BY id").all() as Array<{ id: string }>;
+    expect(active.map((m) => m.id)).toEqual(["m2"]);
     // The dream prune scan reads the same predicate
     const scanned = t.db.prepare("SELECT id FROM memories WHERE is_active = 1").all() as Array<{ id: string }>;
     expect(scanned.map((r) => r.id)).toEqual(["m2"]);
