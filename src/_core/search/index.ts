@@ -1,72 +1,9 @@
 /**
- * _core/search barrel — re-exports all shared search utilities.
+ * _core/search barrel — the symbols the interfaces import through it.
+ * Everything else is imported from its own module.
  */
 
-// RRF fusion and score normalization
-export { rrfFuse, normalizeMinMaxFloored, type RankedItem } from "./rrf.js";
-
-// XML formatting
-export {
-  escapeXml,
-  formatRecallXml,
-  formatSemanticXml,
-  formatGraphXml,
-} from "./format.js";
-
-// Token budget allocation
-export {
-  allocateBudget,
-  estimateTokens,
-  type BudgetOptions,
-} from "./budget.js";
-
-// Cross-encoder reranking
-export {
-  rerankResults,
-  initReranker,
-  isRerankerAvailable,
-  normalizeScores,
-  blendScores,
-  resetReranker,
-  createCrossEncoder,
-  logitsToScores,
-  setCrossEncoderForTesting,
-  type CrossEncoder,
-} from "./reranker.js";
-
-// Multi-source orchestration
-export { searchMultiSource, budgetResults } from "./orchestrator.js";
-
-// Text chunking
-export { chunkConversation } from "./text.js";
-
-// Session store for iterative recall
-export {
-  SessionStore,
-  getSessionStore,
-  resetSessionStore,
-  type RecallSession,
-  type DrillResult,
-  type EntitySummary,
-  type QualityMetrics,
-  computeQualityMetrics,
-} from "./session.js";
-
-// Drill into results
+export { escapeXml, formatRecallXml } from "./format.js";
+export { searchMultiSource } from "./orchestrator.js";
+export { getSessionStore } from "./session.js";
 export { drillIntoResult } from "./drill.js";
-
-// Multi-snippet fetch
-export {
-  fetchSnippets,
-  type SnippetRange,
-  type FetchSnippetsParams,
-  type FetchSnippetsResult,
-} from "./snippets.js";
-
-// File scanning
-export {
-  scanFile,
-  type ScanFileParams,
-  type ScanMatch,
-  type ScanFileResult,
-} from "./scan.js";

@@ -345,7 +345,6 @@ engram extract abc-123-def [options]
 | Flag | Description |
 |------|-------------|
 | `--tier <tier>` | Extraction tier: `auto`, `haiku`, `sonnet` (default: `auto`) |
-| `--reflexion` | Enable reflexion pass for completeness checking |
 | `--dry-run` | Show extracted facts without consolidating |
 
 ---

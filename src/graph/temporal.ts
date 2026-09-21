@@ -438,95 +438,6 @@ export function trackCommunityEvolution(
   return patterns;
 }
 
-// ─── Phase Transition Detection ─────────────────────────────────
-
-/**
- * Detect phase transitions by computing entity frequency vectors
- * per time window using relationships.created_at. Measures cosine
- * distance between consecutive windows. If distance > 0.5, flags
- * as phase_transition.
- */
-export function detectPhaseTransitions(
-  db: Database.Database,
-  config?: Partial<TemporalConfig>,
-): TemporalPattern[] {
-  const windowDays =
-    config?.windowDays ?? DEFAULT_TEMPORAL_CONFIG.windowDays;
-  const windowSeconds = windowDays * SECONDS_PER_DAY;
-
-  const rows = db
-    .prepare(
-      `SELECT source_entity_id, target_entity_id, created_at
-      FROM relationships
-      WHERE created_at IS NOT NULL
-      ORDER BY created_at`,
-    )
-    .all() as Array<{
-    source_entity_id: string;
-    target_entity_id: string;
-    created_at: number;
-  }>;
-
-  if (rows.length === 0) return [];
-
-  const windows = new Map<number, Map<string, number>>();
-
-  for (const row of rows) {
-    const windowIdx = Math.floor(row.created_at / windowSeconds);
-    let freq = windows.get(windowIdx);
-    if (!freq) {
-      freq = new Map();
-      windows.set(windowIdx, freq);
-    }
-    freq.set(
-      row.source_entity_id,
-      (freq.get(row.source_entity_id) ?? 0) + 1,
-    );
-    freq.set(
-      row.target_entity_id,
-      (freq.get(row.target_entity_id) ?? 0) + 1,
-    );
-  }
-
-  const sortedWindows = [...windows.entries()].sort(([a], [b]) => a - b);
-
-  if (sortedWindows.length < 2) return [];
-
-  const patterns: TemporalPattern[] = [];
-
-  for (let i = 1; i < sortedWindows.length; i++) {
-    const [prevIdx, prevFreq] = sortedWindows[i - 1];
-    const [currIdx, currFreq] = sortedWindows[i];
-
-    const distance = cosineDistance(prevFreq, currFreq);
-
-    if (distance > 0.5) {
-      const allEntityIds = new Set([...prevFreq.keys(), ...currFreq.keys()]);
-      const timeStart = prevIdx * windowSeconds;
-      const timeEnd = (currIdx + 1) * windowSeconds;
-
-      patterns.push({
-        id: crypto.randomUUID(),
-        type: "phase_transition",
-        description: `Phase transition detected between windows ${formatDate(timeStart)} and ${formatDate(timeEnd)} (cosine distance: ${distance.toFixed(3)})`,
-        entityIds: [...allEntityIds],
-        timeStart,
-        timeEnd,
-        confidence: Math.min(0.95, 0.5 + distance * 0.4),
-        metadata: {
-          cosineDistance: distance,
-          previousWindowEntities: prevFreq.size,
-          currentWindowEntities: currFreq.size,
-          windowDays,
-        },
-        generation: 0,
-      });
-    }
-  }
-
-  return patterns;
-}
-
 // ─── Bridge Formation Detection ─────────────────────────────────
 
 /**
@@ -634,17 +545,11 @@ export function analyzeTemporalPatterns(
   const stalenessDays = options?.stalenessDays ?? 30;
   const minEntities = options?.minEntities ?? 3;
 
-  const partialConfig: Partial<TemporalConfig> = { windowDays };
-
   const patterns: TemporalPattern[] = [
     ...detectEntityBursts(db, windowDays, generation),
     ...detectTopicEmergence(db, windowDays, minEntities, generation),
     ...detectTopicDecay(db, stalenessDays, minEntities, generation),
     ...trackCommunityEvolution(db, generation),
-    ...detectPhaseTransitions(db, partialConfig).map((p) => ({
-      ...p,
-      generation,
-    })),
     ...detectBridgeFormation(db).map((p) => ({
       ...p,
       generation,
@@ -810,47 +715,9 @@ function nowUnix(): number {
 }
 
 /**
- * Compute cosine distance between two frequency vectors.
- * distance = 1 - cosine_similarity
- *
- * Returns 1.0 when vectors are orthogonal or either is zero.
- */
-function cosineDistance(
-  a: Map<string, number>,
-  b: Map<string, number>,
-): number {
-  const allKeys = new Set([...a.keys(), ...b.keys()]);
-
-  let dot = 0;
-  let normA = 0;
-  let normB = 0;
-
-  for (const key of allKeys) {
-    const va = a.get(key) ?? 0;
-    const vb = b.get(key) ?? 0;
-    dot += va * vb;
-    normA += va * va;
-    normB += vb * vb;
-  }
-
-  if (normA === 0 || normB === 0) return 1.0;
-
-  const similarity = dot / (Math.sqrt(normA) * Math.sqrt(normB));
-  return 1.0 - similarity;
-}
-
-/**
  * Format a unix timestamp to a short date string.
  */
 function formatDate(unixSeconds: number): string {
   const date = new Date(unixSeconds * 1000);
   return date.toISOString().split("T")[0];
 }
-
-// ─── Exported Helpers (for testing) ─────────────────────────────
-
-export const _test = {
-  jaccardSimilarity,
-  cosineDistance,
-  nowUnix,
-};

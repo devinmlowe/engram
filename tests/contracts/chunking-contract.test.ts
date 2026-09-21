@@ -39,7 +39,7 @@ describe("chunkConversation backward compatibility", () => {
     expect(chunks[0]).toBe(exchanges);
   });
 
-  it("chunkConversation(50 exchanges, 25, 5) returns single chunk (under maxTurns)", () => {
+  it("chunkConversation(50 exchanges, 25, 5) returns single chunk (under chunk size)", () => {
     const exchanges = makeExchanges(50);
     const chunks = chunkConversation(exchanges, 25, 5);
     expect(chunks).toHaveLength(1);

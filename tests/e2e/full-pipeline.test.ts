@@ -278,7 +278,8 @@ describe("Full Pipeline E2E", () => {
   describe("Search Pipeline", () => {
     it("performs multi-source search with budget enforcement", async () => {
       const { db } = testDb;
-      const { searchMultiSource, formatRecallXml } = await import("../../src/episodic/search.js");
+      const { searchMultiSource } = await import("../../src/_core/search/orchestrator.js");
+      const { formatRecallXml } = await import("../../src/_core/search/format.js");
 
       const response = await searchMultiSource(db, {
         query: "SQLite database",

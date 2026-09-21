@@ -44,15 +44,6 @@ export function closeDatabase(): void {
 }
 
 /**
- * Reset singleton state without closing. Used in tests to allow
- * a fresh getDatabase() call after manual db.close().
- */
-export function resetDatabaseState(): void {
-  _db = null;
-  _config = null;
-}
-
-/**
  * Execute a function within a SQLite transaction.
  * Automatically commits on success, rolls back on error.
  *

@@ -9,15 +9,6 @@ export type DreamPhase =
   | "reflect"
   | "prune";
 
-export interface DreamProgress {
-  phase: DreamPhase;
-  total: number;
-  processed: number;
-  errors: number;
-  startedAt: number;
-  lastCheckpoint?: number;
-}
-
 export interface DreamReport {
   startedAt: number;
   completedAt: number;

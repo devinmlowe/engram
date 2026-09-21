@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatRecallXml } from "../../src/episodic/search.js";
+import { formatRecallXml } from "../../src/_core/search/format.js";
 import type { RecallResponse, SearchResult } from "../../src/_core/types/index.js";
 
 describe("Graph source in formatRecallXml", () => {

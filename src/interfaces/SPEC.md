@@ -16,7 +16,7 @@ The interfaces domain provides all external access points to engram: CLI for dir
 ## Requirements
 
 - **REQ-1**: All interfaces shall use `_core/search/searchMultiSource()` for recall operations — no interface shall implement its own search path. *(traces to L0 REQ-4, REQ-6, REQ-7)*
-- **REQ-2**: CLI and MCP shall expose the same memory capabilities — recall (CLI `search` / MCP `recall`), remember, explore, reflect, forget (CLI `memories delete` / MCP `forget`) — each routed through the same `interfaces/shared/` or `semantic/` operation. Operator actions (`dream`, `sync`, `init`, `migrate`, `memories edit|restore|purge|log`, `validate --fix`, …) are CLI-only by design; turn-level ingestion for agents is MCP `ingest_turn`. *(traces to L0 REQ-6, REQ-7)*
+- **REQ-2**: CLI and MCP shall expose the same memory capabilities — recall (CLI `search` / MCP `recall`), remember, explore, reflect, forget (CLI `memories delete` / MCP `forget`) — each routed through the same `interfaces/shared/`, `semantic/` or `graph/` operation. Operator actions (`dream`, `sync`, `init`, `migrate`, `memories edit|restore|purge|log`, `validate --fix`, …) are CLI-only by design; turn-level ingestion for agents is MCP `ingest_turn`. *(traces to L0 REQ-6, REQ-7)*
 - **REQ-3**: MCP output shall be optimized for LLM consumption (XML formatting, token-aware truncation). *(traces to L0 REQ-6)*
 - **REQ-4**: The web interface shall provide graph visualization, word cloud, and dream pipeline management. *(traces to L0 REQ-4)*
 - **REQ-5**: The `remember` operation shall deduplicate against existing memories using embedding similarity. *(traces to L0 REQ-10)*

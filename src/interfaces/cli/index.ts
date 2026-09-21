@@ -178,7 +178,6 @@ program
     "Extraction tier (auto, haiku, sonnet)",
     "auto",
   )
-  .option("--reflexion", "Enable reflexion pass for completeness")
   .option("--dry-run", "Show extracted facts without consolidating")
   .action(async (conversationId, opts) => {
     const { initEmbeddings } = await import("../../_core/embeddings/index.js");
@@ -243,10 +242,7 @@ program
         conversationId,
         exchanges,
         metadata,
-        {
-          tier,
-          reflexionEnabled: opts.reflexion ?? false,
-        },
+        { tier },
       );
 
       console.log(
@@ -834,7 +830,7 @@ program
   .option("-d, --depth <n>", "Traversal depth (1-3)", "1")
   .option("-t, --type <type>", "Filter by relationship type")
   .action(async (entity, opts) => {
-    const { explore: exploreEntity } = await import("../shared/explore.js");
+    const { exploreEntity } = await import("../../graph/search.js");
     const config = loadConfig();
     const db = getDatabase(config);
     try {
@@ -1380,9 +1376,9 @@ program
     const config = loadConfig();
     const db = getDatabase(config);
     try {
-      const { reflect } = await import("../shared/reflect.js");
+      const { runReflection, buildReflectResultFromCache } = await import("../../graph/reflection.js");
       if (opts.refresh) console.log("Running fresh reflection analysis...\n");
-      const result = await reflect(db, { mode: opts.mode, refresh: Boolean(opts.refresh) }, config);
+      const result = opts.refresh ? await runReflection(db, config) : buildReflectResultFromCache(db);
       if (!result) {
         console.log("No reflection data. Run 'engram dream --phase reflect' first.");
         return;

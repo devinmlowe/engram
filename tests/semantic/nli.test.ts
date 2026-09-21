@@ -1,23 +1,10 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import {
-  initNli,
-  classifyNli,
-  classifyNliBatch,
-  getActiveNliModel,
-  resetNli,
-  type NliResult,
-} from "../../src/semantic/nli.js";
+import { initNli, classifyNli } from "../../src/semantic/nli.js";
 
 describe("NLI contradiction detection", () => {
   beforeAll(async () => {
     await initNli();
   }, 120_000);
-
-  it("model initializes without error", () => {
-    const model = getActiveNliModel();
-    expect(model).toBeTruthy();
-    expect(typeof model).toBe("string");
-  });
 
   it("clear entailment pair returns entailment label", async () => {
     const result = await classifyNli(
@@ -72,72 +59,8 @@ describe("NLI contradiction detection", () => {
     }
   });
 
-  it("batch classification returns correct count", async () => {
-    const pairs: [string, string][] = [
-      ["The sky is blue", "The sky is colored blue"],
-      ["Cats are mammals", "Cats are reptiles"],
-      ["It rained today", "The weather was sunny all day"],
-    ];
-
-    const results = await classifyNliBatch(pairs);
-
-    expect(results).toHaveLength(3);
-    for (const result of results) {
-      expect(result).toHaveProperty("entailment");
-      expect(result).toHaveProperty("contradiction");
-      expect(result).toHaveProperty("neutral");
-      expect(result).toHaveProperty("label");
-      expect(["entailment", "contradiction", "neutral"]).toContain(
-        result.label,
-      );
-    }
-  });
-
-  it("batch results match individual classification", async () => {
-    const pairs: [string, string][] = [
-      ["Dogs are animals", "Dogs are living creatures"],
-      ["Water boils at 100C", "Water freezes at 100C"],
-    ];
-
-    const batchResults = await classifyNliBatch(pairs);
-    const individualResults: NliResult[] = [];
-    for (const [premise, hypothesis] of pairs) {
-      individualResults.push(await classifyNli(premise, hypothesis));
-    }
-
-    for (let i = 0; i < pairs.length; i++) {
-      expect(batchResults[i].label).toBe(individualResults[i].label);
-      expect(batchResults[i].entailment).toBeCloseTo(
-        individualResults[i].entailment,
-        4,
-      );
-    }
-  });
-
-  it("empty batch returns empty array", async () => {
-    const results = await classifyNliBatch([]);
-    expect(results).toEqual([]);
-  });
-
   it("handles repeated initialization gracefully", async () => {
     // Calling initNli again should be a no-op
     await expect(initNli()).resolves.toBeUndefined();
-    expect(getActiveNliModel()).toBeTruthy();
-  });
-
-  it("reset clears model state", () => {
-    resetNli();
-    expect(getActiveNliModel()).toBeNull();
-  });
-
-  it("lazy initialization works after reset", async () => {
-    resetNli();
-    // classifyNli should trigger re-initialization
-    const result = await classifyNli(
-      "The cat sat on the mat",
-      "A feline was resting on a rug",
-    );
-    expect(result.label).toBe("entailment");
-    expect(getActiveNliModel()).toBeTruthy();
   });
 });

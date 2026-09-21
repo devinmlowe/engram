@@ -49,7 +49,6 @@ vi.mock("../../../src/_core/embeddings/index.js", () => {
       Promise.resolve(ts.map((t) => deterministicVector(`doc:${t}`))),
     ),
     getActiveModel: vi.fn().mockReturnValue("mock-model"),
-    getActiveDimensions: vi.fn().mockReturnValue(256),
     resetEmbeddings: vi.fn(),
   };
 });

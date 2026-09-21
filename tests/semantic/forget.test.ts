@@ -12,7 +12,6 @@ import { createTestDb, type TestDb } from "../helpers.js";
 import {
   insertMemory,
   findNearestMemories,
-  getActiveMemories,
   getMemory,
   getMemoryEmbedding,
   recordAccess,
@@ -26,7 +25,6 @@ import {
   purgeConversation,
   purgeForgottenMemories,
   filterSuppressedFacts,
-  isSuppressed,
   clearSuppression,
   contentHash,
   detachMemoryEvidence,
@@ -34,6 +32,11 @@ import {
   MemoryScopeError,
   MemoryAlreadyForgottenError,
 } from "../../src/semantic/forget.js";
+
+/** Whether the content's hash is in memory_suppressions (the check dream extract runs). */
+function isSuppressed(db: TestDb["db"], content: string): boolean {
+  return db.prepare("SELECT 1 FROM memory_suppressions WHERE content_hash = ?").get(contentHash(content)) !== undefined;
+}
 import { listMemories, getMemoryProvenance, listMemoryChanges, resolveMemoryId } from "../../src/semantic/inspect.js";
 import { drillIntoResult } from "../../src/_core/search/drill.js";
 import { pruneOrphanEntities } from "../../src/graph/reflection.js";
@@ -249,7 +252,8 @@ describe("forgotten memories stay out of every recall path", () => {
   });
 
   it("decay / prune scan and consolidation dedup (active-only readers)", () => {
-    expect(getActiveMemories(t.db).map((m) => m.id)).toEqual(["m2"]);
+    const active = t.db.prepare("SELECT id FROM memories WHERE is_active = 1 ORDER BY id").all() as Array<{ id: string }>;
+    expect(active.map((m) => m.id)).toEqual(["m2"]);
     // The dream prune scan reads the same predicate
     const scanned = t.db.prepare("SELECT id FROM memories WHERE is_active = 1").all() as Array<{ id: string }>;
     expect(scanned.map((r) => r.id)).toEqual(["m2"]);

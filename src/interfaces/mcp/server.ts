@@ -48,7 +48,7 @@ import {
   createOrRefineRecallSession,
   drillRecallResult,
 } from "../shared/search.js";
-import { explore, exploreSelectiveEntity } from "../shared/explore.js";
+import { exploreEntity, exploreSelective } from "../../graph/search.js";
 import { fetchSnippets } from "../../_core/search/snippets.js";
 import { scanFile } from "../../_core/search/scan.js";
 import { getSessionStore } from "../../_core/search/index.js";
@@ -106,7 +106,7 @@ export async function warmUpEmbeddings(): Promise<void> {
   // non-fatal: recall degrades to the original ranking.
   if (!config) config = loadConfig();
   if (config.search.rerankEnabled && config.search.reranker.enabled) {
-    const { initReranker } = await import("../../_core/search/index.js");
+    const { initReranker } = await import("../../_core/search/reranker.js");
     await initReranker(config.search.reranker.model);
   }
 }
@@ -1504,7 +1504,7 @@ export async function handleToolCall(name: string, args: unknown, context?: Tool
     if (name === "explore") {
       const params = ExploreInputSchema.parse(args);
 
-      const result = explore(getDb(), {
+      const result = exploreEntity(getDb(), {
         entity: params.entity,
         depth: params.depth,
         limit: params.limit,
@@ -1654,8 +1654,8 @@ export async function handleToolCall(name: string, args: unknown, context?: Tool
       const params = ExploreSelectiveInputSchema.parse(args);
       await ensureEmbeddings();
 
-      const result = await exploreSelectiveEntity(getDb(), {
-        entity: params.entity,
+      const result = await exploreSelective(getDb(), {
+        entityName: params.entity,
         criteria: params.criteria,
         maxDepth: params.max_depth,
         maxNodes: params.max_nodes,
@@ -1727,9 +1727,10 @@ export async function handleToolCall(name: string, args: unknown, context?: Tool
       let result: ReflectResult | null;
 
       {
-        const { reflect } = await import("../shared/reflect.js");
-        if (params.refresh && !config) config = loadConfig();
-        result = await reflect(database, { mode: params.mode, refresh: params.refresh }, config ?? undefined);
+        const { runReflection, buildReflectResultFromCache } = await import("../../graph/reflection.js");
+        result = params.refresh
+          ? await runReflection(database, config ?? (config = loadConfig()))
+          : buildReflectResultFromCache(database);
       }
 
       if (!result) {

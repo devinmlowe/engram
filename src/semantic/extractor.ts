@@ -4,8 +4,7 @@
  * Extracts structured facts from Claude Code conversations through the
  * _core/llm factory, so the configured cascade (Ollama → OpenRouter →
  * Anthropic primary → Anthropic fallback) applies to every chunk (SPEC.md
- * INV-3). Supports chunking for long conversations and optional reflexion
- * for completeness.
+ * INV-3). Supports chunking for long conversations.
  *
  * Phase 3, Stream C implementation.
  */
@@ -33,7 +32,6 @@ import type {
   ExtractedFact,
   ExtractionResult,
   ExtractionConfig,
-  ChunkBoundaryInfo,
 } from "./types.js";
 
 // ─── Module State ───────────────────────────────────────────────
@@ -52,10 +50,8 @@ const VALID_MEMORY_TYPES: ReadonlySet<MemoryType> = new Set([
 
 const DEFAULT_CONFIG: ExtractionConfig = {
   tier: "auto",
-  reflexionEnabled: false,
   chunkSize: 25,
   chunkOverlap: 5,
-  maxTurns: 100,
 };
 
 // ─── Tool Schema ────────────────────────────────────────────────
@@ -241,8 +237,6 @@ export function buildExtractionPrompt(
 import { chunkConversation } from "../_core/search/text.js";
 export { chunkConversation };
 
-// Database type for chunk metadata persistence (Phase 7C.2)
-import type Database from "better-sqlite3";
 
 // ─── Response Parsing ───────────────────────────────────────────
 
@@ -445,72 +439,6 @@ async function callExtraction(
   };
 }
 
-// ─── Reflexion Pass ─────────────────────────────────────────────
-
-/**
- * Perform a reflexion pass: ask the LLM to review extracted facts
- * and identify anything missed.
- */
-async function reflexionPass(
-  prompt: string,
-  existingFacts: ExtractedFact[],
-  plan: TierPlan,
-): Promise<ExtractedFact[]> {
-  const factsJson = JSON.stringify(
-    existingFacts.map((f) => ({
-      type: f.type,
-      content: f.content,
-      importance: f.importance,
-    })),
-    null,
-    2,
-  );
-
-  const reflexionPrompt =
-    `${prompt}\n\n---\n\nThe following facts were already extracted from this conversation:\n\n${factsJson}\n\n` +
-    `Review these extracted facts against the source conversation. ` +
-    `What facts, preferences, or decisions were missed? ` +
-    `Extract only the MISSING facts that were not already captured above.`;
-
-  try {
-    const { facts } = await callExtraction(reflexionPrompt, plan);
-    return facts;
-  } catch {
-    // Reflexion is optional; don't fail the extraction if it errors
-    return [];
-  }
-}
-
-/**
- * Simple deduplication: filter out facts from the reflexion pass
- * whose content closely matches an existing fact.
- */
-function deduplicateFacts(
-  existing: ExtractedFact[],
-  additional: ExtractedFact[],
-): ExtractedFact[] {
-  const deduplicated: ExtractedFact[] = [];
-
-  for (const newFact of additional) {
-    const normalizedNew = newFact.content.toLowerCase().trim();
-    const isDuplicate = existing.some((existingFact) => {
-      const normalizedExisting = existingFact.content.toLowerCase().trim();
-      // Exact match or one contains the other
-      return (
-        normalizedNew === normalizedExisting ||
-        normalizedNew.includes(normalizedExisting) ||
-        normalizedExisting.includes(normalizedNew)
-      );
-    });
-
-    if (!isDuplicate) {
-      deduplicated.push(newFact);
-    }
-  }
-
-  return deduplicated;
-}
-
 // ─── Main Extraction Entry Point ────────────────────────────────
 
 /**
@@ -521,8 +449,7 @@ function deduplicateFacts(
  * 2. OpenRouter — cost-effective cloud (Gemini 2.5 Flash Lite ~$11/batch)
  * 3. Anthropic — primary model, then fallback model
  *
- * Chunks long conversations and optionally runs a reflexion pass
- * to catch missed facts.
+ * Chunks long conversations.
  */
 export async function extractFromConversation(
   conversationId: string,
@@ -535,12 +462,6 @@ export async function extractFromConversation(
 
   // Chunk if needed (fixed windows; adaptive chunking removed in #117)
   const chunks = chunkConversation(exchanges, cfg.chunkSize, cfg.chunkOverlap);
-
-  // Phase 7C.2: Compute chunk boundary metadata for diagnostics
-  const chunkBoundaries: ChunkBoundaryInfo[] = chunks.map((chunk) => ({
-    start: chunk[0]?.index ?? 0,
-    end: (chunk[chunk.length - 1]?.index ?? 0) + 1,
-  }));
 
   const plan = planForTier(cfg.tier, intelligenceConfig());
 
@@ -568,7 +489,6 @@ export async function extractFromConversation(
     }
   }
 
-  // Optional reflexion pass
   // Resolve `[Exchange N]` references to stored exchange ids when the caller
   // supplied them, so source_exchanges is joinable (event-time recall).
   const idByIndex = new Map<number, string>();
@@ -582,13 +502,6 @@ export async function extractFromConversation(
     }));
   }
 
-  if (cfg.reflexionEnabled && allFacts.length > 0) {
-    const fullPrompt = buildExtractionPrompt(exchanges, metadata);
-    const additional = await reflexionPass(fullPrompt, allFacts, plan);
-    const unique = deduplicateFacts(allFacts, additional);
-    allFacts = [...allFacts, ...unique];
-  }
-
   const durationMs = Date.now() - startTime;
 
   return {
@@ -599,49 +512,6 @@ export async function extractFromConversation(
     provider: usedProvider,
     confidence: allFacts.length > 0 ? 7 : 1,
     durationMs,
-    chunkBoundaries,
   };
 }
 
-// ─── Chunk Metadata Persistence (Phase 7C.2) ───────────────────
-
-/**
- * Persist chunk boundary metadata to the chunk_metadata table.
- *
- * This is a diagnostic feature — if db is null or the write fails,
- * extraction continues unaffected.
- */
-export function persistChunkMetadata(
-  db: Database.Database | null,
-  conversationId: string,
-  chunks: Array<{ start: number; end: number }>,
-): void {
-  if (!db || chunks.length === 0) return;
-
-  try {
-    const stmt = db.prepare(
-      `INSERT OR REPLACE INTO chunk_metadata (id, conversation_id, chunk_index, start_exchange, end_exchange, exchange_count, avg_density)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    );
-
-    const insertAll = db.transaction(() => {
-      for (let i = 0; i < chunks.length; i++) {
-        const chunk = chunks[i];
-        const id = `${conversationId}:${i}`;
-        stmt.run(
-          id,
-          conversationId,
-          i,
-          chunk.start,
-          chunk.end,
-          chunk.end - chunk.start,
-          null, // avg_density: kept for schema compatibility, unused since adaptive chunking was removed (#117)
-        );
-      }
-    });
-
-    insertAll();
-  } catch {
-    // Chunk metadata is diagnostic — never fail the extraction pipeline
-  }
-}

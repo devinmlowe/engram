@@ -22,7 +22,6 @@ import {
   embedDocument,
   embedDocumentBatch,
   embedExchange,
-  getActiveDimensions,
   getActiveModel,
 } from "../../src/_core/embeddings/index.js";
 
@@ -76,13 +75,6 @@ describe("Embedding Singleton Contract", { timeout: 120_000 }, () => {
       date: "2025-01-01",
     });
     expect(v).toHaveLength(EXPECTED_DIMS);
-  });
-
-  it("getActiveDimensions matches actual output", async () => {
-    const reported = getActiveDimensions();
-    const actual = await embedQuery("dimension check");
-    expect(reported).toBe(actual.length);
-    expect(reported).toBe(EXPECTED_DIMS);
   });
 
   // ── L2 Normalization Invariant ─────────────────────────────────
@@ -154,7 +146,6 @@ describe("Embedding Singleton Contract", { timeout: 120_000 }, () => {
 
   it("reset → re-init produces identical dimensions and model", async () => {
     const modelBefore = getActiveModel();
-    const dimsBefore = getActiveDimensions();
 
     // Capture a reference vector before reset
     const refInput = "lifecycle stability test";
@@ -164,12 +155,10 @@ describe("Embedding Singleton Contract", { timeout: 120_000 }, () => {
 
     // State should reset to defaults
     expect(getActiveModel()).toBe("nomic"); // default before init
-    expect(getActiveDimensions()).toBe(256);
 
     await initEmbeddings();
 
     expect(getActiveModel()).toBe(modelBefore);
-    expect(getActiveDimensions()).toBe(dimsBefore);
 
     // Vector output must be identical after re-init
     const refAfter = await embedQuery(refInput);
@@ -182,7 +171,7 @@ describe("Embedding Singleton Contract", { timeout: 120_000 }, () => {
     await initEmbeddings(); // third init call
     const v2 = await embedQuery("double init test");
     expect(v1).toEqual(v2);
-    expect(getActiveDimensions()).toBe(EXPECTED_DIMS);
+    expect(v2).toHaveLength(EXPECTED_DIMS);
   });
 
   // ── Cache Contract ─────────────────────────────────────────────

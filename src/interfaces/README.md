@@ -20,7 +20,7 @@ External access points to engram — CLI for humans, MCP for LLM agents, web for
 - [cli/](./cli/) — Command-line interface (27 commands, commander-based; `mcp install|uninstall|status` registers hosts; `setup` is the one-command first run)
 - [mcp/](./mcp/) — Model Context Protocol server (16 tools; stdio by default — bridging to a healthy HTTP daemon, `--standalone` to force inline — or Streamable HTTP with a worker pool via `--http`)
 - [web/](./web/) — Web visualization server (4 views, SSE real-time updates)
-- [shared/](./shared/) — Shared operation handlers (search, remember, explore, reflect)
+- [shared/](./shared/) — Shared operation handlers (search, remember); explore and reflect call `graph/` directly
 
 ## Key Interfaces
 

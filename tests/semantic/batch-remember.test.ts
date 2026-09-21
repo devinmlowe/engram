@@ -10,7 +10,6 @@ import type { TestDb } from "../helpers.js";
 import {
   insertMemory,
   getMemory,
-  getActiveMemories,
   findNearestMemories,
 } from "../../src/semantic/memory.js";
 import type { Memory } from "../../src/semantic/types.js";

@@ -2,10 +2,12 @@
  * Contract: CLI / MCP capability parity (interfaces/SPEC.md REQ-2, POST-4).
  *
  * The two agent-facing surfaces must expose the same memory capabilities
- * and reach them through the same `interfaces/shared/` operation, so recall
- * ranking and remember dedup cannot drift between `engram search` and MCP
- * `recall`, or between `engram remember` and MCP `remember`. Operator
- * actions (dream, sync, init, …) are deliberately CLI-only.
+ * and reach them through the same operation — `interfaces/shared/` for
+ * recall and remember, the `graph/` module directly for explore and reflect
+ * (#116 removed the pass-through wrappers) — so recall ranking and remember
+ * dedup cannot drift between `engram search` and MCP `recall`, or between
+ * `engram remember` and MCP `remember`. Operator actions (dream, sync,
+ * init, …) are deliberately CLI-only.
  *
  * Registration is checked from the real objects where one exists
  * (MCP_TOOL_DEFINITIONS) and from the commander source for the CLI; routing
@@ -26,12 +28,12 @@ process.env.ENGRAM_DATA_DIR = tmpDir;
 const CLI_SRC = readFileSync(new URL("../../src/interfaces/cli/index.ts", import.meta.url), "utf-8");
 const MCP_SRC = readFileSync(new URL("../../src/interfaces/mcp/server.ts", import.meta.url), "utf-8");
 
-/** capability → [CLI command, MCP tool, shared module that must serve both] */
+/** capability → [CLI command, MCP tool, module that must serve both] */
 const SHARED_CAPABILITIES: Array<[string, string, string, string | null]> = [
   ["recall", "search", "recall", "../shared/search.js"],
   ["remember", "remember", "remember", "../shared/remember.js"],
-  ["explore", "explore", "explore", "../shared/explore.js"],
-  ["reflect", "reflect", "reflect", "../shared/reflect.js"], // routed through the shared wrapper since #38
+  ["explore", "explore", "explore", "../../graph/search.js"],
+  ["reflect", "reflect", "reflect", "../../graph/reflection.js"],
 ];
 
 let tools: Tool[];
@@ -59,7 +61,7 @@ describe("REQ-2: the shared memory capabilities exist on both surfaces", () => {
   });
 });
 
-describe("POST-4 / REQ-1: both surfaces route through interfaces/shared", () => {
+describe("POST-4 / REQ-1: both surfaces route through the same module", () => {
   it.each(SHARED_CAPABILITIES.filter(([, , , shared]) => shared !== null))(
     "%s: CLI and MCP both import %s",
     (_cap, _cli, _mcp, shared) => {

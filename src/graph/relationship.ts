@@ -75,60 +75,6 @@ export function insertRelationship(
 }
 
 /**
- * Update specified fields of a relationship. Always sets updated_at.
- */
-export function updateRelationship(
-  db: Database.Database,
-  id: string,
-  updates: Partial<Relationship>,
-): void {
-  const setClauses: string[] = [];
-  const values: unknown[] = [];
-
-  if (updates.weight !== undefined) {
-    setClauses.push("weight = ?");
-    values.push(updates.weight);
-  }
-  if (updates.context !== undefined) {
-    setClauses.push("context = ?");
-    values.push(updates.context ?? null);
-  }
-  if (updates.sourceMemories !== undefined) {
-    setClauses.push("source_memories = ?");
-    values.push(JSON.stringify(updates.sourceMemories));
-  }
-  if (updates.type !== undefined) {
-    setClauses.push("type = ?");
-    values.push(updates.type);
-  }
-
-  // Always update updated_at
-  setClauses.push("updated_at = unixepoch()");
-
-  if (setClauses.length > 0) {
-    values.push(id);
-    db.prepare(
-      `UPDATE relationships SET ${setClauses.join(", ")} WHERE id = ?`,
-    ).run(...values);
-  }
-}
-
-/**
- * Get a single relationship by ID.
- */
-export function getRelationship(
-  db: Database.Database,
-  id: string,
-): Relationship | null {
-  const row = db
-    .prepare("SELECT * FROM relationships WHERE id = ?")
-    .get(id) as RelationshipRow | undefined;
-
-  if (!row) return null;
-  return rowToRelationship(row);
-}
-
-/**
  * Get all relationships for an entity (both incoming and outgoing).
  */
 export function getRelationshipsForEntity(
@@ -140,25 +86,6 @@ export function getRelationshipsForEntity(
       "SELECT * FROM relationships WHERE source_entity_id = ? OR target_entity_id = ?",
     )
     .all(entityId, entityId) as RelationshipRow[];
-
-  return rows.map(rowToRelationship);
-}
-
-/**
- * Get all relationships between two specific entities (in either direction).
- */
-export function getRelationshipsBetween(
-  db: Database.Database,
-  entityA: string,
-  entityB: string,
-): Relationship[] {
-  const rows = db
-    .prepare(`
-      SELECT * FROM relationships
-      WHERE (source_entity_id = ? AND target_entity_id = ?)
-         OR (source_entity_id = ? AND target_entity_id = ?)
-    `)
-    .all(entityA, entityB, entityB, entityA) as RelationshipRow[];
 
   return rows.map(rowToRelationship);
 }

@@ -14,7 +14,6 @@ vi.mock("../../src/_core/embeddings/index.js", () => ({
   embedQuery: vi.fn(),
   embedDocument: vi.fn(),
   initEmbeddings: vi.fn(),
-  getActiveDimensions: vi.fn(() => 256),
   getActiveModel: vi.fn(() => "nomic"),
   resetEmbeddings: vi.fn(),
   embedDocumentBatch: vi.fn(),

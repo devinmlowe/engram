@@ -20,7 +20,6 @@ const queryEmbeddingCache = new LRUCache<string, number[]>({
 /** Query embeddings currently being computed, keyed by query text */
 const inflightQueryEmbeds = new Map<string, Promise<number[]>>();
 let activeModel: "nomic" | "minilm" = "nomic";
-let activeDimensions = 256;
 
 const NOMIC_MODEL = "nomic-ai/nomic-embed-text-v1.5";
 const MINILM_MODEL = "Xenova/all-MiniLM-L6-v2";
@@ -47,7 +46,6 @@ export async function initEmbeddings(config?: EngramConfig): Promise<void> {
         embeddingPipeline = await pipeline("feature-extraction", MINILM_MODEL);
         activeModel = "minilm";
       }
-      activeDimensions = TARGET_DIMS;
     })().finally(() => {
       initInFlight = null;
     });
@@ -224,13 +222,6 @@ export async function embedExchange(
 }
 
 /**
- * Get the active output dimensions (always 256 after MRL truncation).
- */
-export function getActiveDimensions(): number {
-  return activeDimensions;
-}
-
-/**
  * Get the active model name (for diagnostics).
  */
 export function getActiveModel(): "nomic" | "minilm" {
@@ -243,7 +234,6 @@ export function getActiveModel(): "nomic" | "minilm" {
 export function resetEmbeddings(): void {
   embeddingPipeline = null;
   activeModel = "nomic";
-  activeDimensions = 256;
   queryEmbeddingCache.clear();
   inflightQueryEmbeds.clear();
   initInFlight = null;

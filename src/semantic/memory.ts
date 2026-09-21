@@ -45,16 +45,6 @@ interface MemoryRow {
   deleted_by?: string | null;
 }
 
-interface ConflictRow {
-  id: string;
-  memory_id: string;
-  conflicting_memory_id: string;
-  description: string | null;
-  resolution: string | null;
-  resolved_at: number | null;
-  created_at: number;
-}
-
 function rowToMemory(row: MemoryRow): Memory {
   return {
     id: row.id,
@@ -79,18 +69,6 @@ function rowToMemory(row: MemoryRow): Memory {
     extractionBasis: (row.extraction_basis as Memory["extractionBasis"]) ?? undefined,
     deletedAt: row.deleted_at ?? undefined,
     deletedBy: row.deleted_by ?? undefined,
-  };
-}
-
-function rowToConflict(row: ConflictRow): Conflict {
-  return {
-    id: row.id,
-    memoryId: row.memory_id,
-    conflictingMemoryId: row.conflicting_memory_id,
-    description: row.description ?? "",
-    resolution: row.resolution ?? undefined,
-    resolvedAt: row.resolved_at ?? undefined,
-    createdAt: row.created_at,
   };
 }
 
@@ -322,28 +300,6 @@ export function getMemoryEmbedding(
 }
 
 /**
- * Get all active memories, optionally filtered by type.
- */
-export function getActiveMemories(
-  db: Database.Database,
-  type?: MemoryType,
-): Memory[] {
-  let rows: MemoryRow[];
-
-  if (type) {
-    rows = db
-      .prepare("SELECT * FROM memories WHERE is_active = 1 AND type = ?")
-      .all(type) as MemoryRow[];
-  } else {
-    rows = db
-      .prepare("SELECT * FROM memories WHERE is_active = 1")
-      .all() as MemoryRow[];
-  }
-
-  return rows.map(rowToMemory);
-}
-
-/**
  * Record an access event — increments access_count and updates last_accessed.
  */
 export function recordAccess(
@@ -412,32 +368,6 @@ export function insertConflict(
     conflict.resolvedAt ?? null,
     conflict.createdAt,
   );
-}
-
-/**
- * Get all unresolved conflicts (no resolution set).
- */
-export function getUnresolvedConflicts(
-  db: Database.Database,
-): Conflict[] {
-  const rows = db
-    .prepare("SELECT * FROM conflicts WHERE resolution IS NULL")
-    .all() as ConflictRow[];
-
-  return rows.map(rowToConflict);
-}
-
-/**
- * Resolve a conflict by setting the resolution text and resolved_at timestamp.
- */
-export function resolveConflict(
-  db: Database.Database,
-  id: string,
-  resolution: string,
-): void {
-  db.prepare(
-    "UPDATE conflicts SET resolution = ?, resolved_at = unixepoch() WHERE id = ?",
-  ).run(resolution, id);
 }
 
 // ─── Vector Search ──────────────────────────────────────────────
