@@ -184,19 +184,29 @@ Scoping has a per-process default and a per-call override.
 | `ENGRAM_SCOPE` | Default write scope stamped on every `remember` / `remember_batch`. |
 | `ENGRAM_READ_SCOPES` | Comma-separated scopes `recall` may return by default. When unset but `ENGRAM_SCOPE` is set, defaults to `global` plus the write scope. |
 
+Either variable in a stdio server's env makes that start run inline even when
+the HTTP daemon is up (#87): the bridge forwards calls verbatim and the daemon
+would resolve them under its own env. A shared daemon is scoped per call with
+the `scope` / `read_scopes` parameters instead.
+
 Per call, `recall` and `recall_session` accept `scope` (reads then default to
 `global` + that scope) and `read_scopes` (explicit list); `remember` and
-`remember_batch` accept `scope`; `ingest_turn` requires `scope`. A parameter
-overrides the environment for that call only, so one HTTP daemon can serve
-several tenants — the Hermes plugin sends `hermes:<profile>` on every write.
-With nothing set the server is single-tenant: writes land in `global`, reads
-see everything. Convention: name scopes `<host>:<profile>`, for example
-`codex:work` or `hermes:career`.
+`remember_batch` accept `scope`; `ingest_turn` requires `scope`. With the
+environment unset (the shared HTTP daemon) the params are the tenant identity
+for that call, so one daemon can serve several tenants — the Hermes plugin
+sends `hermes:<profile>` on every write. With `ENGRAM_SCOPE` /
+`ENGRAM_READ_SCOPES` set (a stdio child pinned to one tenant) the params can
+only narrow: `read_scopes` is intersected with the env read scopes and `scope`
+must be one of them; anything else is rejected, so a prompt-injected model
+cannot read or write another tenant. With nothing set the server is
+single-tenant: writes land in `global`, reads see everything. Convention: name
+scopes `<host>:<profile>`, for example `codex:work` or `hermes:career`.
 
-Because the model can pass `scope` / `read_scopes` itself, the integration
-layer (your hook or plugin), not the tool schema, is what pins a tenant: set
-the params from your side and do not expose them to the model if it must not
-choose its own scope.
+On the HTTP daemon the model can pass `scope` / `read_scopes` itself, so the
+integration layer (your hook or plugin), not the tool schema, is what pins a
+tenant there: set the params from your side and do not expose them to the
+model if it must not choose its own scope. Pin the env on a stdio child
+instead when the model must be sandboxed.
 
 **Caveat:** scope filtering applies to the **semantic** memory table only.
 Episodic conversation exchanges and graph entities are not scope-filtered.
