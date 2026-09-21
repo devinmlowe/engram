@@ -167,27 +167,38 @@ export function contentHash(content: string): string {
   return createHash("sha256").update(normalized).digest("hex");
 }
 
-/** Remove the suppression for this content (an explicit remember wins). Returns true when one existed. */
-export function clearSuppression(db: Database.Database, content: string): boolean {
-  const r = db.prepare("DELETE FROM memory_suppressions WHERE content_hash = ?").run(contentHash(content));
+/**
+ * Remove the suppression of this content in one scope (an explicit remember
+ * wins). #106: keyed by tenant, so a remember in `hermes:personal` never
+ * lifts a `hermes:career` (or global) forget. Returns true when one existed.
+ */
+export function clearSuppression(db: Database.Database, content: string, scope: string): boolean {
+  const r = db
+    .prepare("DELETE FROM memory_suppressions WHERE content_hash = ? AND scope = ?")
+    .run(contentHash(content), scope);
   return r.changes > 0;
 }
 
 /**
  * Split extracted facts into the ones to keep and the ones whose content
  * hash is suppressed (a forgotten statement re-extracted from the same
- * exchanges). Used by dream extract; the count feeds the phase summary.
+ * exchanges). #106: a suppression applies to its own scope; only a global one
+ * applies to every tenant. Used by dream extract; the count feeds the phase
+ * summary.
  */
 export function filterSuppressedFacts<T extends Pick<ExtractedFact, "content">>(
   db: Database.Database,
   facts: readonly T[],
+  scope: string,
 ): { kept: T[]; suppressed: T[] } {
   if (facts.length === 0) return { kept: [], suppressed: [] };
-  const lookup = db.prepare("SELECT 1 FROM memory_suppressions WHERE content_hash = ?");
+  const lookup = db.prepare(
+    "SELECT 1 FROM memory_suppressions WHERE content_hash = ? AND scope IN (?, 'global')",
+  );
   const kept: T[] = [];
   const suppressed: T[] = [];
   for (const fact of facts) {
-    if (lookup.get(contentHash(fact.content))) suppressed.push(fact);
+    if (lookup.get(contentHash(fact.content), scope)) suppressed.push(fact);
     else kept.push(fact);
   }
   return { kept, suppressed };
@@ -445,7 +456,9 @@ export function restoreMemory(db: Database.Database, options: RestoreOptions): M
       "UPDATE memories SET is_active = 1, deleted_at = NULL, deleted_by = NULL, updated_at = unixepoch() WHERE id = ?",
     ).run(row.id);
     reindex(db, row, options.embedding);
-    db.prepare("DELETE FROM memory_suppressions WHERE content_hash = ?").run(contentHash(row.content));
+    db
+      .prepare("DELETE FROM memory_suppressions WHERE content_hash = ? AND scope = ?")
+      .run(contentHash(row.content), row.scope ?? GLOBAL_SCOPE);
     return logChange(db, { memoryId: row.id, op: "restore", before: null, after: row.content, actor: options.actor, at: now });
   });
   return run.immediate();
