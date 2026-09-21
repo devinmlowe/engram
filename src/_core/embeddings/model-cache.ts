@@ -8,21 +8,6 @@ export interface ModelCacheEnv {
   cacheDir: string;
 }
 
-/**
- * Resolve the directory transformers.js will use for downloaded model weights.
- *
- * A non-blank `override` (normally `config.modelCacheDir`, which loadConfig()
- * always resolves — #53) wins; only a blank one falls back to the library
- * default, `node_modules/@xenova/transformers/.cache`, which disappears on
- * every reinstall. Pure — never mutates `env`.
- */
-export function resolveModelCacheDir(
-  env: ModelCacheEnv,
-  override?: string,
-): string {
-  return override && override.trim() !== "" ? override : env.cacheDir;
-}
-
 /** True when `dir` sits under any `node_modules` directory, i.e. npm will wipe it. */
 export function isInsideNodeModules(dir: string): boolean {
   return resolve(dir).split(sep).includes("node_modules");
@@ -160,7 +145,9 @@ export function applyModelCacheDir(
   override: string | undefined = loadConfig().modelCacheDir,
   opts: { log?: (line: string) => void } = {},
 ): string {
-  const dir = resolveModelCacheDir(env, override);
+  // A non-blank override (normally config.modelCacheDir, which loadConfig() always
+  // resolves, #53) wins; only a blank one falls back to the library default.
+  const dir = override && override.trim() !== "" ? override : env.cacheDir;
   if (!legacyMigrationDone) {
     legacyMigrationDone = true;
     // `env.cacheDir` still holds the library default here: the legacy location for this install.
