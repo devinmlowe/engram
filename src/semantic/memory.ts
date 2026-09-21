@@ -22,7 +22,8 @@ import { onSuccessfulAccess, onContradiction } from "./decay.js";
 
 // ─── Row Type Helpers ───────────────────────────────────────────
 
-interface MemoryRow {
+/** A `memories` row as better-sqlite3 returns it (`SELECT *`). */
+export interface MemoryRow {
   id: string;
   type: string;
   content: string;
@@ -45,7 +46,8 @@ interface MemoryRow {
   deleted_by?: string | null;
 }
 
-function rowToMemory(row: MemoryRow): Memory {
+/** Map a `memories` row to the Memory shape every reader returns. */
+export function rowToMemory(row: MemoryRow): Memory {
   return {
     id: row.id,
     type: row.type as MemoryType,

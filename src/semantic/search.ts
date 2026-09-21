@@ -13,7 +13,7 @@ import type {
   SearchOptions,
   SearchResult,
 } from "../_core/types/index.js";
-import type { MemoryType, Memory } from "./types.js";
+import type { Memory } from "./types.js";
 import { embedQuery } from "../_core/embeddings/index.js";
 import { rrfFuse, normalizeMinMaxFloored } from "../_core/search/rrf.js";
 import { computeRetrievalScore, computeConfidence } from "./decay.js";
@@ -26,49 +26,7 @@ import {
   type DateFilterInput,
 } from "../_core/search/dates.js";
 
-// ─── Row Type Helpers ───────────────────────────────────────────
-
-interface MemoryRow {
-  id: string;
-  type: string;
-  content: string;
-  context: string | null;
-  confidence: number;
-  importance: number;
-  access_count: number;
-  last_accessed: number | null;
-  created_at: number;
-  updated_at: number | null;
-  source_exchanges: string | null;
-  superseded_by: string | null;
-  is_active: number;
-  scope: string | null;
-  stability: number | null;
-  event_ts?: number | null;
-}
-
-function rowToMemory(row: MemoryRow): Memory {
-  return {
-    id: row.id,
-    type: row.type as MemoryType,
-    content: row.content,
-    context: row.context ?? undefined,
-    confidence: row.confidence,
-    importance: row.importance,
-    accessCount: row.access_count,
-    lastAccessed: row.last_accessed ?? undefined,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at ?? undefined,
-    sourceExchanges: row.source_exchanges
-      ? JSON.parse(row.source_exchanges)
-      : [],
-    supersededBy: row.superseded_by ?? undefined,
-    isActive: Boolean(row.is_active),
-    scope: row.scope ?? "global",
-    stability: row.stability ?? undefined,
-    eventTs: row.event_ts ?? undefined,
-  };
-}
+import { rowToMemory, type MemoryRow } from "./memory.js";
 
 // ─── Ranked Item Interface ──────────────────────────────────────
 
