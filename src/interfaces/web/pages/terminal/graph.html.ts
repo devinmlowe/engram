@@ -13,6 +13,7 @@
  */
 
 import { terminalSharedCss } from "./shared-css.js";
+import { sharedJs } from "../shared-js.js";
 import { TYPE_COLORS, DEFAULT_COLOR } from '../theme.js';
 
 export function terminalGraphPage(): string {
@@ -68,30 +69,12 @@ export function terminalGraphPage(): string {
 const TYPE_COLORS = ${JSON.stringify(TYPE_COLORS)};
 
 const DEFAULT_COLOR = '${DEFAULT_COLOR}';
-
-function esc(s) {
-  const el = document.createElement('span');
-  el.textContent = s;
-  return el.innerHTML;
-}
-
-function formatAge(ts) {
-  if (!ts) return 'unknown';
-  const now = Math.floor(Date.now() / 1000);
-  const diff = now - ts;
-  if (diff < 3600) return Math.round(diff / 60) + 'm ago';
-  if (diff < 86400) return Math.round(diff / 3600) + 'h ago';
-  if (diff < 2592000) return Math.round(diff / 86400) + 'd ago';
-  return Math.round(diff / 2592000) + 'mo ago';
-}
-
-let selectedNode = null;
+${sharedJs()}
 
 function closeInfo() {
   document.getElementById('info-panel').classList.remove('open');
   d3.selectAll('.node').classed('selected', false).classed('neighbor', false).classed('dimmed', false);
   d3.selectAll('.link').classed('dimmed', false).classed('highlighted', false);
-  selectedNode = null;
 }
 
 function showNodeInfo(d) {
@@ -137,8 +120,6 @@ function showNodeInfo(d) {
       const tid = typeof l.target === 'object' ? l.target.id : l.target;
       return sid === d.id || tid === d.id;
     });
-
-  selectedNode = d;
 }
 
 // ─── Load & Render ──────────────────────────────────────────────

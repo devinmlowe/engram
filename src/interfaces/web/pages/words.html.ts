@@ -3,6 +3,7 @@
  */
 
 import { sharedPanelCss } from "./shared-css.js";
+import { sharedJs, panelToggleJs } from "./shared-js.js";
 import { PALETTE } from './theme.js';
 
 export function wordsPage(): string {
@@ -76,10 +77,6 @@ export function wordsPage(): string {
         <div class="ctrl-label">Word count <span class="val" id="word-count-val">200</span></div>
         <input type="range" id="word-count" min="50" max="400" value="200" />
       </div>
-      <div class="ctrl-row">
-        <div class="ctrl-label">Min frequency <span class="val" id="min-freq-val">3</span></div>
-        <input type="range" id="min-freq" min="1" max="20" value="3" />
-      </div>
     </div>
   </div>
 
@@ -88,16 +85,8 @@ export function wordsPage(): string {
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/d3-cloud/1.2.7/d3.layout.cloud.min.js"></script>
 <script>
-// Panel logic
-document.getElementById('settings-toggle').addEventListener('click', () => {
-  document.getElementById('settings-panel').classList.toggle('open');
-});
-document.getElementById('close-panel').addEventListener('click', () => {
-  document.getElementById('settings-panel').classList.remove('open');
-});
-document.querySelectorAll('.section-header').forEach(hdr => {
-  hdr.addEventListener('click', () => hdr.parentElement.classList.toggle('open'));
-});
+${panelToggleJs()}
+${sharedJs()}
 
 const PALETTE = ${JSON.stringify(PALETTE)};
 
@@ -191,12 +180,6 @@ function renderCloud(words) {
   document.getElementById('stat-words').textContent = words.length;
 }
 
-function esc(s) {
-  const el = document.createElement('span');
-  el.textContent = s;
-  return el.innerHTML;
-}
-
 // ─── Word count tracking for pulse highlights ───────────────────
 const lastWordCounts = new Map();
 let lastRelayoutTime = 0;
@@ -277,8 +260,6 @@ document.getElementById('word-count').addEventListener('input', (e) => {
   document.getElementById('word-count-val').textContent = wordCount;
 });
 document.getElementById('word-count').addEventListener('change', () => load(false));
-
-document.getElementById('min-freq').addEventListener('change', () => load(false));
 
 window.addEventListener('resize', () => {
   if (wordData.length > 0) renderCloud(wordData);
