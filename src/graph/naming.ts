@@ -131,11 +131,7 @@ function buildFallbackNaming(
   community: CommunityResult,
   entities: EntityRow[],
 ): CommunityNaming {
-  const entityNames = entities.map((e) => e.name);
-  const nameList =
-    entityNames.length <= 3
-      ? entityNames.join(", ")
-      : `${entityNames.slice(0, 3).join(", ")} and ${entityNames.length - 3} more`;
+  const nameList = namePreview(entities.map((e) => e.name));
 
   return {
     communityId: community.communityId,
@@ -208,4 +204,11 @@ export async function nameCommunities(
   }
 
   return results;
+}
+
+/** "a, b, c" for up to three names, otherwise "a, b, c and N more". */
+export function namePreview(names: readonly string[]): string {
+  return names.length <= 3
+    ? names.join(", ")
+    : `${names.slice(0, 3).join(", ")} and ${names.length - 3} more`;
 }

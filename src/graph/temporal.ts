@@ -15,6 +15,8 @@
 
 import type Database from "better-sqlite3";
 import type { TemporalPattern, TemporalPatternType } from "./types.js";
+import { toIsoDay } from "../_core/search/dates.js";
+import { namePreview } from "./naming.js";
 
 // ─── Configuration ──────────────────────────────────────────────
 
@@ -36,6 +38,54 @@ export const DEFAULT_TEMPORAL_CONFIG: TemporalConfig = {
 
 const SECONDS_PER_DAY = 86400;
 
+// ─── First-seen Windows ──────────────────────────────────────────
+
+interface FirstSeenWindow {
+  count: number;
+  entityIds: string[];
+  entityNames: string[];
+  timeStart: number;
+  timeEnd: number;
+}
+
+/**
+ * Entities bucketed by the `windowSeconds`-wide window their first_seen
+ * falls in, oldest first, keeping windows holding at least `minEntities`.
+ * CAST to INTEGER ensures proper bucketing (SQLite does real division by default).
+ */
+function firstSeenWindows(
+  db: Database.Database,
+  windowSeconds: number,
+  minEntities: number,
+): FirstSeenWindow[] {
+  const rows = db
+    .prepare(
+      `SELECT
+        CAST(first_seen / ? AS INTEGER) AS window_idx,
+        COUNT(*) AS cnt,
+        GROUP_CONCAT(id) AS entity_ids,
+        GROUP_CONCAT(name) AS entity_names
+      FROM entities
+      WHERE first_seen IS NOT NULL
+      GROUP BY window_idx
+      HAVING COUNT(*) >= ?
+      ORDER BY window_idx`,
+    )
+    .all(windowSeconds, minEntities) as Array<{
+    window_idx: number;
+    cnt: number;
+    entity_ids: string;
+    entity_names: string;
+  }>;
+  return rows.map((row) => ({
+    count: row.cnt,
+    entityIds: row.entity_ids.split(","),
+    entityNames: row.entity_names.split(","),
+    timeStart: row.window_idx * windowSeconds,
+    timeEnd: (row.window_idx + 1) * windowSeconds,
+  }));
+}
+
 // ─── Entity Burst Detection ──────────────────────────────────────
 
 /**
@@ -47,73 +97,35 @@ export function detectEntityBursts(
   windowDays: number,
   generation: number,
 ): TemporalPattern[] {
-  const windowSeconds = windowDays * SECONDS_PER_DAY;
-
-  // Group entities by time window and count per window
-  // CAST to INTEGER ensures proper bucketing (SQLite does real division by default)
-  const rows = db
-    .prepare(
-      `SELECT
-        CAST(first_seen / ? AS INTEGER) AS window_idx,
-        COUNT(*) AS cnt,
-        MIN(first_seen) AS window_start,
-        MAX(first_seen) AS window_end,
-        GROUP_CONCAT(id) AS entity_ids
-      FROM entities
-      WHERE first_seen IS NOT NULL
-      GROUP BY window_idx
-      ORDER BY window_idx`,
-    )
-    .all(windowSeconds) as Array<{
-    window_idx: number;
-    cnt: number;
-    window_start: number;
-    window_end: number;
-    entity_ids: string;
-  }>;
-
-  if (rows.length === 0) return [];
+  const windows = firstSeenWindows(db, windowDays * SECONDS_PER_DAY, 0);
+  if (windows.length === 0) return [];
 
   // Compute average count across all windows
-  const totalEntities = rows.reduce((sum, r) => sum + r.cnt, 0);
-  const avgCount = totalEntities / rows.length;
+  const avgCount = windows.reduce((sum, w) => sum + w.count, 0) / windows.length;
   const burstThreshold = avgCount * 2;
 
   // A burst requires at least 2 windows to make sense (need a baseline)
   // and the threshold must be meaningful (at least 2 entities)
-  if (rows.length < 2 || burstThreshold < 2) return [];
+  if (windows.length < 2 || burstThreshold < 2) return [];
 
-  const patterns: TemporalPattern[] = [];
-
-  for (const row of rows) {
-    if (row.cnt >= burstThreshold) {
-      const entityIds = row.entity_ids.split(",");
-      const timeStart = row.window_idx * windowSeconds;
-      const timeEnd = timeStart + windowSeconds;
-
-      const startDate = formatDate(timeStart);
-      const endDate = formatDate(timeEnd);
-
-      patterns.push({
-        id: crypto.randomUUID(),
-        type: "entity_burst",
-        description: `Burst of ${row.cnt} new entities in ${windowDays}-day window (${startDate} to ${endDate}), ${(row.cnt / avgCount).toFixed(1)}x the average rate of ${avgCount.toFixed(1)}`,
-        entityIds,
-        timeStart,
-        timeEnd,
-        confidence: Math.min(0.9, 0.5 + (row.cnt / burstThreshold - 1) * 0.2),
-        metadata: {
-          count: row.cnt,
-          average: avgCount,
-          ratio: row.cnt / avgCount,
-          windowDays,
-        },
-        generation,
-      });
-    }
-  }
-
-  return patterns;
+  return windows
+    .filter((w) => w.count >= burstThreshold)
+    .map((w) => ({
+      id: crypto.randomUUID(),
+      type: "entity_burst" as const,
+      description: `Burst of ${w.count} new entities in ${windowDays}-day window (${formatDate(w.timeStart)} to ${formatDate(w.timeEnd)}), ${(w.count / avgCount).toFixed(1)}x the average rate of ${avgCount.toFixed(1)}`,
+      entityIds: w.entityIds,
+      timeStart: w.timeStart,
+      timeEnd: w.timeEnd,
+      confidence: Math.min(0.9, 0.5 + (w.count / burstThreshold - 1) * 0.2),
+      metadata: {
+        count: w.count,
+        average: avgCount,
+        ratio: w.count / avgCount,
+        windowDays,
+      },
+      generation,
+    }));
 }
 
 // ─── Topic Emergence Detection ───────────────────────────────────
@@ -129,66 +141,21 @@ export function detectTopicEmergence(
   minEntities: number,
   generation: number,
 ): TemporalPattern[] {
-  const windowSeconds = windowDays * SECONDS_PER_DAY;
-
-  const rows = db
-    .prepare(
-      `SELECT
-        CAST(first_seen / ? AS INTEGER) AS window_idx,
-        COUNT(*) AS cnt,
-        MIN(first_seen) AS window_start,
-        MAX(first_seen) AS window_end,
-        GROUP_CONCAT(id) AS entity_ids,
-        GROUP_CONCAT(name) AS entity_names
-      FROM entities
-      WHERE first_seen IS NOT NULL
-      GROUP BY window_idx
-      HAVING COUNT(*) >= ?
-      ORDER BY window_idx`,
-    )
-    .all(windowSeconds, minEntities) as Array<{
-    window_idx: number;
-    cnt: number;
-    window_start: number;
-    window_end: number;
-    entity_ids: string;
-    entity_names: string;
-  }>;
-
-  const patterns: TemporalPattern[] = [];
-
-  for (const row of rows) {
-    const entityIds = row.entity_ids.split(",");
-    const entityNames = row.entity_names.split(",");
-    const timeStart = row.window_idx * windowSeconds;
-    const timeEnd = timeStart + windowSeconds;
-
-    // Show up to 3 entity names in the description
-    const namePreview =
-      entityNames.length <= 3
-        ? entityNames.join(", ")
-        : `${entityNames.slice(0, 3).join(", ")} and ${entityNames.length - 3} more`;
-
-    const startDate = formatDate(timeStart);
-
-    patterns.push({
-      id: crypto.randomUUID(),
-      type: "topic_emergence",
-      description: `${row.cnt} entities emerged together around ${startDate}: ${namePreview}`,
-      entityIds,
-      timeStart,
-      timeEnd,
-      confidence: Math.min(0.9, 0.4 + row.cnt * 0.05),
-      metadata: {
-        count: row.cnt,
-        entityNames,
-        windowDays,
-      },
-      generation,
-    });
-  }
-
-  return patterns;
+  return firstSeenWindows(db, windowDays * SECONDS_PER_DAY, minEntities).map((w) => ({
+    id: crypto.randomUUID(),
+    type: "topic_emergence" as const,
+    description: `${w.count} entities emerged together around ${formatDate(w.timeStart)}: ${namePreview(w.entityNames)}`,
+    entityIds: w.entityIds,
+    timeStart: w.timeStart,
+    timeEnd: w.timeEnd,
+    confidence: Math.min(0.9, 0.4 + w.count * 0.05),
+    metadata: {
+      count: w.count,
+      entityNames: w.entityNames,
+      windowDays,
+    },
+    generation,
+  }));
 }
 
 // ─── Topic Decay Detection ───────────────────────────────────────
@@ -268,15 +235,10 @@ export function detectTopicDecay(
       (now - (minLastSeen + maxLastSeen) / 2) / SECONDS_PER_DAY,
     );
 
-    const namePreview =
-      entityNames.length <= 3
-        ? entityNames.join(", ")
-        : `${entityNames.slice(0, 3).join(", ")} and ${entityNames.length - 3} more`;
-
     patterns.push({
       id: crypto.randomUUID(),
       type: "topic_decay",
-      description: `${entities.length} previously active entities inactive for ~${avgDaysStale} days: ${namePreview}`,
+      description: `${entities.length} previously active entities inactive for ~${avgDaysStale} days: ${namePreview(entityNames)}`,
       entityIds,
       timeStart: windowIdx * windowSeconds,
       timeEnd: (windowIdx + 1) * windowSeconds,
@@ -494,20 +456,15 @@ export function detectBridgeFormation(
 
   if (newBridges.length === 0) return [];
 
-  const now = nowUnix();
+  const now = Math.floor(Date.now() / 1000);
   const entityIds = newBridges.map((b) => b.entity_id);
   const entityNames = newBridges.map((b) => b.name);
-
-  const namePreview =
-    entityNames.length <= 3
-      ? entityNames.join(", ")
-      : `${entityNames.slice(0, 3).join(", ")} and ${entityNames.length - 3} more`;
 
   return [
     {
       id: crypto.randomUUID(),
       type: "bridge_formation",
-      description: `${newBridges.length} new bridge entities formed in generation ${latestGen}: ${namePreview}`,
+      description: `${newBridges.length} new bridge entities formed in generation ${latestGen}: ${namePreview(entityNames)}`,
       entityIds,
       timeStart: now - SECONDS_PER_DAY,
       timeEnd: now,
@@ -707,17 +664,7 @@ function jaccardSimilarity(a: string[], b: string[]): number {
   return intersection / union;
 }
 
-/**
- * Return current time as unix epoch seconds.
- */
-function nowUnix(): number {
-  return Math.floor(Date.now() / 1000);
-}
-
-/**
- * Format a unix timestamp to a short date string.
- */
+/** Format a unix timestamp as a UTC calendar day. */
 function formatDate(unixSeconds: number): string {
-  const date = new Date(unixSeconds * 1000);
-  return date.toISOString().split("T")[0];
+  return toIsoDay(new Date(unixSeconds * 1000));
 }
