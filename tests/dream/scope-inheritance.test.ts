@@ -13,25 +13,9 @@ vi.mock("../../src/episodic/sync.js", () => ({
   }),
 }));
 
-vi.mock("../../src/_core/embeddings/index.js", () => {
-  const dims = 256;
-  function vec(seed: string): number[] {
-    const v = new Array(dims);
-    let h = 0;
-    for (let i = 0; i < seed.length; i++) h = ((h << 5) - h + seed.charCodeAt(i)) | 0;
-    for (let i = 0; i < dims; i++) {
-      h = ((h << 5) - h + i) | 0;
-      v[i] = (h & 0xffff) / 0xffff - 0.5;
-    }
-    const n = Math.sqrt(v.reduce((s: number, x: number) => s + x * x, 0));
-    return v.map((x: number) => x / n);
-  }
-  return {
-    initEmbeddings: vi.fn().mockResolvedValue(undefined),
-    embedDocument: vi.fn().mockImplementation((text: string) => Promise.resolve(vec(text))),
-    embedQuery: vi.fn().mockImplementation((text: string) => Promise.resolve(vec(text))),
-  };
-});
+vi.mock("../../src/_core/embeddings/index.js", async () =>
+  (await import("../mocks/embeddings.js")).deterministicEmbeddings(),
+);
 
 vi.mock("../../src/semantic/nli.js", () => ({
   classifyNli: vi.fn().mockResolvedValue({ entailment: 0, contradiction: 0, neutral: 1 }),
