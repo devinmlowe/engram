@@ -23,7 +23,7 @@ Vitest test suites organized to mirror the source structure. Run via `npm run te
 - [e2e/](./e2e/) — End-to-end tests (full pipeline, MCP server)
 - [episodic/](./episodic/) — Episodic layer tests (parser, store, search, sync, embeddings)
 - [graph/](./graph/) — Graph layer tests (entities, relationships, reflection, file indexer)
-- [migration/](./migration/) — Data migration tests (migrate, validate)
+- [migration/](./migration/) — Schema-migration and data-backfill tests (scope/forget/event_ts columns, backfill-event-ts)
 - [retrieval/](./retrieval/) — Search retrieval tests (context, reranker)
 - [semantic/](./semantic/) — Semantic layer tests (extractor, consolidator, decay, NLI, batch)
 
