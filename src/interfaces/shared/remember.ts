@@ -8,6 +8,7 @@
  */
 
 import type Database from "better-sqlite3";
+import { l2ToCosine } from "../../_core/search/vector.js";
 import type { MemoryType, MemorySource } from "../../_core/types/index.js";
 import { embedDocument, embedDocumentBatch } from "../../_core/embeddings/index.js";
 import {
@@ -108,8 +109,7 @@ export async function rememberFact(
   const neighbors = findNearestMemories(db, embedding, DEDUP_NEIGHBORS, scope);
 
   for (const neighbor of neighbors) {
-    // Convert L2 distance to cosine similarity for unit vectors
-    const similarity = 1 - (neighbor.distance * neighbor.distance) / 2;
+    const similarity = l2ToCosine(neighbor.distance);
 
     if (similarity >= DEDUP_THRESHOLD) {
       // Near-duplicate found. ADR-010: differing content is MERGED via the
@@ -278,7 +278,7 @@ export async function storeMemoryBatch(
         let isDuplicate = false;
 
         for (const neighbor of neighbors) {
-          const similarity = 1 - (neighbor.distance * neighbor.distance) / 2;
+          const similarity = l2ToCosine(neighbor.distance);
           if (similarity >= DEDUP_THRESHOLD) {
             recordAccess(db, neighbor.id);
             result.deduplicated++;

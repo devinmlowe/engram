@@ -35,6 +35,7 @@ import {
 import { classifyNli } from "./nli.js";
 import { collapseExact, collapseByEmbedding, normalizeContent } from "./collapse.js";
 import { applyTransientPolicy } from "./transient.js";
+import { cosineSimilarity, l2ToCosine } from "../_core/search/vector.js";
 
 // ─── Module State ───────────────────────────────────────────────
 
@@ -96,14 +97,6 @@ const RESOLVE_CONFLICT_SCHEMA: Record<string, unknown> = {
 };
 
 // ─── Core Functions ─────────────────────────────────────────────
-
-/**
- * Convert L2 distance (from sqlite-vec) to cosine similarity.
- * For unit-normalized vectors: cosine_sim = 1 - (distance^2 / 2)
- */
-function distanceToCosineSim(distance: number): number {
-  return 1 - (distance * distance) / 2;
-}
 
 /** Per-conversation consolidation options. */
 export interface ConsolidateOptions {
@@ -237,7 +230,7 @@ async function deduplicateEmbeddedFact(
 
   // 3. Check each neighbor against thresholds
   for (const neighbor of neighbors) {
-    const similarity = distanceToCosineSim(neighbor.distance);
+    const similarity = l2ToCosine(neighbor.distance);
 
     // Tier 1: Auto-merge (near duplicate)
     if (similarity >= AUTO_MERGE_THRESHOLD) {
@@ -512,20 +505,6 @@ function findSupersededAncestorMatching(
     frontier = next;
   }
   return null;
-}
-
-function cosineSimilarity(a: readonly number[], b: readonly number[]): number {
-  let dot = 0;
-  let na = 0;
-  let nb = 0;
-  const n = Math.min(a.length, b.length);
-  for (let i = 0; i < n; i++) {
-    dot += a[i] * b[i];
-    na += a[i] * a[i];
-    nb += b[i] * b[i];
-  }
-  const denom = Math.sqrt(na) * Math.sqrt(nb);
-  return denom === 0 ? 0 : dot / denom;
 }
 
 /**

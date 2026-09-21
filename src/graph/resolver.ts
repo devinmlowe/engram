@@ -9,6 +9,7 @@
  */
 
 import type Database from "better-sqlite3";
+import { l2ToCosine } from "../_core/search/vector.js";
 import { widenScope } from "../_core/db/scope.js";
 import type { ExtractedEntity, EntityResolution } from "./types.js";
 import {
@@ -64,8 +65,7 @@ export async function resolveEntity(
   const neighbors = findNearestEntities(db, embedding, 5);
 
   for (const neighbor of neighbors) {
-    // Convert L2 distance to cosine similarity: sim = 1 - (distance^2) / 2
-    const similarity = 1 - (neighbor.distance * neighbor.distance) / 2;
+    const similarity = l2ToCosine(neighbor.distance);
 
     if (similarity >= 0.95) {
       // High confidence: auto-merge regardless of type
