@@ -1,5 +1,5 @@
 /**
- * Issue #44: `engram update` / `engram migrate` / `engram import-legacy`.
+ * Issue #44: `engram update` / `engram migrate`.
  * Every supervisor and shell call is a fake; the data dir and database are
  * real files in a temp dir so the move/backup/snapshot logic is exercised.
  */
@@ -1039,7 +1039,7 @@ describe("engram update --rollback (#65, decision #66)", () => {
 
 // ─── CLI surface ─────────────────────────────────────────────────────
 
-describe("engram migrate / import-legacy / update CLI", () => {
+describe("engram migrate / update CLI", () => {
   const cli = fileURLToPath(new URL("../../../dist/interfaces/cli/index.js", import.meta.url));
   const built = existsSync(cli);
   function run(args: string[], env: NodeJS.ProcessEnv = {}) {
@@ -1062,13 +1062,14 @@ describe("engram migrate / import-legacy / update CLI", () => {
     expect(existsSync(join(root, "xdg", "engram", "engram.db"))).toBe(false);
   });
 
-  it.skipIf(!built)("migrate --source forwards to the legacy importer with a deprecation notice; import-legacy exists", () => {
+  it.skipIf(!built)("the legacy conversation-index importer is gone: no import-legacy command, no migrate --source (#115)", () => {
     const r = run(["migrate", "--source", join(root, "missing.sqlite"), "--dry-run"]);
-    expect(r.stderr).toContain("engram migrate --source is deprecated");
-    expect(r.stderr).toContain("engram import-legacy --source");
-    const h = run(["import-legacy", "--help"]);
-    expect(h.status).toBe(0);
-    expect(h.stdout).toContain("--source <path>");
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain("unknown option '--source'");
+    const h = run(["import-legacy", "--source", join(root, "missing.sqlite")]);
+    expect(h.status).not.toBe(0);
+    expect(h.stderr).toContain("unknown command 'import-legacy'");
+    expect(run(["--help"]).stdout).not.toContain("import-legacy");
   });
 
   it.skipIf(!built)("update --check and --plan are read-only and exit 0", () => {

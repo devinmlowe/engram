@@ -453,7 +453,7 @@ describe("extractFromConversation (mocked API)", () => {
 
     const mockClient = {
       messages: { create: mockCreate },
-    } as unknown as import("@anthropic-ai/sdk").default;
+    } as unknown as import("../../src/_core/llm/index.js").AnthropicClient;
 
     setClient(mockClient);
 
@@ -522,7 +522,7 @@ describe("extractFromConversation (mocked API)", () => {
 
     const mockClient = {
       messages: { create: mockCreate },
-    } as unknown as import("@anthropic-ai/sdk").default;
+    } as unknown as import("../../src/_core/llm/index.js").AnthropicClient;
 
     setClient(mockClient);
 
@@ -569,7 +569,7 @@ describe("extractFromConversation (mocked API)", () => {
 
     const mockClient = {
       messages: { create: mockCreate },
-    } as unknown as import("@anthropic-ai/sdk").default;
+    } as unknown as import("../../src/_core/llm/index.js").AnthropicClient;
 
     setClient(mockClient);
 
@@ -638,7 +638,7 @@ describe("extraction schema and prompt (W9b/c)", () => {
     const mockCreate = vi.fn().mockResolvedValue({
       content: [{ type: "tool_use", id: "toolu_schema", name: "extract_memories", input: { facts: [] } }],
     });
-    setClient({ messages: { create: mockCreate } } as unknown as import("@anthropic-ai/sdk").default);
+    setClient({ messages: { create: mockCreate } } as unknown as import("../../src/_core/llm/index.js").AnthropicClient);
 
     await extractFromConversation("conv-schema", makeExchanges(1), defaultMetadata);
 

@@ -1,6 +1,6 @@
 # Migration Tests
 
-Tests for data migration from the legacy superpowers conversation-index database.
+Tests for the one-off data backfills in `src/migration/` and for the additive schema migrations in `src/_core/db/schema.ts` (scope, forget, event_ts and graph-scope columns).
 
 ## See Also
 

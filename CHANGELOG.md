@@ -7,6 +7,11 @@ All notable changes to engram are documented here. The format follows
 
 ## [Unreleased]
 
+### Removed
+- Adaptive chunking (#117): `src/semantic/adaptive-chunker.ts`, `ExtractionConfig.chunkingStrategy`, `config.dream.chunkingStrategy` and `ENGRAM_CHUNKING_STRATEGY`. It was unreachable — no caller ever selected it and the env value was never passed to the extractor — so every extraction already used the fixed 25/5 windows and nothing changes. `chunk_metadata.avg_density` stays in the schema and is now always NULL.
+- The legacy superpowers conversation-index importer (#115, ponytail burn-down #114): `engram import-legacy`, the deprecated `engram migrate --source` / `--batch-size` / `--force` forwarding, `src/migration/migrate.ts`, `types.ts`, `backfill-entity-conversations.ts` and `add-informativeness-columns.ts` (the columns it added have been part of the schema since 0.2.0). It was a one-shot personal migration that hardcoded a project exclusion and had already run on the only machine that needed it.
+- `engram validate --source`: the row-count and content comparison against a legacy database went with the importer, and the "search quality" check — which matched eight hardcoded English words and passed when any one returned a row — is gone because it asserted nothing. `engram validate [--fix]` keeps the embedding, FTS5 and memory-index checks; the code moved from `src/migration/validate.ts` to `src/interfaces/cli/validate.ts`. CLI: 26 commands.
+
 ## [0.4.0] - 2026-09-18
 
 First release that ships the Claude Code plugin, the `engram mcp` daemon bridge, `engram mcp install`, `forget`, `engram setup`, `doctor --fix` and `update --rollback` (PRD issues #50 #53 #55 #58 #61 #63 #65) plus the Dependabot majors (#68–#73, #72). The 0.3.0 tarball on npm predates all of it, so the plugin's `npx -y @devinmlowe/engram@<version> mcp` pin only works from this version on. Windows + Node 22 note: see the better-sqlite3 13 entry below (#84).

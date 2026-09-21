@@ -493,65 +493,6 @@ program
     await runInit(loadConfig());
   });
 
-// ─── migrate ────────────────────────────────────────────────────
-
-/** The legacy conversation-index importer (was `engram migrate --source` before 0.4.0). */
-async function runLegacyImport(opts: { source: string; dryRun?: boolean; batchSize?: string; force?: boolean }): Promise<void> {
-  const { runMigration, formatProgress } = await import("../../migration/migrate.js");
-  try {
-    console.log(`Importing legacy conversation index from: ${opts.source}`);
-    const report = await runMigration({
-      sourcePath: opts.source,
-      dryRun: opts.dryRun,
-      batchSize: parseInt(opts.batchSize ?? "32", 10),
-      force: opts.force,
-      onProgress: (p) => {
-        process.stdout.write(`\r${formatProgress(p)}`);
-      },
-    });
-
-    if (!opts.dryRun) {
-      console.log("\n\nImport complete:");
-      console.log(`  Exchanges:     ${report.exchangesMigrated}`);
-      console.log(`  Tool calls:    ${report.toolCallsMigrated}`);
-      console.log(`  Conversations: ${report.conversationsCreated}`);
-      console.log(`  Embeddings:    ${report.embeddingsGenerated}`);
-
-      if (report.errors.length > 0) {
-        console.log(`  Errors:        ${report.errors.length}`);
-        for (const err of report.errors.slice(0, 10)) {
-          console.error(`    ${err}`);
-        }
-        if (report.errors.length > 10) {
-          console.error(`    ... and ${report.errors.length - 10} more`);
-        }
-      }
-
-      const durationSec = report.completedAt
-        ? Math.round((report.completedAt - report.startedAt) / 1000)
-        : 0;
-      console.log(`  Duration:      ${durationSec}s`);
-    }
-  } catch (err) {
-    console.error("Import failed:", err instanceof Error ? err.message : err);
-    process.exit(1);
-  }
-}
-
-program
-  .command("import-legacy")
-  .description("Import a legacy conversation-index SQLite database (was `engram migrate --source` before 0.4.0)")
-  .requiredOption(
-    "-s, --source <path>",
-    "Path to the source conversation-index SQLite database (no default)",
-  )
-  .option("-n, --dry-run", "Show what would be imported without making changes")
-  .option("--batch-size <n>", "Embedding batch size", "32")
-  .option("--force", "Force re-import (ignore checkpoints)")
-  .action(async (opts) => {
-    await runLegacyImport(opts);
-  });
-
 // ─── migrate (install / data migration, #44) ──────────────────────
 
 const MIGRATE_TOPICS = ["all", "data-dir", "model-cache", "schema"] as const;
@@ -560,20 +501,10 @@ program
   .command("migrate")
   .argument("[topic]", `what to migrate: ${MIGRATE_TOPICS.join(" | ")} (default: all)`)
   .description(
-    "Migrate this install: move a pre-0.2.0 data dir into the resolved one, give the embedding model a durable cache, run schema migrations. Idempotent; --dry-run lists every action. (The legacy conversation-index importer is now `engram import-legacy`.)",
+    "Migrate this install: move a pre-0.2.0 data dir into the resolved one, give the embedding model a durable cache, run schema migrations. Idempotent; --dry-run lists every action.",
   )
   .option("-n, --dry-run", "List every action without changing anything")
-  .option("-s, --source <path>", "DEPRECATED: forwards to `engram import-legacy --source`")
-  .option("--batch-size <n>", "DEPRECATED (import-legacy option)")
-  .option("--force", "DEPRECATED (import-legacy option)")
   .action(async (topic: string | undefined, opts) => {
-    if (opts.source) {
-      console.error(
-        "engram migrate --source is deprecated and will be removed in the next release: use `engram import-legacy --source <path>`. Forwarding...",
-      );
-      await runLegacyImport(opts);
-      return;
-    }
     const which = (topic ?? "all") as (typeof MIGRATE_TOPICS)[number];
     if (!MIGRATE_TOPICS.includes(which)) {
       console.error(`Unknown topic "${topic}". Expected one of: ${MIGRATE_TOPICS.join(", ")}`);
@@ -751,22 +682,15 @@ program
 program
   .command("validate")
   .description(
-    "Validate store integrity: embeddings, FTS, search quality, and no vector/FTS rows for forgotten or missing memories (#55). With --source, also compare against a legacy conversation-index database",
-  )
-  .option(
-    "-s, --source <path>",
-    "Path to a legacy conversation-index SQLite database to compare row counts and content against",
+    "Validate store integrity: embeddings, FTS, and no vector/FTS rows for forgotten or missing memories (#55)",
   )
   .option("--fix", "Repair orphaned memory vector/FTS rows before reporting")
   .action(async (opts) => {
-    const { runValidation } = await import("../../migration/validate.js");
+    const { runValidation } = await import("./validate.js");
 
     try {
       console.log("Running validation checks...\n");
-      const results = await runValidation({
-        sourcePath: opts.source,
-        fix: Boolean(opts.fix),
-      });
+      const results = await runValidation({ fix: Boolean(opts.fix) });
 
       let passed = 0;
       let failed = 0;

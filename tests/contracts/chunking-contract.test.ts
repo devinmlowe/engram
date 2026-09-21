@@ -1,8 +1,8 @@
 /**
  * Contract: Chunking Backward Compatibility
  *
- * Ensures chunkConversation() maintains its existing behavior after
- * the adaptive chunker is added alongside it.
+ * Ensures chunkConversation() keeps its fixed-window behavior (the only
+ * chunking strategy; adaptive chunking was removed in #117).
  */
 
 import { describe, it, expect } from "vitest";

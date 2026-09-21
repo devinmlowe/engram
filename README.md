@@ -447,7 +447,7 @@ All processing runs locally. No cloud dependencies except optional API calls for
 Four domains with shared core infrastructure:
 
 - `episodic/` — Conversation archive ingestion, indexing, and episodic search
-- `semantic/` — Knowledge extraction, consolidation, adaptive chunking, and semantic search
+- `semantic/` — Knowledge extraction, consolidation, and semantic search
 - `graph/` — Entity/relationship graph, topic clusters, file structure indexing, and graph traversal
 - `dream/` — Autonomous consolidation pipeline (ingest → extract → consolidate → reflect → prune)
 - `interfaces/` — CLI, MCP server, and web visualization
@@ -468,7 +468,7 @@ Four domains with shared core infrastructure:
 | `recall_session` | Stateful iterative search with session tracking and budget |
 | `recall_drill` | Deep drill into a specific search result with budget deduction |
 | `explore_selective` | Model-directed selective graph traversal with relevance filtering; honours `read_scopes` |
-| `remember_batch` | Batch memory ingest with entity linking and adaptive chunking |
+| `remember_batch` | Batch memory ingest with entity linking and dedup |
 | `fetch_snippets` | Multi-range file snippet fetching (up to 20 ranges) |
 | `index_file_structure` | Parse file structure into graph entities (multi-language) |
 | `scan_file` | Regex-based file scanning with function context detection |
@@ -669,10 +669,7 @@ still asks, and still reuses a fresh cache entry).
 
 `engram migrate [data-dir|model-cache|schema] [--dry-run]` runs step 4 and 6
 on their own, idempotently, for installs you update by hand (`model-cache` is a
-no-op once the default applies and nothing legacy is left to move). (The legacy
-conversation-index importer that used to be `engram migrate --source` is now
-`engram import-legacy --source <path>`; the old spelling still forwards with a
-deprecation notice for one release.)
+no-op once the default applies and nothing legacy is left to move).
 
 Read [CHANGELOG.md](./CHANGELOG.md) for the release's notes — 0.2.0, for
 example, re-extracts every conversation once on the first dream run (bound it
@@ -809,9 +806,8 @@ engram doctor          # Runtime diagnostics: node, platform/arch, better-sqlite
 engram setup           # First run in one command: doctor → init → sync → mcp install → all three services → doctor --fix → extraction smoke → summary (--yes, --no-sync/--sync, --no-daemons/--daemons=<ids>, --host <id...>, --no-smoke, --json)
 engram update          # Controlled self-update: backup, stop services, pull/npm install, migrate, restart, verify (--check, --plan, --yes, --no-backup, --rollback [stamp], --restore-data, --list-rollbacks)
 engram migrate [topic] # Install/data migration: data-dir | model-cache | schema | all; idempotent, --dry-run lists every action
-engram import-legacy --source <db>   # Import a legacy conversation-index SQLite DB (was `engram migrate --source`; the old spelling still forwards)
 engram memories list|show|edit|delete|restore|purge|log  # Inspect and curate memories: provenance, edit, forget (soft delete + retention), restore, purge a conversation, change log
-engram validate [--source <db>] [--fix]  # Store integrity (embeddings, FTS, no vector/FTS rows for forgotten memories; --fix repairs); --source also compares against a legacy import DB
+engram validate [--fix]  # Store integrity (embeddings, FTS, no vector/FTS rows for forgotten memories; --fix repairs)
 engram backfill-event-ts  # Backfill event-time timestamps (temporal recall)
 engram commitments [status]        # List tracked commitments (same XML as the MCP tool)
 engram commitment-done <id>        # Mark a commitment done (--status dropped|superseded)
@@ -995,7 +991,6 @@ The one exception is the launchd dream daemon, whose launcher (`scripts/run-drea
 | `ENGRAM_MODEL_CACHE_DIR` | `$ENGRAM_DATA_DIR/models` (`$HF_HOME/hub` when `HF_HOME` is set) | Where model weights are downloaded/cached; never inside `node_modules` (see [Model cache](#model-cache)) |
 | `ENGRAM_SKIP_PREFLIGHT` | — | Set to `1` to silence the `npm install` platform preflight |
 | `ENGRAM_NO_UPDATE_CHECK` | — | Set to `1` to disable the automatic daily version lookup and the "newer version available" notice; `engram update --check` still asks (see [Daily version notice](#daily-version-notice)) |
-| `ENGRAM_CHUNKING_STRATEGY` | `fixed` | `fixed` or `adaptive` (content-aware boundaries) |
 | `ENGRAM_FORGET_RETENTION_DAYS` | `30` | Days a forgotten memory is kept (out of recall, restorable) before the dream prune phase hard-deletes it; `0` purges on the next run. `forget hard: true` / `engram memories delete --hard` / `purge --hard` bypass it |
 | `ENGRAM_BIND` | `127.0.0.1` | Web visualizer bind address (`0.0.0.0` to expose on the network; requires `ENGRAM_WEB_TOKEN`) |
 | `ENGRAM_WEB_TOKEN` | `ENGRAM_MCP_TOKEN` | Bearer token / `?token=` required by the visualizer (all routes but `/api/health`) |

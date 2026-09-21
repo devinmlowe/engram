@@ -129,7 +129,6 @@ export interface EngramConfig {
     apiFallbackModel: string; // claude sonnet
     concurrency: number; // parallel work items
     scheduleHour: number; // 2 (2 AM)
-    chunkingStrategy: "fixed" | "adaptive"; // default: 'fixed'
   };
 
   decay: {

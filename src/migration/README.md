@@ -1,26 +1,21 @@
 # Migration
 
-Data migration utilities for importing conversation history from the legacy superpowers conversation-index database into engram's schema.
+One-off data backfills that rewrite existing rows once. Schema changes live in `_core/db/schema.ts`; install/data-dir migration is `engram migrate` in `interfaces/cli/data-migration.ts`; store integrity checks are `engram validate` in `interfaces/cli/validate.ts`.
 
 ## In Scope
 
-- Schema mapping from superpowers DB to engram tables
-- Data import with re-embedding (nomic-embed-text replaces all-MiniLM-L6-v2)
-- Migration validation and integrity checks
+- Backfills over already-stored rows that need data from outside the database
 
 ## Out of Scope
 
-- Ongoing conversation sync (see [episodic/sync](../episodic/))
-- Schema definition and management (see [_core/db/](../_core/db/))
+- Schema definition and `schema_migrations` checkpoints (see [_core/db/](../_core/db/))
+- Ongoing conversation sync (see [episodic/](../episodic/))
+- Install/data-dir migration and store validation (see [interfaces/cli/](../interfaces/cli/))
 
 ## Contains
 
-- `migrate.ts` — Import exchanges, tool calls, and conversations from superpowers DB
-- `validate.ts` — Post-migration integrity validation
-- `types.ts` — Migration-specific type definitions
+- `backfill-event-ts.ts` — Recover `memories.event_ts` from the dream pipeline's pending-facts files (`engram backfill-event-ts`)
 
 ## See Also
 
-- [docs/research/data-migration-strategy.md](../../docs/research/data-migration-strategy.md) — Migration analysis and design
-- [SPEC-legacy.md](../../docs/history/SPEC-legacy.md) — Phase 2 migration specification (archived)
-- [tests/migration/](../../tests/migration/) — Migration test suite
+- [tests/migration/](../../tests/migration/) — Backfill and schema-column tests

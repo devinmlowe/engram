@@ -7,7 +7,6 @@ Extracts, consolidates, and retrieves structured knowledge from conversations �
 - LLM-powered fact extraction with prompt templates
 - Memory deduplication and conflict detection (NLI-based)
 - Confidence scoring and FSRS-inspired decay
-- Adaptive chunking for content-aware boundaries
 - Hybrid semantic search over memories
 - Batch memory ingestion with entity linking
 - Memory lifecycle: forget (soft delete + retention purge), edit, restore, purge-by-conversation, change log, extraction suppression, index integrity (#55)
@@ -32,7 +31,6 @@ Extracts, consolidates, and retrieves structured knowledge from conversations �
 - `search` — Hybrid vector + FTS5 search with RRF fusion; honors after/before on both candidate paths under a `filed` (created_at) or `event` (event_ts → earliest source exchange) basis
 - `nli` — NLI contradiction detection via DeBERTa
 - `decay` — FSRS-inspired retrievability decay and pruning
-- `adaptive-chunker` — Content-aware chunk sizing (Phase 6A)
 - `types` — Semantic-specific type definitions
 
 ## Key Interfaces
