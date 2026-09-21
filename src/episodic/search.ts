@@ -11,7 +11,6 @@ import {
   normalizeMinMaxFloored,
   type RankedItem,
 } from "../_core/search/rrf.js";
-import { budgetResults } from "../_core/search/orchestrator.js";
 import { allocateBudget } from "../_core/search/budget.js";
 import { buildFtsMatchQuery } from "../_core/search/fts-query.js";
 import { buildIsoDateFilter, hasDateFilter, type DateFilterInput } from "../_core/search/dates.js";
@@ -232,7 +231,7 @@ export async function searchEpisodic(
   const totalResults = results.length;
 
   // 5. Apply token budget
-  const budgeted = budgetResults(results, budget);
+  const budgeted = allocateBudget(results, budget);
   const tokensUsed = budgeted.reduce((sum, r) => sum + r.tokenEstimate, 0);
 
   return {

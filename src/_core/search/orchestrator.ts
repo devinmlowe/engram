@@ -30,19 +30,6 @@ import { searchGraph } from "../../graph/search.js";
 /** Semantic boost factor — semantic results have higher signal density */
 const SEMANTIC_BOOST = 1.2;
 
-// ─── Token Budgeting (deprecated wrapper) ────────────────────────
-
-/**
- * Greedily fill results within a token budget.
- * @deprecated Use allocateBudget() from _core/search/budget.ts for priority-aware budgeting.
- */
-export function budgetResults(
-  results: SearchResult[],
-  budget: number,
-): SearchResult[] {
-  return allocateBudget(results, budget);
-}
-
 // ─── Multi-Source Search ─────────────────────────────────────────
 
 /**
@@ -95,7 +82,7 @@ export async function searchMultiSource(
     if (includeEpisodic) return episodicResponse;
 
     const singleResults = includeSemantic ? semanticResults : graphResults;
-    const budgeted = budgetResults(singleResults, budget);
+    const budgeted = allocateBudget(singleResults, budget);
     const tokensUsed = budgeted.reduce((sum, r) => sum + r.tokenEstimate, 0);
     return {
       results: budgeted,
@@ -173,7 +160,7 @@ export async function searchMultiSource(
       if (reranked.length > 0 && isRerankerAvailable()) {
         const rerankedIds = new Set(reranked.map((r) => r.id));
         const remaining = allResults.slice(20).filter((r) => !rerankedIds.has(r.id));
-        const budgeted = budgetResults([...reranked, ...remaining], budget);
+        const budgeted = allocateBudget([...reranked, ...remaining], budget);
         const tokensUsed = budgeted.reduce((sum, r) => sum + r.tokenEstimate, 0);
         return {
           results: budgeted,

@@ -50,18 +50,9 @@ const MONTHS: Record<string, number> = {
   dec: 12, december: 12,
 };
 
-const WORDS: Record<string, number> = {
-  a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6,
-  seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12,
-};
-
-function pad(n: number): string {
-  return n < 10 ? `0${n}` : String(n);
-}
-
 /** Format a UTC Date as YYYY-MM-DD. */
 export function toIsoDay(d: Date): string {
-  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
+  return d.toISOString().slice(0, 10);
 }
 
 /** Start of the UTC day containing `d`. */
@@ -130,11 +121,6 @@ function isValidDay(year: number, month1: number, day: number): boolean {
   return month1 >= 1 && month1 <= 12 && day >= 1 && day <= daysInMonth(year, month1);
 }
 
-function parseCount(word: string): number | undefined {
-  if (/^\d+$/.test(word)) return Number(word);
-  return WORDS[word];
-}
-
 // ─── Hint parser ─────────────────────────────────────────────────
 
 /**
@@ -161,47 +147,28 @@ export function parseDateHint(hint: string, now: Date): ParsedDateHint {
 }
 
 function parseCore(text: string, now: Date): ParsedDateHint | undefined {
-  // ── Open-ended modifiers: since / before / after / until ──
-  let m = text.match(/^(since|from|after|before|until|till|up to|prior to) (.+)$/);
+  // ── Open-ended modifiers: since <phrase> / before <phrase> ──
+  let m = text.match(/^(since|before) (.+)$/);
   if (m) {
     const inner = parseCore(m[2], now);
     if (!inner || inner.anniversary) return undefined;
-    const kind = m[1];
-    if (kind === "since" || kind === "from") return { after: inner.after };
-    if (kind === "after") return { after: inner.before ?? inner.after };
-    // before / until / till / up to / prior to
-    return { before: inner.after ?? inner.before };
+    return m[1] === "since" ? { after: inner.after } : { before: inner.after };
   }
 
-  // ── Anniversaries ──
-  if (
-    /^(on this day|this day in history|today in history|on this date|this date in history)( in (history|past years|previous years|prior years))?$/.test(text) ||
-    /^(every|any) year on this (day|date)$/.test(text)
-  ) {
+  // ── Anniversary: same month/day across all years ──
+  if (text === "on this day") {
     return { anniversary: { month: now.getUTCMonth() + 1, day: now.getUTCDate() } };
   }
 
   // ── Single days ──
   if (text === "today") return dayWindow(now);
   if (text === "yesterday") return dayWindow(addDays(dayStart(now), -1));
-  if (text === "day before yesterday" || text === "the day before yesterday") {
-    return dayWindow(addDays(dayStart(now), -2));
-  }
-  if (/^(this day|today|this date) (last|a|one|1) year( ago)?$/.test(text) ||
-      text === "a year ago today" || text === "one year ago today" ||
-      text === "same day last year") {
-    return dayWindow(addYearsClamped(dayStart(now), -1));
-  }
-  m = text.match(/^(?:this day|today|this date) (\d+|two|three|four|five|six|seven|eight|nine|ten) years ago$/);
-  if (m) {
-    const n = parseCount(m[1])!;
-    return dayWindow(addYearsClamped(dayStart(now), -n));
-  }
+  if (text === "this day last year") return dayWindow(addYearsClamped(dayStart(now), -1));
 
   // ── this / last <unit> ──
-  m = text.match(/^(this|last|past|previous|current) (week|month|year)$/);
+  m = text.match(/^(this|last) (week|month|year)$/);
   if (m) {
-    const back = m[1] === "this" || m[1] === "current" ? 0 : 1;
+    const back = m[1] === "this" ? 0 : 1;
     const unit = m[2];
     if (unit === "week") return weekWindow(addDays(now, -7 * back));
     if (unit === "month") return monthWindow(addMonthsClamped(monthStart(now), -back));
@@ -209,55 +176,31 @@ function parseCore(text: string, now: Date): ParsedDateHint | undefined {
   }
 
   // ── N <unit>s ago → the calendar unit containing that point ──
-  m = text.match(/^(a|an|one|\d+|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve) (day|week|month|year)s? ago$/);
+  m = text.match(/^(\d+) (day|week|month)s? ago$/);
   if (m) {
-    const n = parseCount(m[1]);
-    if (n === undefined || n < 0) return undefined;
+    const n = Number(m[1]);
     const unit = m[2];
     if (unit === "day") return dayWindow(addDays(dayStart(now), -n));
     if (unit === "week") return weekWindow(addDays(dayStart(now), -7 * n));
-    if (unit === "month") return monthWindow(addMonthsClamped(monthStart(now), -n));
-    return yearWindow(addYearsClamped(yearStart(now), -n));
+    return monthWindow(addMonthsClamped(monthStart(now), -n));
   }
 
-  // ── last/past N <unit>s → rolling window ending today (inclusive) ──
-  m = text.match(/^(?:last|past|previous|the last|the past) (\d+|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve) (day|week|month|year)s?$/);
+  // ── ISO passthrough: YYYY-MM-DD, YYYY-MM ──
+  m = text.match(/^(\d{4})-(\d{2})(?:-(\d{2}))?$/);
   if (m) {
-    const n = parseCount(m[1]);
-    if (n === undefined || n <= 0) return undefined;
-    const unit = m[2];
-    const end = addDays(dayStart(now), 1);
-    let start: Date;
-    if (unit === "day") start = addDays(dayStart(now), -(n - 1));
-    else if (unit === "week") start = addDays(dayStart(now), -(7 * n - 1));
-    else if (unit === "month") start = addDays(addMonthsClamped(dayStart(now), -n), 1);
-    else start = addDays(addYearsClamped(dayStart(now), -n), 1);
-    return { after: toIsoDay(start), before: toIsoDay(end) };
-  }
-
-  // ── ISO passthrough: YYYY-MM-DD, YYYY-MM, YYYY ──
-  m = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (m) {
-    const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+    const [y, mo] = [Number(m[1]), Number(m[2])];
+    if (m[3] === undefined) {
+      if (mo < 1 || mo > 12) return undefined;
+      return monthWindow(new Date(Date.UTC(y, mo - 1, 1)));
+    }
+    const d = Number(m[3]);
     if (!isValidDay(y, mo, d)) return undefined;
     return dayWindow(new Date(Date.UTC(y, mo - 1, d)));
   }
-  m = text.match(/^(\d{4})-(\d{2})$/);
-  if (m) {
-    const [y, mo] = [Number(m[1]), Number(m[2])];
-    if (mo < 1 || mo > 12) return undefined;
-    return monthWindow(new Date(Date.UTC(y, mo - 1, 1)));
-  }
-  m = text.match(/^(?:in |year )?(\d{4})$/);
-  if (m) {
-    const y = Number(m[1]);
-    if (y < 1970 || y > 2999) return undefined;
-    return yearWindow(new Date(Date.UTC(y, 0, 1)));
-  }
 
-  // ── Month names: "in march", "march", "march 2026", "in march 2026",
-  //    "march 10", "march 10 2026", "10 march 2026" ──
-  m = text.match(/^(?:in |during )?([a-z]+)(?: (\d{1,2})(?:st|nd|rd|th)?)?(?: (\d{4}))?$/);
+  // ── Month names: "in march", "march", "march 2026", "march 10", "march 10 2026" ──
+  // (the day form is what the commitments due-date fallback relies on)
+  m = text.match(/^(?:in )?([a-z]+)(?: (\d{1,2})(?:st|nd|rd|th)?)?(?: (\d{4}))?$/);
   if (m && MONTHS[m[1]] !== undefined) {
     const month1 = MONTHS[m[1]];
     const day = m[2] !== undefined ? Number(m[2]) : undefined;
@@ -269,14 +212,6 @@ function parseCore(text: string, now: Date): ParsedDateHint | undefined {
       return dayWindow(new Date(Date.UTC(year, month1 - 1, day)));
     }
     return monthWindow(new Date(Date.UTC(year, month1 - 1, 1)));
-  }
-  m = text.match(/^(?:on |in )?(\d{1,2})(?:st|nd|rd|th)? ([a-z]+)(?: (\d{4}))?$/);
-  if (m && MONTHS[m[2]] !== undefined) {
-    const month1 = MONTHS[m[2]];
-    const day = Number(m[1]);
-    const year = m[3] !== undefined ? Number(m[3]) : mostRecentYearFor(month1, day, now);
-    if (!isValidDay(year, month1, day)) return undefined;
-    return dayWindow(new Date(Date.UTC(year, month1 - 1, day)));
   }
 
   return undefined;
@@ -394,7 +329,7 @@ export function buildIsoDateFilter(
   }
   if (filter.anniversary) {
     conditions.push(`strftime('%m-%d', ${column}) = ?`);
-    params.push(`${pad(filter.anniversary.month)}-${pad(filter.anniversary.day)}`);
+    params.push(`${String(filter.anniversary.month).padStart(2, "0")}-${String(filter.anniversary.day).padStart(2, "0")}`);
   }
 
   return {
@@ -431,7 +366,7 @@ export function buildEpochDateFilter(
   }
   if (filter.anniversary) {
     conditions.push(`strftime('%m-%d', ${expr}, 'unixepoch') = ?`);
-    params.push(`${pad(filter.anniversary.month)}-${pad(filter.anniversary.day)}`);
+    params.push(`${String(filter.anniversary.month).padStart(2, "0")}-${String(filter.anniversary.day).padStart(2, "0")}`);
   }
 
   return {

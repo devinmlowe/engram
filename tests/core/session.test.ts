@@ -125,51 +125,39 @@ describe("SessionStore", () => {
     expect(store.getRemainingBudget(session.id)).toBe(0);
   });
 
-  it("evicts oldest session when at capacity (10)", () => {
-    // Create 10 sessions, setting distinct timestamps to control LRU order
+  it("evicts the least recently used session when at capacity (10)", () => {
     const sessionIds: string[] = [];
     for (let i = 0; i < 10; i++) {
-      const s = store.create(`query ${i}`);
-      // Set lastAccessedAt to increasingly newer times
-      s.lastAccessedAt = new Date(Date.now() - (10 - i) * 1000);
-      sessionIds.push(s.id);
+      sessionIds.push(store.create(`query ${i}`).id);
     }
     expect(store.size).toBe(10);
 
-    // Session 0 has the oldest lastAccessedAt
-    // Create an 11th — should evict sessionIds[0] (the oldest)
+    // Touch session 0 so session 1 becomes the least recently used
+    store.get(sessionIds[0]);
+
+    // Create an 11th — should evict sessionIds[1]
     store.create("query 10");
     expect(store.size).toBe(10);
-
-    // Session 0 should have been evicted (oldest)
-    expect(store.get(sessionIds[0])).toBeNull();
-
-    // Session 1 should still exist
-    expect(store.get(sessionIds[1])).not.toBeNull();
+    expect(store.get(sessionIds[1])).toBeNull();
+    expect(store.get(sessionIds[0])).not.toBeNull();
   });
 
-  it("expires sessions after TTL (30 min)", () => {
-    const session = store.create("query");
+  it("expires sessions 30 minutes after their last access", () => {
+    vi.useFakeTimers();
+    try {
+      const session = store.create("query");
 
-    // Manipulate lastAccessedAt to be 31 minutes ago
-    session.lastAccessedAt = new Date(Date.now() - 31 * 60 * 1000);
+      vi.advanceTimersByTime(20 * 60 * 1000);
+      expect(store.get(session.id)).not.toBeNull(); // access restarts the clock
 
-    // Next get should trigger eviction
-    const retrieved = store.get(session.id);
-    expect(retrieved).toBeNull();
-  });
+      vi.advanceTimersByTime(20 * 60 * 1000);
+      expect(store.get(session.id)).not.toBeNull(); // 40 min since create, 20 since last access
 
-  it("updates lastAccessedAt on access", () => {
-    const session = store.create("query");
-    const createdAt = session.lastAccessedAt.getTime();
-
-    // Small delay to ensure time difference
-    const before = Date.now();
-    const retrieved = store.get(session.id);
-    const after = Date.now();
-
-    expect(retrieved!.lastAccessedAt.getTime()).toBeGreaterThanOrEqual(before);
-    expect(retrieved!.lastAccessedAt.getTime()).toBeLessThanOrEqual(after);
+      vi.advanceTimersByTime(31 * 60 * 1000);
+      expect(store.get(session.id)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("close removes session", () => {

@@ -481,26 +481,12 @@ export function pruneZeroEntityVectors(db: Database.Database): number {
  * tables if the new types aren't already supported.
  */
 function migrateExpandedTypes(db: Database.Database): void {
-  // Fast path: the CHECK constraint text is in sqlite_master, so migrated
-  // databases are recognized without a probe write on every startup
+  // The CHECK constraint text is in sqlite_master, so a migrated database is
+  // recognized without a write on every startup
   const ddl = db
     .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'entities'")
     .get() as { sql: string } | undefined;
   if (ddl?.sql.includes("'function'")) return;
-
-  // Test if new types are already supported
-  const testId = '__type_migration_test__';
-  try {
-    db.exec('SAVEPOINT type_test');
-    db.prepare("INSERT INTO entities (id, name, type) VALUES (?, ?, ?)").run(testId, '__test__', 'function');
-    // Worked — new types already supported, clean up
-    db.prepare("DELETE FROM entities WHERE id = ?").run(testId);
-    db.exec('RELEASE type_test');
-    return;
-  } catch {
-    db.exec('ROLLBACK TO type_test');
-    db.exec('RELEASE type_test');
-  }
 
   // Need to recreate tables with expanded CHECK constraints
   // Entities table
@@ -595,6 +581,16 @@ function idempotentAlter(
   return false;
 }
 
+/** The checkpoint table every checkpointed migration records itself in. */
+function ensureMigrationsTable(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      name TEXT PRIMARY KEY,
+      applied_at INTEGER DEFAULT (unixepoch())
+    )
+  `);
+}
+
 /** Checkpoint name recorded in schema_migrations when the commitments table is created. */
 export const COMMITMENTS_MIGRATION = "commitments_v1";
 
@@ -610,12 +606,7 @@ export const CONVERSATIONS_SCOPE_MIGRATION = "conversations_scope_v1";
  * that introduced the column.
  */
 export function migrateConversationScope(db: Database.Database): boolean {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS schema_migrations (
-      name TEXT PRIMARY KEY,
-      applied_at INTEGER DEFAULT (unixepoch())
-    )
-  `);
+  ensureMigrationsTable(db);
   const added = idempotentAlter(
     db, "conversations", "scope", "ALTER TABLE conversations ADD COLUMN scope TEXT DEFAULT 'global'",
   );
@@ -640,12 +631,7 @@ export const SCOPED_TABLES = ["exchanges", "entities", "relationships", "commitm
  * open that added at least one column.
  */
 export function migrateGraphScope(db: Database.Database): boolean {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS schema_migrations (
-      name TEXT PRIMARY KEY,
-      applied_at INTEGER DEFAULT (unixepoch())
-    )
-  `);
+  ensureMigrationsTable(db);
   let added = false;
   for (const table of SCOPED_TABLES) {
     const exists = db
@@ -668,12 +654,7 @@ export const EXCHANGES_AUTHOR_MIGRATION = "exchanges_author_v1";
  * `true` only on the open that introduced the column.
  */
 export function migrateExchangeAuthor(db: Database.Database): boolean {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS schema_migrations (
-      name TEXT PRIMARY KEY,
-      applied_at INTEGER DEFAULT (unixepoch())
-    )
-  `);
+  ensureMigrationsTable(db);
   const added = idempotentAlter(db, "exchanges", "author_json", "ALTER TABLE exchanges ADD COLUMN author_json TEXT");
   db.prepare("INSERT OR IGNORE INTO schema_migrations (name) VALUES (?)").run(EXCHANGES_AUTHOR_MIGRATION);
   return added;
@@ -686,12 +667,7 @@ export function migrateExchangeAuthor(db: Database.Database): boolean {
  * Returns `true` only on the open that introduced the table.
  */
 export function migrateCommitments(db: Database.Database): boolean {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS schema_migrations (
-      name TEXT PRIMARY KEY,
-      applied_at INTEGER DEFAULT (unixepoch())
-    )
-  `);
+  ensureMigrationsTable(db);
   const checkpointed = db
     .prepare("SELECT 1 FROM schema_migrations WHERE name = ?")
     .get(COMMITMENTS_MIGRATION);
@@ -749,12 +725,7 @@ export const MEMORY_CHANGE_OPS = ["forget", "edit", "purge", "restore"] as const
  * the open that added something.
  */
 export function migrateForget(db: Database.Database): boolean {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS schema_migrations (
-      name TEXT PRIMARY KEY,
-      applied_at INTEGER DEFAULT (unixepoch())
-    )
-  `);
+  ensureMigrationsTable(db);
   let added = false;
   if (idempotentAlter(db, "memories", "deleted_at", "ALTER TABLE memories ADD COLUMN deleted_at TEXT")) added = true;
   if (idempotentAlter(db, "memories", "deleted_by", "ALTER TABLE memories ADD COLUMN deleted_by TEXT")) added = true;

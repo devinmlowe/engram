@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach, beforeAll } from "vitest";
 import { rrfFuse, normalizeMinMaxFloored } from "../../src/_core/search/rrf.js";
-import { budgetResults, searchMultiSource } from "../../src/_core/search/orchestrator.js";
+import { searchMultiSource } from "../../src/_core/search/orchestrator.js";
+import { allocateBudget } from "../../src/_core/search/budget.js";
 import { formatRecallXml } from "../../src/_core/search/format.js";
 import { searchEpisodic } from "../../src/episodic/search.js";
 import { insertExchange } from "../../src/episodic/store.js";
@@ -127,7 +128,7 @@ describe("normalizeMinMaxFloored", () => {
   });
 });
 
-describe("budgetResults", () => {
+describe("allocateBudget (episodic budget)", () => {
   const makeResult = (id: string, tokens: number): SearchResult => ({
     id,
     source: "episodic",
@@ -145,7 +146,7 @@ describe("budgetResults", () => {
       makeResult("d", 500),
     ];
 
-    const budgeted = budgetResults(results, 400);
+    const budgeted = allocateBudget(results, 400);
     expect(budgeted.map((r) => r.id)).toEqual(["a", "b"]);
   });
 
@@ -156,18 +157,18 @@ describe("budgetResults", () => {
       makeResult("c", 200),
     ];
 
-    const budgeted = budgetResults(results, 350);
+    const budgeted = allocateBudget(results, 350);
     expect(budgeted.map((r) => r.id)).toEqual(["a", "c"]);
   });
 
   it("returns empty for zero budget", () => {
     const results = [makeResult("a", 100)];
-    expect(budgetResults(results, 0)).toEqual([]);
+    expect(allocateBudget(results, 0)).toEqual([]);
   });
 
   it("returns all if budget is generous", () => {
     const results = [makeResult("a", 100), makeResult("b", 100)];
-    const budgeted = budgetResults(results, 10000);
+    const budgeted = allocateBudget(results, 10000);
     expect(budgeted).toHaveLength(2);
   });
 });

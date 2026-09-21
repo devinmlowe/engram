@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { describeModelCacheDir, loadConfig, resolveDefaultDataDir, resolveModelCacheLocation } from "../../src/_core/config/index.js";
+import { loadConfig, resolveDefaultDataDir, resolveModelCacheLocation } from "../../src/_core/config/index.js";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -260,13 +260,13 @@ describe("Config Defaults Contract", () => {
     expect(resolveModelCacheLocation(data, { ENGRAM_MODEL_CACHE_DIR: " " }, "  ")).toEqual({ dir: join(data, "models"), source: "default" });
   });
 
-  it("describeModelCacheDir recovers the tier from a loaded config", () => {
-    expect(describeModelCacheDir(loadConfig(), {}).source).toBe("default");
+  it("loadConfig keeps the winning tier as modelCacheSource", () => {
+    expect(loadConfig().modelCacheSource).toBe("default");
     process.env.HF_HOME = "/hf";
-    expect(describeModelCacheDir(loadConfig(), process.env)).toEqual({ dir: join("/hf", "hub"), source: "HF_HOME" });
-    expect(describeModelCacheDir(loadConfig({ modelCacheDir: "/ovr" }), process.env).source).toBe("override");
+    expect(loadConfig()).toMatchObject({ modelCacheDir: join("/hf", "hub"), modelCacheSource: "HF_HOME" });
+    expect(loadConfig({ modelCacheDir: "/ovr" }).modelCacheSource).toBe("override");
     process.env.ENGRAM_MODEL_CACHE_DIR = "/explicit";
-    expect(describeModelCacheDir(loadConfig(), process.env)).toEqual({ dir: "/explicit", source: "ENGRAM_MODEL_CACHE_DIR" });
+    expect(loadConfig()).toMatchObject({ modelCacheDir: "/explicit", modelCacheSource: "ENGRAM_MODEL_CACHE_DIR" });
   });
 
   it("ENGRAM_EMBEDDING_DIMS overrides dimensions", () => {
