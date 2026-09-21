@@ -19,7 +19,7 @@ import {
   collapseAcrossBatches,
 } from "../../src/semantic/collapse.js";
 import type { ExtractedFact } from "../../src/semantic/types.js";
-import { cosineSimilarity } from "../helpers.js";
+import { cosineSimilarity } from "../../src/_core/search/vector.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 

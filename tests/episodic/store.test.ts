@@ -9,7 +9,6 @@ import {
 import {
   createTestDb,
   createSyntheticExchange,
-  createSyntheticToolCall,
 } from "../helpers.js";
 import type { TestDb } from "../helpers.js";
 
@@ -83,17 +82,8 @@ describe("Store", () => {
 
     it("stores tool calls correctly", () => {
       const exchange = createSyntheticExchange({ id: "tc-test" });
-      const tc1 = createSyntheticToolCall({
-        id: "tc-1",
-        exchangeId: "tc-test",
-        toolName: "Read",
-      });
-      const tc2 = createSyntheticToolCall({
-        id: "tc-2",
-        exchangeId: "tc-test",
-        toolName: "Write",
-        isError: true,
-      });
+      const tc1 = { id: "tc-1", exchangeId: "tc-test", toolName: "Read", isError: false };
+      const tc2 = { id: "tc-2", exchangeId: "tc-test", toolName: "Write", isError: true };
 
       insertExchange(t.db, exchange, randomEmbedding(), [tc1, tc2]);
 

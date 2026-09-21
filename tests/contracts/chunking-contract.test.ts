@@ -8,16 +8,9 @@
 import { describe, it, expect } from "vitest";
 import { chunkConversation } from "../../src/_core/search/text.js";
 import type { ConversationExchange } from "../../src/semantic/extractor.js";
+import { makeExchanges } from "../helpers.js";
 
 // ─── Helpers ────────────────────────────────────────────────────
-
-function makeExchanges(count: number): ConversationExchange[] {
-  return Array.from({ length: count }, (_, i) => ({
-    index: i,
-    userMessage: `User message ${i}`,
-    assistantMessage: `Assistant response ${i}`,
-  }));
-}
 
 // ─── Contract Tests ─────────────────────────────────────────────
 

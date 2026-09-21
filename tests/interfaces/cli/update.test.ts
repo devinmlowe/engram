@@ -8,7 +8,6 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 import { loadConfig } from "../../../src/_core/config/index.js";
 import { initDatabase } from "../../../src/_core/db/index.js";
@@ -35,6 +34,7 @@ import {
   writeRollbackPlan, ROLLBACK_PLANS_KEPT, type RollbackPlan,
 } from "../../../src/interfaces/cli/rollback.js";
 import { SCHEMA_MIGRATIONS, SCHEMA_VERSION, BREAKING_MIGRATIONS } from "../../../src/_core/db/schema.js";
+import { builtCli as cli, itBuilt } from "../../helpers.js";
 
 const ENV_KEYS = ["ENGRAM_DATA_DIR", "ENGRAM_DB_PATH", "ENGRAM_MODEL_CACHE_DIR", "HF_HOME", "ENGRAM_MCP_PORT", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "LOCALAPPDATA", "ENGRAM_ENV_FILE", "PORT"];
 let root: string;
@@ -1040,8 +1040,6 @@ describe("engram update --rollback (#65, decision #66)", () => {
 // ─── CLI surface ─────────────────────────────────────────────────────
 
 describe("engram migrate / update CLI", () => {
-  const cli = fileURLToPath(new URL("../../../dist/interfaces/cli/index.js", import.meta.url));
-  const built = existsSync(cli);
   function run(args: string[], env: NodeJS.ProcessEnv = {}) {
     return spawnSync(process.execPath, [cli, ...args], {
       encoding: "utf8",
@@ -1049,7 +1047,7 @@ describe("engram migrate / update CLI", () => {
     });
   }
 
-  it.skipIf(!built)("migrate --dry-run lists every action and changes nothing", () => {
+  itBuilt("migrate --dry-run lists every action and changes nothing", () => {
     const home = join(root, "home");
     const legacy = join(home, ".local", "share", "engram");
     seedDb(legacy);
@@ -1062,7 +1060,7 @@ describe("engram migrate / update CLI", () => {
     expect(existsSync(join(root, "xdg", "engram", "engram.db"))).toBe(false);
   });
 
-  it.skipIf(!built)("the legacy conversation-index importer is gone: no import-legacy command, no migrate --source (#115)", () => {
+  itBuilt("the legacy conversation-index importer is gone: no import-legacy command, no migrate --source (#115)", () => {
     const r = run(["migrate", "--source", join(root, "missing.sqlite"), "--dry-run"]);
     expect(r.status).not.toBe(0);
     expect(r.stderr).toContain("unknown option '--source'");
@@ -1072,7 +1070,7 @@ describe("engram migrate / update CLI", () => {
     expect(run(["--help"]).stdout).not.toContain("import-legacy");
   });
 
-  it.skipIf(!built)("update --check and --plan are read-only and exit 0", () => {
+  itBuilt("update --check and --plan are read-only and exit 0", () => {
     const c = run(["update", "--check"]);
     expect(c.status, c.stderr).toBe(0);
     expect(c.stdout).toMatch(/^engram \d+\.\d+\.\d+ \((git checkout|npm install)/);

@@ -10,7 +10,6 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import {
   DOCTOR_CHECK_NAMES,
   MIN_NODE_MAJOR,
@@ -33,6 +32,7 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { loadConfig } from "../../../src/_core/config/index.js";
 import { applyModelCacheDir } from "../../../src/_core/embeddings/model-cache.js";
+import { builtCli as cli, itBuilt } from "../../helpers.js";
 
 // Issue #8: `engram doctor` must report node version, platform/arch,
 // better-sqlite3 and sqlite-vec load status, and the model cache location +
@@ -290,10 +290,6 @@ describe("model cache resolution", () => {
 });
 
 describe("engram doctor CLI", () => {
-  const cli = fileURLToPath(
-    new URL("../../../dist/interfaces/cli/index.js", import.meta.url),
-  );
-  const built = existsSync(cli);
 
   // --no-smoke and a temp data dir: the built CLI must never extract against
   // (or write to) the developer's real store from a test.
@@ -308,7 +304,7 @@ describe("engram doctor CLI", () => {
   // that must time out) takes well over vitest's 5 s default on CI runners.
   const CLI_TIMEOUT_MS = 60_000;
 
-  it.skipIf(!built)("prints every check and a verdict, exiting 0 on a supported platform", () => {
+  itBuilt("prints every check and a verdict, exiting 0 on a supported platform", () => {
     const out = run();
     for (const name of DOCTOR_CHECK_NAMES) {
       expect(out).toMatch(new RegExp(`^\\[(ok|--|FAIL)\\]\\s+${name.replace("/", "\\/")}: `, "m"));
@@ -316,7 +312,7 @@ describe("engram doctor CLI", () => {
     expect(out).toMatch(/^Doctor: /m);
   }, CLI_TIMEOUT_MS);
 
-  it.skipIf(!built)("--json emits a parseable report with the same checks", () => {
+  itBuilt("--json emits a parseable report with the same checks", () => {
     const parsed = JSON.parse(run("--json")) as DoctorReport;
     expect(parsed.checks.map((c) => c.name)).toEqual([...DOCTOR_CHECK_NAMES]);
     expect(parsed.platform).toBe(`${process.platform}-${process.arch}`);
@@ -324,7 +320,7 @@ describe("engram doctor CLI", () => {
     expect(parsed.checks.find((c) => c.name === "extraction smoke")!.detail).toBe("skipped (--no-smoke)");
   }, CLI_TIMEOUT_MS);
 
-  it.skipIf(!built)("--strict exits 1 when any check is not [ok] (the skipped smoke is one)", () => {
+  itBuilt("--strict exits 1 when any check is not [ok] (the skipped smoke is one)", () => {
     let status = 0;
     try { run("--strict"); } catch (err) { status = (err as { status: number }).status; }
     expect(status).toBe(1);

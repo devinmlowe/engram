@@ -1,12 +1,20 @@
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
+import { it } from "vitest";
 import { initDatabase, insertFtsRow } from "../src/_core/db/index.js";
 import { loadConfig } from "../src/_core/config/index.js";
 import type Database from "better-sqlite3";
 import type { EngramConfig } from "../src/_core/types/index.js";
-import type { Exchange, ToolCall } from "../src/episodic/types.js";
+import type { Exchange } from "../src/episodic/types.js";
 import type { Entity, Relationship } from "../src/graph/types.js";
+import type { Memory } from "../src/semantic/types.js";
+import type { ConversationExchange } from "../src/semantic/extractor.js";
+
+/** The compiled CLI entry point; suites that spawn it skip when `npm run build` has not run. */
+export const builtCli = fileURLToPath(new URL("../dist/interfaces/cli/index.js", import.meta.url));
+export const itBuilt = it.skipIf(!existsSync(builtCli));
 
 export interface TestDb {
   db: Database.Database;
@@ -33,23 +41,28 @@ export function createTestDb(): TestDb {
   };
 }
 
-export function createTestFixture(jsonlContent: string): string {
-  const tmpDir = mkdtempSync(join(tmpdir(), "engram-fixture-"));
-  const filePath = join(tmpDir, "test-conversation.jsonl");
-  writeFileSync(filePath, jsonlContent, "utf-8");
-  return filePath;
+export function createTestMemory(overrides: Partial<Memory> = {}): Memory {
+  return {
+    id: overrides.id ?? `mem-${Math.random().toString(36).slice(2, 10)}`,
+    type: "fact",
+    content: "TypeScript uses structural typing",
+    confidence: 0.5,
+    importance: 0.5,
+    accessCount: 0,
+    createdAt: Math.floor(Date.now() / 1000),
+    sourceExchanges: ["exch-001"],
+    isActive: true,
+    ...overrides,
+  };
 }
 
-export function cosineSimilarity(a: number[], b: number[]): number {
-  let dot = 0;
-  let normA = 0;
-  let normB = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-    normA += a[i] * a[i];
-    normB += b[i] * b[i];
-  }
-  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+/** `count` numbered exchanges in the extractor's input shape. */
+export function makeExchanges(count: number): ConversationExchange[] {
+  return Array.from({ length: count }, (_, i) => ({
+    index: i,
+    userMessage: `User message ${i}`,
+    assistantMessage: `Assistant response ${i}`,
+  }));
 }
 
 export function createSyntheticExchange(
@@ -66,18 +79,6 @@ export function createSyntheticExchange(
     exchangeIndex: 0,
     tokenEstimate: 50,
     createdAt: Math.floor(Date.now() / 1000),
-    ...overrides,
-  };
-}
-
-export function createSyntheticToolCall(
-  overrides: Partial<ToolCall> = {},
-): ToolCall {
-  return {
-    id: `tc-${Math.random().toString(36).slice(2, 10)}`,
-    exchangeId: "exch-001",
-    toolName: "Read",
-    isError: false,
     ...overrides,
   };
 }

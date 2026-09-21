@@ -17,16 +17,9 @@ import {
 } from "../../src/graph/extractor.js";
 import type { ConversationExchange, ConversationMetadata } from "../../src/semantic/extractor.js";
 import { anthropicCalls, anthropicToolMock, stubFetch as stubLlmFetch, type StubFetchOptions } from "../mocks/llm-fetch.js";
+import { makeExchanges } from "../helpers.js";
 
 // ─── Helpers ────────────────────────────────────────────────────
-
-function makeExchanges(count: number): ConversationExchange[] {
-  return Array.from({ length: count }, (_, i) => ({
-    index: i,
-    userMessage: `User message ${i}`,
-    assistantMessage: `Assistant response ${i}`,
-  }));
-}
 
 const metadata: ConversationMetadata = {
   project: "test-project",

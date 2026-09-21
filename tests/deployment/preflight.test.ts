@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PREBUILT_TARGETS } from "../../src/interfaces/cli/doctor.js";
+import { builtCli as cli, itBuilt } from "../helpers.js";
 
 // Issue #8: package.json must either declare os/cpu or ship a documented
 // postinstall preflight that prints a platform verdict WITHOUT failing the
@@ -174,8 +175,6 @@ describe("install preflight verdict", () => {
 });
 
 describe("engram preflight CLI (#63)", () => {
-  const cli = fileURLToPath(new URL("../../dist/interfaces/cli/index.js", import.meta.url));
-  const built = existsSync(cli);
 
   function cliRun(...args: string[]) {
     return spawnSync(process.execPath, [cli, "preflight", ...args], {
@@ -185,7 +184,7 @@ describe("engram preflight CLI (#63)", () => {
     });
   }
 
-  it.skipIf(!built)("reuses scripts/preflight.cjs and runs without a data dir, ignoring ENGRAM_SKIP_PREFLIGHT", () => {
+  itBuilt("reuses scripts/preflight.cjs and runs without a data dir, ignoring ENGRAM_SKIP_PREFLIGHT", () => {
     const r = cliRun();
     expect(r.status).toBe(0);
     expect(r.stdout).toMatch(/^engram preflight: node v\d+/m);
@@ -193,13 +192,13 @@ describe("engram preflight CLI (#63)", () => {
     expect(existsSync(join(tmp, "never-created"))).toBe(false);
   });
 
-  it.skipIf(!built)("--json matches the script's shape", () => {
+  itBuilt("--json matches the script's shape", () => {
     const parsed = JSON.parse(cliRun("--json").stdout) as { deps: Array<{ dep: string }>; target: { key: string } };
     expect(parsed.deps.map((d) => d.dep)).toEqual(["better-sqlite3", "sqlite-vec", "onnxruntime-node"]);
     expect(parsed.target.key).toMatch(/^[a-z0-9]+-[a-z0-9]+$/);
   });
 
-  it.skipIf(!built)("--expect and --strict drive the exit code", () => {
+  itBuilt("--expect and --strict drive the exit code", () => {
     expect(cliRun("--expect", "onnxruntime-node=will-compile").status).toBe(1);
     const json = JSON.parse(cliRun("--json").stdout) as { deps: Array<{ dep: string; status: string }>; failed: number };
     const matching = json.deps.map((d) => `${d.dep}=${d.status}`).join(",");

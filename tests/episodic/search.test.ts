@@ -7,7 +7,7 @@ import { searchEpisodic } from "../../src/episodic/search.js";
 import { insertExchange } from "../../src/episodic/store.js";
 import { insertMemory } from "../../src/semantic/memory.js";
 import { initEmbeddings, embedExchange, embedDocument } from "../../src/_core/embeddings/index.js";
-import { createTestDb, createSyntheticExchange } from "../helpers.js";
+import { createTestDb, createSyntheticExchange, createTestMemory } from "../helpers.js";
 import type { TestDb } from "../helpers.js";
 import type { SearchResult, RecallResponse } from "../../src/_core/types/index.js";
 import type { Memory } from "../../src/semantic/types.js";
@@ -373,23 +373,6 @@ describe("searchMultiSource", () => {
   afterEach(() => {
     t.cleanup();
   });
-
-  function createTestMemory(overrides: Partial<Memory> = {}): Memory {
-    const id =
-      overrides.id ?? `mem-${Math.random().toString(36).slice(2, 10)}`;
-    return {
-      id,
-      type: "fact",
-      content: "Default memory content",
-      confidence: 0.5,
-      importance: 0.5,
-      accessCount: 0,
-      createdAt: Math.floor(Date.now() / 1000),
-      sourceExchanges: ["exch-001"],
-      isActive: true,
-      ...overrides,
-    };
-  }
 
   async function seedExchange(
     id: string,

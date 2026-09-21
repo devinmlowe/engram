@@ -4,48 +4,9 @@
  */
 
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { EventEmitter } from "node:events";
-import { WorkerPool, type WorkerLike } from "../../../src/interfaces/mcp/worker-pool.js";
+import { WorkerPool } from "../../../src/interfaces/mcp/worker-pool.js";
 
-// ─── Fake worker ────────────────────────────────────────────────
-
-type Behaviour = (
-  msg: { id: number; tool: string; args: unknown },
-  reply: (m: unknown) => void,
-  self: FakeWorker,
-) => void;
-
-class FakeWorker extends EventEmitter implements WorkerLike {
-  static instances: FakeWorker[] = [];
-  terminated = false;
-  sent: unknown[] = [];
-
-  constructor(private behaviour: Behaviour, options: { autoReady?: boolean } = {}) {
-    super();
-    FakeWorker.instances.push(this);
-    if (options.autoReady !== false) queueMicrotask(() => this.emit("message", { type: "ready" }));
-  }
-
-  postMessage(message: unknown): void {
-    this.sent.push(message);
-    const msg = message as { id: number; tool: string; args: unknown };
-    this.behaviour(msg, (m) => queueMicrotask(() => this.emit("message", m)), this);
-  }
-
-  terminate(): Promise<number> {
-    this.terminated = true;
-    queueMicrotask(() => this.emit("exit", 1));
-    return Promise.resolve(1);
-  }
-
-  /** Simulate a crash (unexpected exit). */
-  crash(code = 2): void {
-    this.emit("exit", code);
-  }
-}
-
-const echo: Behaviour = (msg, reply) => reply({ id: msg.id, ok: true, result: { echoed: msg.args, tool: msg.tool } });
-const never: Behaviour = () => {};
+import { FakeWorker, echo, never, type Behaviour } from "../../mocks/fake-worker.js";
 const silentLog = () => {};
 
 let pools: WorkerPool[] = [];
