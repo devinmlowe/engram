@@ -13,19 +13,9 @@
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AnthropicClient as Anthropic } from "../_core/llm/index.js";
 import type { EntityType, RelationshipType, GraphExtractionTier } from "./types.js";
-import {
-  buildIntelligenceConfig,
-  generateStructured,
-  isAnthropicAvailable,
-  isOllamaAvailable,
-  isOpenRouterAvailable,
-  resetIntelligence,
-  setClient as setIntelligenceClient,
-  type IntelligenceConfig,
-} from "../_core/llm/index.js";
-import { loadConfig } from "../_core/config/index.js";
+import { generateStructured, type IntelligenceConfig } from "../_core/llm/index.js";
+import { makeLlmGate } from "../_core/llm/gate.js";
 import type {
   ExtractedEntity,
   ExtractedRelationship,
@@ -137,40 +127,14 @@ const EXTRACT_RELATIONSHIPS_SCHEMA: Record<string, unknown> = {
 
 // ─── Initialization ─────────────────────────────────────────────
 
-/**
- * Verify that at least one tier of the LLM cascade can serve extraction.
- *
- * Credentials and clients are owned by the _core/llm factory; this only
- * checks reachability so callers fail fast with a clear message. Per
- * SPEC.md INV-3 a reachable local Ollama model is sufficient on its own.
- */
-export async function initGraphExtractor(): Promise<void> {
-  if (isAnthropicAvailable() || isOpenRouterAvailable()) return;
-  if (await isOllamaAvailable(intelligenceConfig())) return;
-  throw new Error(
-    "No graph extraction provider configured. " +
-      "Set ANTHROPIC_API_KEY or OPENROUTER_API_KEY, or run Ollama with the configured local model.",
-  );
-}
-
-/**
- * Reset the graph extractor state (for testing). Clears the factory's client.
- */
-export function resetGraphExtractor(): void {
-  resetIntelligence();
-}
-
-/**
- * Inject a custom Anthropic client into the factory (for testing with mocks).
- */
-export function setGraphExtractorClient(customClient: Anthropic): void {
-  setIntelligenceClient(customClient);
-}
-
-/** Cascade configuration derived from the application config. */
-function intelligenceConfig(): IntelligenceConfig {
-  return buildIntelligenceConfig(loadConfig());
-}
+const gate = makeLlmGate("graph extraction");
+/** Verify that at least one tier of the LLM cascade can serve extraction. */
+export const initGraphExtractor = gate.init;
+/** Reset the graph extractor state (for testing). Clears the factory's client. */
+export const resetGraphExtractor = gate.reset;
+/** Inject a custom Anthropic client into the factory (for testing with mocks). */
+export const setGraphExtractorClient = gate.setClient;
+const intelligenceConfig = gate.config;
 
 // ─── Prompt Building ────────────────────────────────────────────
 

@@ -12,20 +12,10 @@
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AnthropicClient as Anthropic } from "../_core/llm/index.js";
 import type Database from "better-sqlite3";
 import type { Memory, MemorySource, MemoryType } from "./types.js";
-import {
-  buildIntelligenceConfig,
-  generateStructured,
-  isAnthropicAvailable,
-  isOllamaAvailable,
-  isOpenRouterAvailable,
-  resetIntelligence,
-  setClient as setIntelligenceClient,
-  type IntelligenceConfig,
-} from "../_core/llm/index.js";
-import { loadConfig } from "../_core/config/index.js";
+import { generateStructured, type IntelligenceConfig } from "../_core/llm/index.js";
+import { makeLlmGate } from "../_core/llm/gate.js";
 import type {
   ExtractedFact,
   DeduplicationResult,
@@ -71,40 +61,14 @@ const SUPERSESSION_CHAIN_MAX_HOPS = 5;
 
 // ─── Initialization ─────────────────────────────────────────────
 
-/**
- * Verify that at least one tier of the LLM cascade can resolve conflicts.
- *
- * Credentials and clients are owned by the _core/llm factory; this only
- * checks reachability so callers fail fast with a clear message. Per
- * SPEC.md INV-3 a reachable local Ollama model is sufficient on its own.
- */
-export async function initConsolidator(): Promise<void> {
-  if (isAnthropicAvailable() || isOpenRouterAvailable()) return;
-  if (await isOllamaAvailable(intelligenceConfig())) return;
-  throw new Error(
-    "No conflict resolution provider configured. " +
-      "Set ANTHROPIC_API_KEY or OPENROUTER_API_KEY, or run Ollama with the configured local model.",
-  );
-}
-
-/**
- * Reset the consolidator state (for testing). Clears the factory's client.
- */
-export function resetConsolidator(): void {
-  resetIntelligence();
-}
-
-/**
- * Inject a custom Anthropic client into the factory (for testing with mocks).
- */
-export function setConsolidatorClient(customClient: Anthropic): void {
-  setIntelligenceClient(customClient);
-}
-
-/** Cascade configuration derived from the application config. */
-function intelligenceConfig(): IntelligenceConfig {
-  return buildIntelligenceConfig(loadConfig());
-}
+const gate = makeLlmGate("conflict resolution");
+/** Verify that at least one tier of the LLM cascade can resolve conflicts. */
+export const initConsolidator = gate.init;
+/** Reset the consolidator state (for testing). Clears the factory's client. */
+export const resetConsolidator = gate.reset;
+/** Inject a custom Anthropic client into the factory (for testing with mocks). */
+export const setConsolidatorClient = gate.setClient;
+const intelligenceConfig = gate.config;
 
 // ─── Conflict Resolution Tool Schema ────────────────────────────
 

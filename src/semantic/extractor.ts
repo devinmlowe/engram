@@ -12,22 +12,14 @@
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AnthropicClient as Anthropic } from "../_core/llm/index.js";
 import type { MemoryType } from "./types.js";
 import {
-  buildIntelligenceConfig,
   generateStructured,
-  isAnthropicAvailable,
-  isOllamaAvailable,
-  isOpenRouterAvailable,
-  resetIntelligence,
-  resolveOpenAIRouteConfig,
-  setClient as setIntelligenceClient,
   type GenerationResult,
   type IntelligenceConfig,
   type LlmProvider,
 } from "../_core/llm/index.js";
-import { loadConfig } from "../_core/config/index.js";
+import { makeLlmGate } from "../_core/llm/gate.js";
 import type {
   ExtractedFact,
   ExtractionResult,
@@ -156,43 +148,14 @@ export interface ConversationMetadata {
 
 // ─── Initialization ─────────────────────────────────────────────
 
-/**
- * Verify that at least one tier of the LLM cascade can serve extraction.
- *
- * Credentials and clients are owned by the _core/llm factory; this only
- * checks reachability so callers fail fast with a clear message. Per
- * SPEC.md INV-3 a reachable local Ollama model is sufficient on its own.
- */
-export async function initExtractor(): Promise<void> {
-  // A configured OpenAI-compatible route (#45: ENGRAM_OPENAI_MODEL + key) is a
-  // tier of its own; the cascade decides reachability per call.
-  if (isAnthropicAvailable() || isOpenRouterAvailable() || resolveOpenAIRouteConfig() !== undefined) return;
-  if (await isOllamaAvailable(intelligenceConfig())) return;
-  throw new Error(
-    "No extraction provider configured. " +
-      "Set ANTHROPIC_API_KEY, OPENROUTER_API_KEY or ENGRAM_OPENAI_MODEL (+ ENGRAM_OPENAI_BASE_URL), " +
-      "or run Ollama with the configured local model.",
-  );
-}
-
-/**
- * Reset the extractor state (for testing). Clears the factory's client.
- */
-export function resetExtractor(): void {
-  resetIntelligence();
-}
-
-/**
- * Inject a custom Anthropic client into the factory (for testing with mocks).
- */
-export function setClient(customClient: Anthropic): void {
-  setIntelligenceClient(customClient);
-}
-
-/** Cascade configuration derived from the application config. */
-function intelligenceConfig(): IntelligenceConfig {
-  return buildIntelligenceConfig(loadConfig());
-}
+const gate = makeLlmGate("extraction");
+/** Verify that at least one tier of the LLM cascade can serve extraction. */
+export const initExtractor = gate.init;
+/** Reset the extractor state (for testing). Clears the factory's client. */
+export const resetExtractor = gate.reset;
+/** Inject a custom Anthropic client into the factory (for testing with mocks). */
+export const setClient = gate.setClient;
+const intelligenceConfig = gate.config;
 
 // ─── Prompt Building ────────────────────────────────────────────
 
