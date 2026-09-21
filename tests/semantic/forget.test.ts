@@ -674,4 +674,16 @@ describe("memory index integrity (engram validate)", () => {
     expect(() => t.db.prepare("INSERT INTO memories_fts(memories_fts) VALUES('integrity-check')").run()).not.toThrow();
     expect(repairMemoryIndex(t.db)).toEqual({ vectorsDeleted: 0, ftsRebuilt: false, ftsRowsRemoved: 0 });
   });
+
+  // #112: an fts5vocab 'instance' scan misses a document with no terms.
+  it("audits a forgotten memory whose text tokenizes to nothing", async () => {
+    const { auditMemoryIndex, repairMemoryIndex } = await import("../../src/semantic/index-integrity.js");
+    seed("silent", "...");
+    forgetMemory(t.db, { memoryId: "silent", actor: "cli" });
+    t.db.prepare("INSERT INTO memories_fts (rowid, content, context) VALUES (?, ?, ?)").run(rowidOf("silent"), "...", null);
+
+    expect(auditMemoryIndex(t.db).orphanFtsForgotten).toEqual([rowidOf("silent")]);
+    expect(repairMemoryIndex(t.db).ftsRebuilt).toBe(true);
+    expect(auditMemoryIndex(t.db).orphanFtsForgotten).toEqual([]);
+  });
 });

@@ -35,15 +35,15 @@ export interface IndexRepair {
   ftsRowsRemoved: number;
 }
 
-/** Rowids currently present in memories_fts, via a temporary fts5vocab table. */
+/**
+ * Rowids currently present in memories_fts, read from its docsize shadow
+ * table. #112: an fts5vocab 'instance' table has one row per term occurrence,
+ * so a document that tokenizes to nothing (punctuation or emoji only) has no
+ * rows there and was never audited; docsize holds one row per indexed
+ * document regardless of its terms.
+ */
 export function ftsIndexedRowids(db: Database.Database): number[] {
-  const name = `memories_fts_vocab_${process.pid}_${Math.floor(Math.random() * 1e6)}`;
-  db.exec(`CREATE VIRTUAL TABLE temp.${name} USING fts5vocab('main', 'memories_fts', 'instance')`);
-  try {
-    return (db.prepare(`SELECT DISTINCT doc FROM temp.${name}`).all() as Array<{ doc: number }>).map((r) => r.doc);
-  } finally {
-    db.exec(`DROP TABLE IF EXISTS temp.${name}`);
-  }
+  return (db.prepare("SELECT id FROM memories_fts_docsize").all() as Array<{ id: number }>).map((r) => r.id);
 }
 
 export function auditMemoryIndex(db: Database.Database): IndexAudit {
