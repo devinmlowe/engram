@@ -53,10 +53,6 @@ export interface WorkerPoolOptions {
   spawn: () => WorkerLike;
   /** Default per-call timeout. Default 8000ms. */
   timeoutMs?: number;
-  /** A call still unanswered after `timeout × hangMultiplier` kills the worker. Default 2. */
-  hangMultiplier?: number;
-  /** A worker that never reports `ready` within this window is respawned. Default 120000ms. */
-  readyTimeoutMs?: number;
   /** Logger for operational events (defaults to console.error). */
   log?: (message: string) => void;
 }
@@ -85,27 +81,6 @@ export interface PoolStats {
   respawns: number;
 }
 
-export class WorkerTimeoutError extends Error {
-  constructor(tool: string, timeoutMs: number) {
-    super(`Tool "${tool}" timed out after ${timeoutMs}ms in worker`);
-    this.name = "WorkerTimeoutError";
-  }
-}
-
-export class WorkerCrashedError extends Error {
-  constructor(tool: string, reason: string) {
-    super(`Tool "${tool}" failed: worker ${reason}`);
-    this.name = "WorkerCrashedError";
-  }
-}
-
-export class WorkerPoolClosedError extends Error {
-  constructor() {
-    super("Worker pool is closed");
-    this.name = "WorkerPoolClosedError";
-  }
-}
-
 // ─── Internals ──────────────────────────────────────────────────
 
 interface Inflight {
@@ -131,22 +106,32 @@ interface Queued {
 
 interface Slot {
   index: number;
+  /** The live worker. Listeners registered on an earlier worker compare identity and ignore themselves. */
   worker: WorkerLike | null;
   ready: boolean;
   inflight: Inflight | null;
-  /** Incremented on every (re)spawn so stale worker events are ignored. */
-  generation: number;
-  readyTimer: NodeJS.Timeout | null;
 }
 
 const DEFAULT_TIMEOUT_MS = 8_000;
+/** A call still unanswered at this multiple of its timeout means a hung worker: kill and respawn. */
+const HANG_MULTIPLIER = 2;
 
 /** Prefix for pool log lines: ISO timestamp so log-only incidents can be placed in time. */
 function stamp(): string {
   return `[engram] ${new Date().toISOString()}`;
 }
-const DEFAULT_HANG_MULTIPLIER = 2;
-const DEFAULT_READY_TIMEOUT_MS = 120_000;
+
+const closedError = () => new Error("Worker pool is closed");
+const timeoutError = (tool: string, ms: number) => new Error(`Tool "${tool}" timed out after ${ms}ms in worker`);
+
+/** Terminate a worker, swallowing "already gone". */
+async function terminate(worker: WorkerLike): Promise<void> {
+  try {
+    await worker.terminate();
+  } catch {
+    /* already gone */
+  }
+}
 
 // ─── Pool ───────────────────────────────────────────────────────
 
@@ -155,8 +140,6 @@ export class WorkerPool {
   private readonly queue: Queued[] = [];
   private readonly spawnWorker: () => WorkerLike;
   private readonly timeoutMs: number;
-  private readonly hangMultiplier: number;
-  private readonly readyTimeoutMs: number;
   private readonly log: (message: string) => void;
   private nextId = 1;
   private closed = false;
@@ -168,19 +151,10 @@ export class WorkerPool {
     }
     this.spawnWorker = options.spawn;
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-    this.hangMultiplier = options.hangMultiplier ?? DEFAULT_HANG_MULTIPLIER;
-    this.readyTimeoutMs = options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS;
     this.log = options.log ?? ((m) => console.error(m));
 
     for (let i = 0; i < options.size; i++) {
-      this.slots.push({
-        index: i,
-        worker: null,
-        ready: false,
-        inflight: null,
-        generation: 0,
-        readyTimer: null,
-      });
+      this.slots.push({ index: i, worker: null, ready: false, inflight: null });
       this.startSlot(this.slots[i]);
     }
   }
@@ -204,7 +178,7 @@ export class WorkerPool {
     while (!this.closed && this.slots.some((s) => !s.ready)) {
       await new Promise((r) => setTimeout(r, 10));
     }
-    if (this.closed) throw new WorkerPoolClosedError();
+    if (this.closed) throw closedError();
   }
 
   /** Run a tool call on any free worker (or the affinity slot). */
@@ -215,7 +189,7 @@ export class WorkerPool {
 
   /** Like `run`, but also reports which slot handled the call. */
   runWithSlot<T = unknown>(tool: string, args: unknown, options: RunOptions = {}): Promise<RunResult<T>> {
-    if (this.closed) return Promise.reject(new WorkerPoolClosedError());
+    if (this.closed) return Promise.reject(closedError());
     if (options.affinity !== undefined && (options.affinity < 0 || options.affinity >= this.slots.length)) {
       return Promise.reject(new Error(`Worker affinity ${options.affinity} out of range (pool size ${this.slots.length})`));
     }
@@ -237,25 +211,14 @@ export class WorkerPool {
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
-    for (const q of this.queue.splice(0)) q.reject(new WorkerPoolClosedError());
-    const terminations: Array<Promise<unknown> | unknown> = [];
+    for (const q of this.queue.splice(0)) q.reject(closedError());
+    const terminations: Promise<void>[] = [];
     for (const slot of this.slots) {
-      slot.generation++;
-      if (slot.readyTimer) clearTimeout(slot.readyTimer);
-      if (slot.inflight) {
-        this.finishInflight(slot, slot.inflight);
-        if (!slot.inflight.settled) slot.inflight.reject(new WorkerPoolClosedError());
-        slot.inflight = null;
-      }
-      if (slot.worker) {
-        try {
-          terminations.push(slot.worker.terminate());
-        } catch {
-          /* already gone */
-        }
-        slot.worker = null;
-      }
+      this.abandon(slot, closedError());
+      const worker = slot.worker;
+      slot.worker = null;
       slot.ready = false;
+      if (worker) terminations.push(terminate(worker));
     }
     await Promise.allSettled(terminations);
   }
@@ -286,7 +249,6 @@ export class WorkerPool {
 
   private dispatch(slot: Slot, item: Queued): void {
     const id = this.nextId++;
-    const worker = slot.worker!;
     const inflight: Inflight = {
       id,
       tool: item.tool,
@@ -294,21 +256,15 @@ export class WorkerPool {
       reject: item.reject,
       settled: false,
       timeoutTimer: setTimeout(() => this.onTimeout(slot, inflight, item.timeoutMs), item.timeoutMs),
-      hangTimer: setTimeout(
-        () => this.onHang(slot, inflight, item.timeoutMs),
-        item.timeoutMs * this.hangMultiplier,
-      ),
+      hangTimer: setTimeout(() => this.onHang(slot, inflight, item.timeoutMs), item.timeoutMs * HANG_MULTIPLIER),
     };
     slot.inflight = inflight;
     const request: WorkerRequest = { id, tool: item.tool, args: item.args };
     if (item.context !== undefined) request.context = item.context;
     try {
-      worker.postMessage(request);
+      slot.worker!.postMessage(request);
     } catch (error) {
-      this.finishInflight(slot, inflight);
-      slot.inflight = null;
-      inflight.settled = true;
-      inflight.reject(error instanceof Error ? error : new Error(String(error)));
+      this.abandon(slot, error instanceof Error ? error : new Error(String(error)));
       this.pump();
     }
   }
@@ -317,32 +273,34 @@ export class WorkerPool {
     if (slot.inflight !== inflight || inflight.settled) return;
     inflight.settled = true;
     this.log(`${stamp()} worker ${slot.index}: tool "${inflight.tool}" exceeded ${timeoutMs}ms; rejecting call (worker kept alive)`);
-    inflight.reject(new WorkerTimeoutError(inflight.tool, timeoutMs));
+    inflight.reject(timeoutError(inflight.tool, timeoutMs));
   }
 
   private onHang(slot: Slot, inflight: Inflight, timeoutMs: number): void {
     if (slot.inflight !== inflight) return;
-    this.log(`${stamp()} worker ${slot.index}: tool "${inflight.tool}" still unanswered after ${timeoutMs * this.hangMultiplier}ms; killing and respawning worker`);
-    this.finishInflight(slot, inflight);
+    const ms = timeoutMs * HANG_MULTIPLIER;
+    this.log(`${stamp()} worker ${slot.index}: tool "${inflight.tool}" still unanswered after ${ms}ms; killing and respawning worker`);
+    this.abandon(slot, timeoutError(inflight.tool, ms));
+    this.respawn(slot);
+  }
+
+  /** Drop the slot's in-flight call: clear its timers and reject the caller unless a timeout already did. */
+  private abandon(slot: Slot, error: Error): void {
+    const inflight = slot.inflight;
+    if (!inflight) return;
+    clearTimeout(inflight.timeoutTimer);
+    clearTimeout(inflight.hangTimer);
     slot.inflight = null;
     if (!inflight.settled) {
       inflight.settled = true;
-      inflight.reject(new WorkerTimeoutError(inflight.tool, timeoutMs * this.hangMultiplier));
+      inflight.reject(error);
     }
-    this.respawn(slot, "hang");
-  }
-
-  private finishInflight(slot: Slot, inflight: Inflight): void {
-    clearTimeout(inflight.timeoutTimer);
-    clearTimeout(inflight.hangTimer);
-    void slot;
   }
 
   // ─── Worker lifecycle ────────────────────────────────────────
 
   private startSlot(slot: Slot): void {
     if (this.closed) return;
-    const generation = ++slot.generation;
     slot.ready = false;
     slot.inflight = null;
 
@@ -354,50 +312,29 @@ export class WorkerPool {
       slot.worker = null;
       // Retry later rather than tight-looping.
       setTimeout(() => {
-        if (!this.closed && slot.generation === generation) this.startSlot(slot);
+        if (!this.closed && slot.worker === null) this.startSlot(slot);
       }, 1000).unref?.();
       return;
     }
     slot.worker = worker;
 
-    slot.readyTimer = setTimeout(() => {
-      if (slot.generation !== generation || slot.ready) return;
-      this.log(`${stamp()} worker ${slot.index}: not ready after ${this.readyTimeoutMs}ms; respawning`);
-      this.respawn(slot, "ready-timeout");
-    }, this.readyTimeoutMs);
-    slot.readyTimer.unref?.();
-
+    // Events from a worker this slot has since replaced (respawn) or dropped (close) are ignored.
     worker.on("message", (message: unknown) => {
-      if (slot.generation !== generation) return;
-      this.onMessage(slot, message as WorkerResponse);
+      if (slot.worker === worker) this.onMessage(slot, message as WorkerResponse);
     });
     worker.on("error", (error: Error) => {
-      if (slot.generation !== generation) return;
-      this.log(`${stamp()} worker ${slot.index}: error: ${error?.message ?? String(error)}`);
+      if (slot.worker === worker) this.log(`${stamp()} worker ${slot.index}: error: ${error?.message ?? String(error)}`);
     });
     worker.on("exit", (code: number) => {
-      if (slot.generation !== generation) return;
-      if (this.closed) return;
+      if (slot.worker !== worker || this.closed) return;
       this.log(`${stamp()} worker ${slot.index}: exited with code ${code}; respawning`);
-      const inflight = slot.inflight;
-      if (inflight) {
-        this.finishInflight(slot, inflight);
-        slot.inflight = null;
-        if (!inflight.settled) {
-          inflight.settled = true;
-          inflight.reject(new WorkerCrashedError(inflight.tool, `exited with code ${code}`));
-        }
-      }
-      this.respawn(slot, "exit");
+      if (slot.inflight) this.abandon(slot, new Error(`Tool "${slot.inflight.tool}" failed: worker exited with code ${code}`));
+      this.respawn(slot);
     });
   }
 
   private onMessage(slot: Slot, message: WorkerResponse): void {
     if (message && typeof message === "object" && "type" in message && message.type === "ready") {
-      if (slot.readyTimer) {
-        clearTimeout(slot.readyTimer);
-        slot.readyTimer = null;
-      }
       slot.ready = true;
       this.pump();
       return;
@@ -405,45 +342,26 @@ export class WorkerPool {
     if (!message || typeof message !== "object" || !("id" in message)) return;
 
     const inflight = slot.inflight;
-    if (!inflight || inflight.id !== message.id) {
-      // Late answer for a call we already gave up on (or a stray message).
-      return;
-    }
-    this.finishInflight(slot, inflight);
+    // A late answer for a call we already gave up on (or a stray message).
+    if (!inflight || inflight.id !== message.id) return;
+    clearTimeout(inflight.timeoutTimer);
+    clearTimeout(inflight.hangTimer);
     slot.inflight = null;
     if (!inflight.settled) {
       inflight.settled = true;
-      if (message.ok) {
-        inflight.resolve({ result: message.result, slot: slot.index });
-      } else {
-        inflight.reject(new Error(message.error));
-      }
+      if (message.ok) inflight.resolve({ result: message.result, slot: slot.index });
+      else inflight.reject(new Error(message.error));
     }
     this.pump();
   }
 
-  private respawn(slot: Slot, reason: string): void {
+  private respawn(slot: Slot): void {
     if (this.closed) return;
     this.respawns++;
     const old = slot.worker;
     slot.worker = null;
     slot.ready = false;
-    if (slot.readyTimer) {
-      clearTimeout(slot.readyTimer);
-      slot.readyTimer = null;
-    }
-    slot.generation++; // detach listeners from the old worker
-    if (old) {
-      try {
-        const t = old.terminate();
-        if (t && typeof (t as Promise<unknown>).catch === "function") {
-          (t as Promise<unknown>).catch(() => {});
-        }
-      } catch {
-        /* ignore */
-      }
-    }
-    void reason;
+    if (old) void terminate(old);
     this.startSlot(slot);
   }
 }

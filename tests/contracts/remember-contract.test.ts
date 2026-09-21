@@ -193,8 +193,11 @@ describe("MCP remember tool schema", () => {
 
     // The remember tool should have a source property
     expect(serverSource).toContain("source:");
-    // It should still require only content
-    expect(serverSource).toContain('required: ["content"]');
+    // It should still require only content (#119: the advertised schema is generated, so read the definition)
+    const { MCP_TOOL_DEFINITIONS } = await import("../../src/interfaces/mcp/server.js");
+    const remember = MCP_TOOL_DEFINITIONS.find((t) => t.name === "remember")!;
+    expect(remember.inputSchema.properties).toHaveProperty("source");
+    expect(remember.inputSchema.required).toEqual(["content"]);
   });
 
   it("remember_batch tool is registered", async () => {

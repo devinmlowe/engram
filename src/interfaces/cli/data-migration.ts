@@ -21,7 +21,7 @@
 import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, appendFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
-import { defaultModelCacheDir, describeModelCacheDir, resolveDefaultDataDir, type ModelCacheSource } from "../../_core/config/index.js";
+import { defaultModelCacheDir, resolveDefaultDataDir, type ModelCacheSource } from "../../_core/config/index.js";
 import {
   countModelFiles, describeLegacyCacheMigration, isInsideNodeModules, libraryModelCacheDir, migrateLegacyModelCache,
 } from "../../_core/embeddings/model-cache.js";
@@ -287,7 +287,7 @@ function modelCacheMoveSource(plan: Pick<ModelCachePlan, "durable" | "current" |
 }
 
 export function planModelCache({ config, env, platform, home }: PlanEnv, packageRoot: string = PACKAGE_ROOT): ModelCachePlan {
-  const { dir: current, source } = describeModelCacheDir(config, env);
+  const { modelCacheDir: current, modelCacheSource: source } = config;
   const durable = !isInsideNodeModules(current);
   const proposed = durable ? current : defaultModelCacheDir(config.dataDir);
   const legacy = libraryModelCacheDir(packageRoot);

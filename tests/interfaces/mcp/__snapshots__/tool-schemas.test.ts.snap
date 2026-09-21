@@ -1,0 +1,1033 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`generated tool schemas (#119) > commitments matches the recorded contract 1`] = `
+{
+  "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true,
+    "title": "Commitments",
+  },
+  "description": "List tracked commitments — first-person promises, intentions and follow-ups owed by others, extracted nightly from conversations ("mention once, never dropped"). Default: pending items, overdue first, then by due date, then newest. Use include_due_within_days to surface only what is due soon or overdue.",
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "budget": {
+        "default": 1500,
+        "description": "Token budget for the XML response",
+        "maximum": 10000,
+        "minimum": 100,
+        "type": "integer",
+      },
+      "include_due_within_days": {
+        "description": "Only items with a due date within this many days (overdue items included)",
+        "maximum": 3650,
+        "minimum": 0,
+        "type": "number",
+      },
+      "limit": {
+        "default": 20,
+        "description": "Max items",
+        "maximum": 500,
+        "minimum": 1,
+        "type": "integer",
+      },
+      "read_scopes": {
+        "description": "Explicit scopes to read from (e.g. ["global", "hermes:career"]). Overrides ENGRAM_READ_SCOPES for this call only (#25).",
+        "items": {
+          "minLength": 1,
+          "type": "string",
+        },
+        "minItems": 1,
+        "type": "array",
+      },
+      "scope": {
+        "description": "Tenant identity for this call (e.g. "hermes:career"); derives the read default global + own",
+        "minLength": 1,
+        "type": "string",
+      },
+      "status": {
+        "default": "pending",
+        "description": "Lifecycle state to list",
+        "enum": [
+          "pending",
+          "done",
+          "dropped",
+          "superseded",
+          "all",
+        ],
+        "type": "string",
+      },
+    },
+    "type": "object",
+  },
+  "name": "commitments",
+}
+`;
+
+exports[`generated tool schemas (#119) > commitments_update matches the recorded contract 1`] = `
+{
+  "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": false,
+    "title": "Update Commitment",
+  },
+  "description": "Resolve a tracked commitment once the user confirms it is handled: mark it done, dropped, or superseded by another commitment. Accepts the full id or a unique prefix (6+ characters).",
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "description": "Commitment id (from the commitments tool) or a unique prefix",
+        "minLength": 6,
+        "type": "string",
+      },
+      "status": {
+        "description": "Resolution",
+        "enum": [
+          "done",
+          "dropped",
+          "superseded",
+        ],
+        "type": "string",
+      },
+      "superseded_by": {
+        "description": "Id of the commitment that replaces this one (required when status is superseded)",
+        "minLength": 6,
+        "type": "string",
+      },
+    },
+    "required": [
+      "id",
+      "status",
+    ],
+    "type": "object",
+  },
+  "name": "commitments_update",
+}
+`;
+
+exports[`generated tool schemas (#119) > explore matches the recorded contract 1`] = `
+{
+  "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true,
+    "title": "Explore Knowledge Graph",
+  },
+  "description": "Explore connections in the knowledge graph starting from an entity. Shows what a concept, tool, project, or technology is connected to. Use after recall to understand how things relate to each other.",
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "budget": {
+        "default": 1500,
+        "description": "Max tokens in response",
+        "maximum": 5000,
+        "minimum": 100,
+        "type": "integer",
+      },
+      "depth": {
+        "default": 1,
+        "description": "Number of hops to traverse (1-3)",
+        "maximum": 3,
+        "minimum": 1,
+        "type": "integer",
+      },
+      "entity": {
+        "description": "Entity name to explore (e.g., 'TypeScript', 'engram', 'SQLite')",
+        "minLength": 1,
+        "type": "string",
+      },
+      "limit": {
+        "default": 25,
+        "description": "Max neighbors to return, sorted by weight (1-50)",
+        "maximum": 50,
+        "minimum": 1,
+        "type": "integer",
+      },
+      "read_scopes": {
+        "description": "Explicit scopes to read from (e.g. ["global", "hermes:career"]). Overrides ENGRAM_READ_SCOPES for this call only (#25).",
+        "items": {
+          "minLength": 1,
+          "type": "string",
+        },
+        "minItems": 1,
+        "type": "array",
+      },
+      "relationship_types": {
+        "description": "Filter by relationship types",
+        "items": {
+          "enum": [
+            "uses",
+            "depends_on",
+            "related_to",
+            "part_of",
+            "configured_by",
+            "solved_by",
+            "contains",
+          ],
+          "type": "string",
+        },
+        "type": "array",
+      },
+      "scope": {
+        "description": "Tenant identity for this call (e.g. "hermes:career"); derives the read default global + own",
+        "minLength": 1,
+        "type": "string",
+      },
+    },
+    "required": [
+      "entity",
+    ],
+    "type": "object",
+  },
+  "name": "explore",
+}
+`;
+
+exports[`generated tool schemas (#119) > explore_selective matches the recorded contract 1`] = `
+{
+  "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true,
+    "title": "Selective Graph Exploration",
+  },
+  "description": "Explore the knowledge graph selectively by expanding only branches relevant to specified criteria. Unlike explore (fixed-depth BFS), this uses embedding similarity to prune irrelevant neighbors and recursively follows only relevant paths. Use when you want to find connections related to a specific topic or question.",
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "criteria": {
+        "description": "What makes a neighbor relevant (e.g., 'build tooling', 'performance optimization')",
+        "minLength": 1,
+        "type": "string",
+      },
+      "entity": {
+        "description": "Starting entity name (e.g., 'TypeScript', 'engram', 'SQLite')",
+        "minLength": 1,
+        "type": "string",
+      },
+      "max_depth": {
+        "default": 3,
+        "description": "Maximum traversal depth (1-5)",
+        "maximum": 5,
+        "minimum": 1,
+        "type": "integer",
+      },
+      "max_nodes": {
+        "default": 50,
+        "description": "Safety cap on total nodes returned (1-50)",
+        "maximum": 50,
+        "minimum": 1,
+        "type": "integer",
+      },
+      "read_scopes": {
+        "description": "Explicit scopes to read from (e.g. ["global", "hermes:career"]). Overrides ENGRAM_READ_SCOPES for this call only (#25).",
+        "items": {
+          "minLength": 1,
+          "type": "string",
+        },
+        "minItems": 1,
+        "type": "array",
+      },
+      "relationship_types": {
+        "description": "Filter by relationship types",
+        "items": {
+          "enum": [
+            "uses",
+            "depends_on",
+            "related_to",
+            "part_of",
+            "configured_by",
+            "solved_by",
+            "contains",
+          ],
+          "type": "string",
+        },
+        "type": "array",
+      },
+      "scope": {
+        "description": "Tenant identity for this call (e.g. "hermes:career"); derives the read default global + own",
+        "minLength": 1,
+        "type": "string",
+      },
+    },
+    "required": [
+      "entity",
+      "criteria",
+    ],
+    "type": "object",
+  },
+  "name": "explore_selective",
+}
+`;
+
+exports[`generated tool schemas (#119) > fetch_snippets matches the recorded contract 1`] = `
+{
+  "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true,
+    "title": "Fetch Snippets",
+  },
+  "description": "Fetch multiple line ranges from a single file in one call. Ranges are merged when overlapping, padded with optional context lines, and joined with gap markers. More efficient than multiple show calls for targeted code reading.",
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "context": {
+        "default": 0,
+        "description": "Number of padding lines around each range (0-50)",
+        "maximum": 50,
+        "minimum": 0,
+        "type": "integer",
+      },
+      "path": {
+        "minLength": 1,
+        "type": "string",
+      },
+      "ranges": {
+        "description": "Line ranges to fetch (max 20)",
+        "items": {
+          "properties": {
+            "end": {
+              "minimum": 1,
+              "type": "integer",
+            },
+            "start": {
+              "minimum": 1,
+              "type": "integer",
+            },
+          },
+          "required": [
+            "start",
+            "end",
+          ],
+          "type": "object",
+        },
+        "maxItems": 20,
+        "minItems": 1,
+        "type": "array",
+      },
+      "session_id": {
+        "description": "Optional session ID for token budget tracking",
+        "format": "uuid",
+        "type": "string",
+      },
+    },
+    "required": [
+      "path",
+      "ranges",
+    ],
+    "type": "object",
+  },
+  "name": "fetch_snippets",
+}
+`;
+
+exports[`generated tool schemas (#119) > forget matches the recorded contract 1`] = `
+{
+  "annotations": {
+    "destructiveHint": true,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false,
+    "title": "Forget Memory",
+  },
+  "description": "Remove a memory the user says is wrong or stale. Pass the memory_id from a recall result (<semantic id="…">) to forget it in one call. Pass query instead to search for candidates: the tool returns matching memories with their ids and forgets nothing unless confirm is true AND exactly one memory matches (a single result, or a single result whose content equals the query). The memory is soft-deleted (kept for ENGRAM_FORGET_RETENTION_DAYS, then purged by the dream pipeline), drops out of every recall path immediately, is logged in the change log with this client's name, and will not be re-extracted from the same conversation. hard: true deletes it outright. Only memories within read_scopes can be forgotten unless scope is "global".",
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "confirm": {
+        "default": false,
+        "description": "In query mode: forget the match when exactly one memory matches",
+        "type": "boolean",
+      },
+      "hard": {
+        "default": false,
+        "description": "Delete the row outright instead of the soft delete + retention purge",
+        "type": "boolean",
+      },
+      "memory_id": {
+        "description": "Id of the memory to forget (from recall's <semantic id>), or a unique prefix of 6+ characters",
+        "minLength": 6,
+        "type": "string",
+      },
+      "query": {
+        "description": "Find candidate memories instead of naming one; returns ids, deletes nothing unless confirm + a single match",
+        "minLength": 2,
+        "type": "string",
+      },
+      "read_scopes": {
+        "description": "Scopes this call may act on (e.g. ["global", "hermes:career"]). Overrides ENGRAM_READ_SCOPES for this call only.",
+        "items": {
+          "minLength": 1,
+          "type": "string",
+        },
+        "minItems": 1,
+        "type": "array",
+      },
+      "scope": {
+        "description": "Tenant identity for this call (e.g. "hermes:career"); reads default to global + this scope. "global" acts on a memory in any scope.",
+        "minLength": 1,
+        "type": "string",
+      },
+    },
+    "type": "object",
+  },
+  "name": "forget",
+}
+`;
+
+exports[`generated tool schemas (#119) > index_file_structure matches the recorded contract 1`] = `
+{
+  "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": false,
+    "title": "Index File Structure",
+  },
+  "description": "Parse a source file to extract function, class, and module definitions, then index them as entities in the knowledge graph with 'contains' relationships. Enables RLM to discover file contents without reading the full file.",
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "path": {
+        "description": "Absolute path to the source file to index",
+        "minLength": 1,
+        "type": "string",
+      },
+    },
+    "required": [
+      "path",
+    ],
+    "type": "object",
+  },
+  "name": "index_file_structure",
+}
+`;
+
+exports[`generated tool schemas (#119) > ingest_turn matches the recorded contract 1`] = `
+{
+  "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": false,
+    "title": "Ingest Turn",
+  },
+  "description": "Record one user/assistant turn of an external agent conversation (e.g. a Hermes profile) in engram's episodic layer so it becomes searchable and feeds the nightly dream extraction. Idempotent: re-sending the same session_id + turn_index updates the turn in place. The conversation carries the given tenant scope, and every memory later extracted from it inherits that scope. An optional author {id, name, is_bot} is stored on the turn.",
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "assistant_text": {
+        "description": "The assistant's reply for this turn",
+        "type": "string",
+      },
+      "author": {
+        "additionalProperties": false,
+        "description": "Who authored the user side of the turn (stored as JSON on the exchange)",
+        "properties": {
+          "id": {
+            "description": "Platform user id",
+            "type": "string",
+          },
+          "is_bot": {
+            "description": "True when the author is a bot",
+            "type": "boolean",
+          },
+          "name": {
+            "description": "Display name",
+            "type": "string",
+          },
+        },
+        "type": "object",
+      },
+      "scope": {
+        "description": "Tenant scope of the conversation (e.g. "hermes:career")",
+        "minLength": 1,
+        "type": "string",
+      },
+      "session_id": {
+        "description": "Caller's conversation/session identifier (stable across turns)",
+        "minLength": 1,
+        "type": "string",
+      },
+      "source": {
+        "default": "hermes",
+        "description": "Platform/source label; part of the conversation key (default "hermes")",
+        "minLength": 1,
+        "type": "string",
+      },
+      "timestamp": {
+        "description": "ISO-8601 time of the turn (default: now)",
+        "type": "string",
+      },
+      "tool_calls": {
+        "description": "Tools invoked during the turn (input/output are truncated to 1000 chars)",
+        "items": {
+          "properties": {
+            "input": {
+              "description": "Tool input (any JSON)",
+            },
+            "name": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "output": {
+              "description": "Tool output/result summary (any JSON)",
+            },
+          },
+          "required": [
+            "name",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+      "turn_index": {
+        "description": "0-based position of this turn within the session",
+        "minimum": 0,
+        "type": "integer",
+      },
+      "user_text": {
+        "description": "The user's message for this turn",
+        "type": "string",
+      },
+    },
+    "required": [
+      "session_id",
+      "turn_index",
+      "scope",
+      "user_text",
+      "assistant_text",
+    ],
+    "type": "object",
+  },
+  "name": "ingest_turn",
+}
+`;
+
+exports[`generated tool schemas (#119) > recall matches the recorded contract 1`] = `
+{
+  "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true,
+    "title": "Recall Memories",
+  },
+  "description": "Retrieve relevant memories from past Claude Code conversations and extracted knowledge. Uses hybrid semantic + keyword search with token-budgeted output across episodic and semantic memory stores. Search BEFORE every task to recover decisions, solutions, and context. Time-scope with after/before (YYYY-MM-DD) or a natural-language dateHint ("last week", "in March", "this day last year", "on this day"); dateBasis picks whether dates mean when a memory was filed or when the events it describes happened. The applied window is echoed in <date_filter>. Retrieval records access bookkeeping on the returned memories (access_count, last_accessed, stability); pass reinforce: false to opt out.",
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "after": {
+        "description": "Only results after this date (YYYY-MM-DD)",
+        "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+        "type": "string",
+      },
+      "before": {
+        "description": "Only results before this date (YYYY-MM-DD; that day is excluded)",
+        "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+        "type": "string",
+      },
+      "budget": {
+        "default": 1500,
+        "description": "Max tokens in response",
+        "maximum": 5000,
+        "minimum": 100,
+        "type": "integer",
+      },
+      "dateBasis": {
+        "default": "filed",
+        "description": "What the dates refer to: 'filed' = when the memory was recorded (memories IN March); 'event' = when the described events happened, via source-exchange timestamps (memories ABOUT March). Episodic results are identical under both.",
+        "enum": [
+          "filed",
+          "event",
+        ],
+        "type": "string",
+      },
+      "dateHint": {
+        "description": "Natural-language date window, resolved in UTC: today, yesterday, this/last week|month|year, N days|weeks|months ago, this day last year, in <month>, <month> <year>, since <phrase>, before <phrase>, on this day (same month/day across all years), or an ISO date/month. Explicit after/before take precedence over the hint. Unrecognized hints apply no filter and are reported in <date_filter note>.",
+        "maxLength": 200,
+        "minLength": 1,
+        "type": "string",
+      },
+      "depth": {
+        "default": "shallow",
+        "enum": [
+          "shallow",
+          "deep",
+        ],
+        "type": "string",
+      },
+      "query": {
+        "minLength": 2,
+        "type": "string",
+      },
+      "read_scopes": {
+        "description": "Explicit scopes to read from (e.g. ["global", "hermes:career"]). Overrides ENGRAM_READ_SCOPES for this call only.",
+        "items": {
+          "minLength": 1,
+          "type": "string",
+        },
+        "minItems": 1,
+        "type": "array",
+      },
+      "reinforce": {
+        "default": true,
+        "description": "Reinforce the semantic memories this call returns (FSRS: bumps access_count/last_accessed and grows stability). Set false for read-only or diagnostic callers that must not mutate the store.",
+        "type": "boolean",
+      },
+      "scope": {
+        "description": "Tenant identity for this call (e.g. "hermes:career"); reads default to global + this scope. Overrides ENGRAM_SCOPE for this call only.",
+        "minLength": 1,
+        "type": "string",
+      },
+      "sources": {
+        "default": [
+          "episodic",
+          "semantic",
+        ],
+        "description": "Which memory stores to search. Defaults to episodic and semantic.",
+        "items": {
+          "enum": [
+            "episodic",
+            "semantic",
+            "graph",
+          ],
+          "type": "string",
+        },
+        "type": "array",
+      },
+    },
+    "required": [
+      "query",
+    ],
+    "type": "object",
+  },
+  "name": "recall",
+}
+`;
+
+exports[`generated tool schemas (#119) > recall_drill matches the recorded contract 1`] = `
+{
+  "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true,
+    "title": "Drill Into Result",
+  },
+  "description": "Drill into a specific result from a recall session to get expanded context. For episodic results: shows surrounding conversation exchanges. For semantic results: shows source conversation segments. For graph results: shows entity with full relationship neighborhood. Retrieval records access bookkeeping on the returned memories (access_count, last_accessed, stability); pass reinforce: false to opt out.",
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "reinforce": {
+        "default": true,
+        "description": "Reinforce the semantic memories this call returns (FSRS: bumps access_count/last_accessed and grows stability). Set false for read-only or diagnostic callers that must not mutate the store.",
+        "type": "boolean",
+      },
+      "result_index": {
+        "description": "0-based index into session results",
+        "minimum": 0,
+        "type": "integer",
+      },
+      "session_id": {
+        "description": "Session ID from recall_session",
+        "format": "uuid",
+        "type": "string",
+      },
+    },
+    "required": [
+      "session_id",
+      "result_index",
+    ],
+    "type": "object",
+  },
+  "name": "recall_drill",
+}
+`;
+
+exports[`generated tool schemas (#119) > recall_session matches the recorded contract 1`] = `
+{
+  "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": true,
+    "title": "Recall Session",
+  },
+  "description": "Create or continue an iterative search session for multi-step memory exploration. Omit session_id to start a new session; provide session_id to refine with a new query. Sessions track accumulated results and remaining token budget. Use recall_drill to expand individual results. Retrieval records access bookkeeping on the returned memories (access_count, last_accessed, stability); pass reinforce: false to opt out.",
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "budget": {
+        "default": 3000,
+        "description": "Max total token budget for this session",
+        "maximum": 10000,
+        "minimum": 100,
+        "type": "integer",
+      },
+      "query": {
+        "description": "Search query",
+        "minLength": 2,
+        "type": "string",
+      },
+      "read_scopes": {
+        "description": "Explicit scopes to read from (e.g. ["global", "hermes:career"]). Overrides ENGRAM_READ_SCOPES for this call only.",
+        "items": {
+          "minLength": 1,
+          "type": "string",
+        },
+        "minItems": 1,
+        "type": "array",
+      },
+      "reinforce": {
+        "default": true,
+        "description": "Reinforce the semantic memories this call returns (FSRS: bumps access_count/last_accessed and grows stability). Set false for read-only or diagnostic callers that must not mutate the store.",
+        "type": "boolean",
+      },
+      "scope": {
+        "description": "Tenant identity for this call (e.g. "hermes:career"); reads default to global + this scope. Overrides ENGRAM_SCOPE for this call only.",
+        "minLength": 1,
+        "type": "string",
+      },
+      "session_id": {
+        "description": "Existing session ID to refine (omit to create new)",
+        "format": "uuid",
+        "type": "string",
+      },
+      "sources": {
+        "default": [
+          "episodic",
+          "semantic",
+        ],
+        "description": "Which memory stores to search",
+        "items": {
+          "enum": [
+            "episodic",
+            "semantic",
+            "graph",
+          ],
+          "type": "string",
+        },
+        "type": "array",
+      },
+    },
+    "required": [
+      "query",
+    ],
+    "type": "object",
+  },
+  "name": "recall_session",
+}
+`;
+
+exports[`generated tool schemas (#119) > reflect matches the recorded contract 1`] = `
+{
+  "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": false,
+    "title": "Reflect on Knowledge Graph",
+  },
+  "description": "View emergent patterns and structure in the knowledge graph. Shows topic communities with meaningful names, bridge entities connecting different domains, temporal patterns, and graph health. Use after working on a topic to understand how it connects to other knowledge domains.",
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "mode": {
+        "default": "all",
+        "description": "What to reflect on.",
+        "enum": [
+          "communities",
+          "bridges",
+          "temporal",
+          "health",
+          "all",
+        ],
+        "type": "string",
+      },
+      "refresh": {
+        "default": false,
+        "description": "Force a fresh analysis instead of using cached results.",
+        "type": "boolean",
+      },
+    },
+    "type": "object",
+  },
+  "name": "reflect",
+}
+`;
+
+exports[`generated tool schemas (#119) > remember matches the recorded contract 1`] = `
+{
+  "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false,
+    "title": "Remember",
+  },
+  "description": "Store a fact, preference, decision, or other knowledge as a semantic memory. Use this to explicitly record important information that should persist across conversations. Automatically deduplicates against existing memories.",
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "content": {
+        "description": "The fact, preference, or knowledge to remember",
+        "minLength": 1,
+        "type": "string",
+      },
+      "context": {
+        "description": "Provenance note stored alongside the memory (e.g. what produced this write)",
+        "maxLength": 500,
+        "type": "string",
+      },
+      "importance": {
+        "default": 0.7,
+        "description": "Importance score (0-1)",
+        "maximum": 1,
+        "minimum": 0,
+        "type": "number",
+      },
+      "scope": {
+        "description": "Tenant scope to stamp on this write (e.g. "hermes:career"). Overrides the ENGRAM_SCOPE env default for this call only.",
+        "minLength": 1,
+        "type": "string",
+      },
+      "source": {
+        "default": "user",
+        "description": "Source of this memory (user, dream, rlm, import, hermes-mirror)",
+        "enum": [
+          "user",
+          "dream",
+          "rlm",
+          "import",
+          "hermes-mirror",
+        ],
+        "type": "string",
+      },
+      "type": {
+        "default": "fact",
+        "description": "Type of memory",
+        "enum": [
+          "preference",
+          "decision",
+          "pattern",
+          "fact",
+          "solution",
+          "convention",
+        ],
+        "type": "string",
+      },
+    },
+    "required": [
+      "content",
+    ],
+    "type": "object",
+  },
+  "name": "remember",
+}
+`;
+
+exports[`generated tool schemas (#119) > remember_batch matches the recorded contract 1`] = `
+{
+  "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false,
+    "title": "Batch Remember",
+  },
+  "description": "Store multiple facts, preferences, decisions, or other knowledge items as semantic memories in a single call. Supports up to 50 items per batch. Automatically deduplicates against existing memories and within the batch. Use for bulk ingestion from RLM agents or dream pipeline. Optionally link each memory to existing graph entities via relates_to_entities.",
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "memories": {
+        "description": "Array of memories to store (max 50)",
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "content": {
+              "description": "The fact, preference, or knowledge to remember",
+              "minLength": 1,
+              "type": "string",
+            },
+            "context": {
+              "description": "Provenance note stored alongside the memory",
+              "maxLength": 500,
+              "type": "string",
+            },
+            "importance": {
+              "description": "Importance score (0-1)",
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number",
+            },
+            "relates_to_entities": {
+              "description": "Entity names to link this memory to. Bumps mention counts and creates pairwise related_to relationships between entities.",
+              "items": {
+                "type": "string",
+              },
+              "maxItems": 10,
+              "type": "array",
+            },
+            "source": {
+              "description": "Source of this memory (user, dream, rlm, import, hermes-mirror)",
+              "enum": [
+                "user",
+                "dream",
+                "rlm",
+                "import",
+                "hermes-mirror",
+              ],
+              "type": "string",
+            },
+            "type": {
+              "default": "fact",
+              "description": "Type of memory",
+              "enum": [
+                "preference",
+                "decision",
+                "pattern",
+                "fact",
+                "solution",
+                "convention",
+              ],
+              "type": "string",
+            },
+          },
+          "required": [
+            "content",
+          ],
+          "type": "object",
+        },
+        "maxItems": 50,
+        "minItems": 1,
+        "type": "array",
+      },
+      "scope": {
+        "description": "Tenant scope to stamp on this write (e.g. "hermes:career"). Overrides the ENGRAM_SCOPE env default for this call only.",
+        "minLength": 1,
+        "type": "string",
+      },
+    },
+    "required": [
+      "memories",
+    ],
+    "type": "object",
+  },
+  "name": "remember_batch",
+}
+`;
+
+exports[`generated tool schemas (#119) > scan_file matches the recorded contract 1`] = `
+{
+  "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true,
+    "title": "Scan File",
+  },
+  "description": "Scan a file server-side with regex patterns and return structured matches with surrounding context. The file is read on the server and never loaded into conversation context. Supports multiple patterns, context windows, overlap deduplication, and function context detection.",
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "context_lines": {
+        "default": 2,
+        "description": "Lines of context before and after each match (0-10)",
+        "maximum": 10,
+        "minimum": 0,
+        "type": "integer",
+      },
+      "deduplicate_overlaps": {
+        "default": true,
+        "description": "Merge overlapping context windows to avoid duplicate lines",
+        "type": "boolean",
+      },
+      "group_by": {
+        "default": "location",
+        "description": "Order results by file location or grouped by pattern",
+        "enum": [
+          "pattern",
+          "location",
+        ],
+        "type": "string",
+      },
+      "max_matches": {
+        "default": 100,
+        "description": "Maximum matches to return (1-500)",
+        "maximum": 500,
+        "minimum": 1,
+        "type": "integer",
+      },
+      "path": {
+        "description": "Absolute path to the file to scan",
+        "minLength": 1,
+        "type": "string",
+      },
+      "patterns": {
+        "description": "Regex patterns to search for (max 10)",
+        "items": {
+          "type": "string",
+        },
+        "maxItems": 10,
+        "minItems": 1,
+        "type": "array",
+      },
+      "session_id": {
+        "description": "Optional session ID for token budget tracking",
+        "format": "uuid",
+        "type": "string",
+      },
+    },
+    "required": [
+      "path",
+      "patterns",
+    ],
+    "type": "object",
+  },
+  "name": "scan_file",
+}
+`;
+
+exports[`generated tool schemas (#119) > show matches the recorded contract 1`] = `
+{
+  "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true,
+    "title": "Show Conversation",
+  },
+  "description": "Read full conversations to extract detailed context after finding relevant results with recall. Use startLine/endLine pagination for large conversations.",
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "endLine": {
+        "minimum": 1,
+        "type": "integer",
+      },
+      "path": {
+        "minLength": 1,
+        "type": "string",
+      },
+      "startLine": {
+        "minimum": 1,
+        "type": "integer",
+      },
+    },
+    "required": [
+      "path",
+    ],
+    "type": "object",
+  },
+  "name": "show",
+}
+`;

@@ -84,14 +84,13 @@ function buildFunctionContextIndex(lines: string[]): Array<string | undefined> {
 
 // ─── Context Extraction ─────────────────────────────────────────
 
+/** Numbered lines `start..end` (0-indexed, inclusive), the match line marked with `>`. */
 function extractContext(
   lines: string[],
-  matchLine: number, // 0-indexed
-  contextLines: number,
-  totalLines: number,
+  matchLine: number,
+  start: number,
+  end: number,
 ): string {
-  const start = Math.max(0, matchLine - contextLines);
-  const end = Math.min(totalLines - 1, matchLine + contextLines);
   const lineNumWidth = String(end + 1).length;
 
   const contextParts: string[] = [];
@@ -257,20 +256,11 @@ export function scanFile(params: ScanFileParams): ScanFileResult {
         }
       }
 
-      // Build context for this match using its (possibly trimmed) window
-      const lineNumWidth = String(mergedEnd + 1).length;
-      const contextParts: string[] = [];
-      for (let li = mergedStart; li <= mergedEnd; li++) {
-        const num = String(li + 1).padStart(lineNumWidth, " ");
-        const marker = li === wm.lineIdx ? ">" : " ";
-        contextParts.push(`${num}${marker}| ${allLines[li]}`);
-      }
-
       matches.push({
         line: wm.line,
         pattern: wm.pattern,
         matchText: wm.matchText,
-        context: contextParts.join("\n"),
+        context: extractContext(allLines, wm.lineIdx, mergedStart, mergedEnd),
         functionContext: functionContextIndex[wm.lineIdx],
       });
     }
@@ -281,7 +271,12 @@ export function scanFile(params: ScanFileParams): ScanFileResult {
         line: rm.line,
         pattern: rm.pattern,
         matchText: rm.matchText,
-        context: extractContext(allLines, rm.lineIdx, context_lines, totalLines),
+        context: extractContext(
+          allLines,
+          rm.lineIdx,
+          Math.max(0, rm.lineIdx - context_lines),
+          Math.min(totalLines - 1, rm.lineIdx + context_lines),
+        ),
         functionContext: functionContextIndex[rm.lineIdx],
       });
     }

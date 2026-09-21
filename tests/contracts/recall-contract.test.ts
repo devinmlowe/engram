@@ -5,13 +5,23 @@
  * Phase 6B: Iterative recall contract verification.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
+import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 
 const serverSource = readFileSync(
   new URL("../../src/interfaces/mcp/server.ts", import.meta.url),
   "utf-8",
 );
+
+// The advertised schemas are generated from the zod schemas (#119): read the
+// exported definitions rather than the source. server.ts only starts a
+// transport when run directly, so importing it is side-effect free.
+let tools: Tool[];
+const tool = (name: string) => tools.find((t) => t.name === name)!;
+beforeAll(async () => {
+  ({ MCP_TOOL_DEFINITIONS: tools } = await import("../../src/interfaces/mcp/server.js"));
+});
 
 describe("existing recall tool unchanged", () => {
   it("recall tool schema unchanged", () => {
@@ -20,15 +30,11 @@ describe("existing recall tool unchanged", () => {
     expect(serverSource).toContain("RecallInputSchema");
 
     // Verify original required field
-    expect(serverSource).toContain('required: ["query"]');
+    expect(tool("recall").inputSchema.required).toEqual(["query"]);
 
     // Verify recall does NOT reference session_id in its schema
     // (recall_session has session_id, not recall)
-    const recallSection = serverSource.substring(
-      serverSource.indexOf('name: "recall"'),
-      serverSource.indexOf('name: "remember"'),
-    );
-    expect(recallSection).not.toContain("session_id");
+    expect(tool("recall").inputSchema.properties).not.toHaveProperty("session_id");
   });
 
   it("recall returns same format as before", () => {
@@ -56,14 +62,9 @@ describe("new tools are properly defined", () => {
     expect(serverSource).toContain("RecallSessionInputSchema");
 
     // Verify it accepts query and session_id
-    const toolSection = serverSource.substring(
-      serverSource.indexOf('name: "recall_session"'),
-      serverSource.indexOf('name: "recall_drill"'),
+    expect(Object.keys(tool("recall_session").inputSchema.properties!)).toEqual(
+      expect.arrayContaining(["query", "session_id", "budget", "sources"]),
     );
-    expect(toolSection).toContain("query");
-    expect(toolSection).toContain("session_id");
-    expect(toolSection).toContain("budget");
-    expect(toolSection).toContain("sources");
   });
 
   it("recall_drill tool exists with correct schema", () => {
@@ -119,12 +120,9 @@ describe("temporal recall surface", () => {
     expect(schemaSection).toContain("dateHint");
     expect(schemaSection).toContain('dateBasis: z.enum(["filed", "event"])');
 
-    const recallSection = serverSource.substring(
-      serverSource.indexOf('name: "recall"'),
-      serverSource.indexOf('name: "remember"'),
-    );
-    expect(recallSection).toContain("dateHint: {");
-    expect(recallSection).toContain('enum: ["filed", "event"]');
+    const props = tool("recall").inputSchema.properties as Record<string, Record<string, unknown>>;
+    expect(props.dateHint).toMatchObject({ type: "string" });
+    expect(props.dateBasis).toMatchObject({ enum: ["filed", "event"] });
   });
 
   it("recall handler forwards dateHint/dateBasis to unifiedSearch (explicit after/before still passed)", () => {
