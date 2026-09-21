@@ -8,12 +8,13 @@
  *   main thread stays free for `/health`, the MCP handshake and list-tools.
  *
  * Session affinity: `recall_session` creates state in the worker's in-memory
- * SessionStore. Follow-up calls that carry that `session_id` (`recall_drill`,
- * `fetch_snippets`, `scan_file`, `recall_session` refinements) are pinned to
- * the worker that created the session so they can find it.
+ * SessionStore and reports the id on `ToolResult.sessionId`. Follow-up calls
+ * that carry that `session_id` (`recall_drill`, `fetch_snippets`,
+ * `scan_file`, `recall_session` refinements) are pinned to the worker that
+ * created the session so they can find it.
  */
 
-import { WorkerPool, type WorkerLike, type WorkerPoolOptions } from "./worker-pool.js";
+import { WorkerPool, type WorkerLike } from "./worker-pool.js";
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -21,6 +22,8 @@ export interface ToolResult {
   content: Array<{ type: string; text: string }>;
   isError?: boolean;
   metadata?: Record<string, unknown>;
+  /** Set by `recall_session`: the session this result belongs to (worker affinity). */
+  sessionId?: string;
   [key: string]: unknown;
 }
 
@@ -44,8 +47,6 @@ export interface DispatcherOptions {
   spawn?: () => WorkerLike;
   /** Default per-call timeout in the pool (ms). */
   timeoutMs?: number;
-  /** Pool tuning passthrough (tests). */
-  poolOptions?: Partial<Pick<WorkerPoolOptions, "hangMultiplier" | "readyTimeoutMs">>;
   log?: (message: string) => void;
 }
 
@@ -127,16 +128,6 @@ function sessionIdOf(args: unknown): string | undefined {
   return typeof sid === "string" && sid.length > 0 ? sid : undefined;
 }
 
-/** Extract the session id a `recall_session` call reported in its result. */
-export function extractSessionId(result: ToolResult): string | undefined {
-  for (const part of result.content ?? []) {
-    if (part.type !== "text") continue;
-    const match = /<session id="([^"]+)"/.exec(part.text);
-    if (match) return match[1];
-  }
-  return undefined;
-}
-
 export function parseWorkerCount(raw: string | undefined, fallback: number): number {
   if (raw === undefined || raw.trim() === "") return fallback;
   const n = Number.parseInt(raw, 10);
@@ -189,13 +180,7 @@ export function createToolDispatcher(options: DispatcherOptions): ToolDispatcher
   }
 
   const timeoutMs = options.timeoutMs ?? DEFAULT_WORKER_TIMEOUT_MS;
-  const pool = new WorkerPool({
-    size: options.workers,
-    spawn: options.spawn,
-    timeoutMs,
-    log,
-    ...options.poolOptions,
-  });
+  const pool = new WorkerPool({ size: options.workers, spawn: options.spawn, timeoutMs, log });
 
   // session_id → worker slot that owns the session
   const affinity = new Map<string, number>();
@@ -220,10 +205,7 @@ export function createToolDispatcher(options: DispatcherOptions): ToolDispatcher
         affinity: pinned,
         context: context as Record<string, unknown> | undefined,
       });
-      if (name === "recall_session") {
-        const created = extractSessionId(result);
-        if (created) remember(created, slot);
-      }
+      if (name === "recall_session" && result.sessionId) remember(result.sessionId, slot);
       return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

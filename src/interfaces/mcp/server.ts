@@ -898,6 +898,7 @@ export async function handleToolCall(name: string, args: unknown, context?: Tool
 
       return {
         content: [{ type: "text", text: `${sessionMeta}\n${xml}` }],
+        sessionId: result.sessionId,
       };
     }
 
