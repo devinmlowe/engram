@@ -49,6 +49,7 @@ import {
   drillRecallResult,
 } from "../shared/search.js";
 import { exploreEntity, exploreSelective } from "../../graph/search.js";
+import { formatExplore, formatReflect } from "../../graph/format.js";
 import { fetchSnippets } from "../../_core/search/snippets.js";
 import { scanFile } from "../../_core/search/scan.js";
 import { getSessionStore } from "../../_core/search/index.js";
@@ -862,52 +863,8 @@ export async function handleToolCall(name: string, args: unknown, context?: Tool
         scopes: resolveCallScoping(process.env, params).readScopes,
       });
 
-      // Format as XML with token budget
-      const budget = params.budget;
-      let tokenEstimate = 0;
-      const lines: string[] = [];
-
-      const header = `<engram_graph entity="${escapeXml(result.centerEntity.name)}" type="${result.centerEntity.type}" total_neighbors="${result.neighbors.length}">`;
-      lines.push(header);
-      tokenEstimate += Math.ceil(header.length / 4);
-
-      if (result.centerEntity.description) {
-        const desc = `  <description>${escapeXml(result.centerEntity.description)}</description>`;
-        lines.push(desc);
-        tokenEstimate += Math.ceil(desc.length / 4);
-      }
-
-      let included = 0;
-      for (const neighbor of result.neighbors) {
-        const dir = neighbor.relationship.direction;
-        const attrs =
-          dir === "outgoing"
-            ? `direction="outgoing" type="${neighbor.relationship.type}" target="${escapeXml(neighbor.entity.name)}" weight="${neighbor.relationship.weight.toFixed(2)}"`
-            : `direction="incoming" type="${neighbor.relationship.type}" source="${escapeXml(neighbor.entity.name)}" weight="${neighbor.relationship.weight.toFixed(2)}"`;
-        const relLine = neighbor.relationship.context
-          ? `  <relationship ${attrs}>\n    ${escapeXml(neighbor.relationship.context)}\n  </relationship>`
-          : `  <relationship ${attrs} />`;
-        const relTokens = Math.ceil(relLine.length / 4);
-
-        if (tokenEstimate + relTokens > budget) break;
-        lines.push(relLine);
-        tokenEstimate += relTokens;
-        included++;
-      }
-
-      if (included < result.neighbors.length) {
-        lines.push(`  <!-- ${result.neighbors.length - included} more neighbors omitted (budget) -->`);
-      }
-
-      if (result.community) {
-        lines.push(
-          `  <community name="${escapeXml(result.community.name)}" entities="${result.community.entityCount}" />`,
-        );
-      }
-      lines.push("</engram_graph>");
-
       return {
-        content: [{ type: "text", text: lines.join("\n") }],
+        content: [{ type: "text", text: formatExplore(result, "xml", params.budget) }],
       };
     }
 
@@ -1090,8 +1047,7 @@ export async function handleToolCall(name: string, args: unknown, context?: Tool
         };
       }
 
-      const xml = formatReflectXml(result, params.mode);
-      return { content: [{ type: "text", text: xml }] };
+      return { content: [{ type: "text", text: formatReflect(result, params.mode, "xml") }] };
     }
 
     if (name === "scan_file") {
@@ -1336,117 +1292,6 @@ function formatForgottenXml(result: ForgetResult, actor: string): string {
 
 // Register handlers on the stdio server (used when --http is not passed)
 registerToolHandlers(server);
-
-// ─── Reflect Formatting ─────────────────────────────────────────
-
-function formatReflectXml(result: ReflectResult, mode: string): string {
-  const lines: string[] = [];
-  const timestamp = new Date(result.generatedAt * 1000).toISOString();
-
-  lines.push(
-    `<engram_reflection mode="${escapeXml(mode)}" generation="${result.generation}" timestamp="${timestamp}">`,
-  );
-
-  // Communities section
-  if (mode === "all" || mode === "communities") {
-    const avgCoherence = result.health.averageCoherence;
-    lines.push(
-      `  <communities count="${result.communities.length}" modularity="${result.health.modularity.toFixed(2)}">`,
-    );
-    for (const community of result.communities) {
-      lines.push(
-        `    <community name="${escapeXml(community.name)}" coherence="${community.coherenceScore.toFixed(2)}" entities="${community.entityCount}" memories="${community.memoryCount}">`,
-      );
-      lines.push(`      <description>${escapeXml(community.description)}</description>`);
-      if (community.topEntities.length > 0) {
-        lines.push("      <top_entities>");
-        for (const entity of community.topEntities) {
-          lines.push(
-            `        <entity name="${escapeXml(entity.name)}" type="${escapeXml(entity.type)}" />`,
-          );
-        }
-        lines.push("      </top_entities>");
-      }
-      lines.push("    </community>");
-    }
-    lines.push("  </communities>");
-  }
-
-  // Bridges section
-  if (mode === "all" || mode === "bridges") {
-    lines.push(`  <bridges count="${result.bridges.length}">`);
-    for (const bridge of result.bridges) {
-      lines.push(
-        `    <bridge entity="${escapeXml(bridge.entityName)}" type="${escapeXml(bridge.entityType)}" score="${bridge.bridgeScore.toFixed(2)}" span="${bridge.communitySpan}">`,
-      );
-      if (bridge.narrative) {
-        lines.push(`      <narrative>${escapeXml(bridge.narrative)}</narrative>`);
-      }
-      if (bridge.connectedCommunities.length > 0) {
-        lines.push("      <connects>");
-        for (const communityName of bridge.connectedCommunities) {
-          lines.push(`        <community name="${escapeXml(communityName)}" />`);
-        }
-        lines.push("      </connects>");
-      }
-      lines.push("    </bridge>");
-    }
-    lines.push("  </bridges>");
-  }
-
-  // Temporal patterns section
-  if (mode === "all" || mode === "temporal") {
-    lines.push(`  <temporal_patterns count="${result.temporalPatterns.length}">`);
-    for (const pattern of result.temporalPatterns) {
-      lines.push(
-        `    <pattern type="${escapeXml(pattern.type)}" confidence="${pattern.confidence.toFixed(1)}">`,
-      );
-      lines.push(`      <description>${escapeXml(pattern.description)}</description>`);
-      if (pattern.entityIds.length > 0) {
-        // Resolve entity names if possible, otherwise show IDs
-        lines.push(`      <entities>${escapeXml(pattern.entityIds.join(", "))}</entities>`);
-      }
-      lines.push("    </pattern>");
-    }
-    lines.push("  </temporal_patterns>");
-  }
-
-  // Health section
-  if (mode === "all" || mode === "health") {
-    lines.push("  <health>");
-    lines.push(`    <stat name="total_nodes" value="${result.health.totalNodes}" />`);
-    lines.push(`    <stat name="total_edges" value="${result.health.totalEdges}" />`);
-    lines.push(`    <stat name="modularity" value="${result.health.modularity.toFixed(2)}" />`);
-    lines.push(`    <stat name="communities" value="${result.health.communityCount}" />`);
-    lines.push(`    <stat name="orphan_nodes" value="${result.health.orphanNodes}" />`);
-    lines.push(`    <stat name="stale_nodes" value="${result.health.staleNodes ?? 0}" />`);
-    lines.push(`    <stat name="average_coherence" value="${result.health.averageCoherence.toFixed(2)}" />`);
-    if (result.staleEntities && result.staleEntities.length > 0) {
-      // #57: flagged by forget, deleted by the next dream prune once no evidence remains
-      lines.push("    <stale_entities>");
-      for (const e of result.staleEntities) {
-        lines.push(`      <entity name="${escapeXml(e.name)}" type="${escapeXml(e.type)}" stale_since="${escapeXml(e.staleSince)}" />`);
-      }
-      lines.push("    </stale_entities>");
-    }
-    lines.push("  </health>");
-  }
-
-  // Observations section (always included when available)
-  if (result.observations.length > 0) {
-    lines.push("  <observations>");
-    for (const obs of result.observations) {
-      lines.push(
-        `    <observation type="${escapeXml(obs.type)}" confidence="${obs.confidence.toFixed(1)}">${escapeXml(obs.content)}</observation>`,
-      );
-    }
-    lines.push("  </observations>");
-  }
-
-  lines.push("</engram_reflection>");
-
-  return lines.join("\n");
-}
 
 // ─── Main ──────────────────────────────────────────────────────
 
