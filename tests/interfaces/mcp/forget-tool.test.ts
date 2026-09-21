@@ -244,7 +244,26 @@ describe("forget honours read_scopes (#25)", () => {
     expect(memoryRow(HOME)!.is_active).toBe(1);
   });
 
-  it('scope: "global" acts across scopes', async () => {
+  it('scope: "global" is no override when ENGRAM_READ_SCOPES pins the process (#109)', async () => {
+    const id = memoryRow(HOME)!.id;
+    vi.stubEnv("ENGRAM_READ_SCOPES", "global,hermes:career");
+    try {
+      const direct = await handleToolCall("forget", { memory_id: id, scope: "global" });
+      expect(direct.isError).toBe(true);
+      expect(text(direct)).toMatch(/outside read_scopes/);
+
+      const byQuery = await handleToolCall("forget", { query: HOME, scope: "global", confirm: true });
+      expect(byQuery.isError).toBeFalsy();
+      expect(text(byQuery)).toContain('forgotten="none"');
+      expect(text(byQuery)).not.toContain(id);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    expect(memoryRow(HOME)!.is_active).toBe(1);
+    expect(changes(id)).toEqual([]);
+  });
+
+  it('scope: "global" acts across scopes when the env is unrestricted', async () => {
     const id = memoryRow(HOME)!.id;
     const res = await handleToolCall("forget", { memory_id: id, read_scopes: ["global", "hermes:career"], scope: "global" });
     expect(res.isError).toBeFalsy();
