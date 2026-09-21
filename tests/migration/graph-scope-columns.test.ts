@@ -45,8 +45,14 @@ describe("graph scope migration", () => {
     expect(scopeVisible("global", undefined)).toBe(true);
     expect(scopeVisible("hermes:a", ["global"])).toBe(false);
     expect(scopeVisible(null, ["global"])).toBe(true);
-    expect(scopeInClause("e.scope", ["a", "b"])).toEqual({ sql: "e.scope IN (?, ?)", params: ["a", "b"] });
+    // #107: COALESCE keeps the IN clause in step with scopeVisible, which
+    // reads a NULL scope as 'global'.
+    expect(scopeInClause("e.scope", ["a", "b"])).toEqual({ sql: "COALESCE(e.scope, 'global') IN (?, ?)", params: ["a", "b"] });
     expect(scopeInClause("e.scope", [])).toBeNull();
+    t.db.prepare("INSERT INTO exchanges (id, conversation_id, project, timestamp, exchange_index, user_message, scope) VALUES ('xnull', 'c9', 'p', '2026-09-17T00:00:00Z', 0, 'null scope', NULL)").run();
+    const clause = scopeInClause("scope", ["global"])!;
+    const seen = t.db.prepare(`SELECT id FROM exchanges WHERE ${clause.sql}`).all(...clause.params) as Array<{ id: string }>;
+    expect(seen.map((r) => r.id)).toContain("xnull");
     entity("e1", "Engram", "hermes:a");
     expect(widenScope(t.db, "entities", "e1", "hermes:a")).toBe(false); // same scope: unchanged
     expect(getEntity(t.db, "e1")!.scope).toBe("hermes:a");

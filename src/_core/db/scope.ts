@@ -1,9 +1,9 @@
 /**
  * Tenant-scope helpers shared by every scoped table (#25).
  *
- * Rows carry `scope` ('global' or e.g. 'hermes:career'). A read with
- * `scopes` set sees only rows whose scope is in the list; without it, every
- * scope (single-tenant behaviour). Graph rows are shared knowledge: an
+ * Rows carry `scope` ('global' or e.g. 'hermes:career'; a NULL column reads
+ * as 'global'). A read with `scopes` set sees only rows whose scope is in the
+ * list; without it, every scope (single-tenant behaviour). Graph rows are shared knowledge: an
  * entity or edge first seen from one profile and later from another is
  * *widened* to 'global' rather than duplicated per tenant.
  */
@@ -16,10 +16,19 @@ export function scopeVisible(rowScope: string | null | undefined, scopes?: reado
   return scopes.includes(rowScope ?? GLOBAL_SCOPE);
 }
 
-/** `col IN (?, ?)` fragment + params, or null when unfiltered. */
+/**
+ * `COALESCE(col, 'global') IN (?, ?)` fragment + params, or null when
+ * unfiltered. #107: the COALESCE keeps this in step with `scopeVisible`,
+ * which reads a NULL scope as 'global'; a bare `col IN (...)` is never true
+ * for NULL, so such a row would be visible to one reader and hidden from the
+ * other.
+ */
 export function scopeInClause(col: string, scopes?: readonly string[]): { sql: string; params: string[] } | null {
   if (!scopes || scopes.length === 0) return null;
-  return { sql: `${col} IN (${scopes.map(() => "?").join(", ")})`, params: [...scopes] };
+  return {
+    sql: `COALESCE(${col}, '${GLOBAL_SCOPE}') IN (${scopes.map(() => "?").join(", ")})`,
+    params: [...scopes],
+  };
 }
 
 /**
