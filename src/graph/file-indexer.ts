@@ -12,7 +12,6 @@ import type Database from "better-sqlite3";
 import { insertEntity, getEntityByName, updateEntity } from "./entity.js";
 import { findOrCreateRelationship } from "./relationship.js";
 import type { Entity, EntityType } from "./types.js";
-import { insertVector } from "../_core/db/index.js";
 
 // ─── Interfaces ──────────────────────────────────────────────────
 

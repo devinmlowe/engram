@@ -22,6 +22,7 @@ SQLite database connection, schema management, and thin data access helpers. All
 - `helpers.ts` — Thin data access helpers (upsert, batch insert)
 - `fts.ts` — FTS5 index rebuild and sync utilities
 - `vector.ts` — sqlite-vec vector table operations
+- `update.ts` — `buildUpdate(columns)`: SET fragments + values for partial updates, skipping undefined (#121)
 - `index.ts` — Module exports
 
 ## See Also

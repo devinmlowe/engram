@@ -10,6 +10,7 @@
 
 import type Database from "better-sqlite3";
 import type { Entity, EntityType } from "./types.js";
+import { buildUpdate } from "../_core/db/update.js";
 import {
   insertVector,
   searchVector,
@@ -153,44 +154,17 @@ export function updateEntity(
       });
     }
 
-    // Build dynamic SET clause
-    const setClauses: string[] = [];
-    const values: unknown[] = [];
-
-    if (updates.name !== undefined) {
-      setClauses.push("name = ?");
-      values.push(updates.name);
-    }
-    if (updates.type !== undefined) {
-      setClauses.push("type = ?");
-      values.push(updates.type);
-    }
-    if (updates.description !== undefined) {
-      setClauses.push("description = ?");
-      values.push(updates.description ?? null);
-    }
-    if (updates.aliases !== undefined) {
-      setClauses.push("aliases = ?");
-      values.push(JSON.stringify(updates.aliases));
-    }
-    if (updates.firstSeen !== undefined) {
-      setClauses.push("first_seen = ?");
-      values.push(updates.firstSeen);
-    }
-    if (updates.lastSeen !== undefined) {
-      setClauses.push("last_seen = ?");
-      values.push(updates.lastSeen);
-    }
-    if (updates.mentionCount !== undefined) {
-      setClauses.push("mention_count = ?");
-      values.push(updates.mentionCount);
-    }
-
-    if (setClauses.length > 0) {
-      values.push(id);
-      db.prepare(
-        `UPDATE entities SET ${setClauses.join(", ")} WHERE id = ?`,
-      ).run(...values);
+    const { set, values } = buildUpdate({
+      name: updates.name,
+      type: updates.type,
+      description: updates.description,
+      aliases: updates.aliases && JSON.stringify(updates.aliases),
+      first_seen: updates.firstSeen,
+      last_seen: updates.lastSeen,
+      mention_count: updates.mentionCount,
+    });
+    if (set.length > 0) {
+      db.prepare(`UPDATE entities SET ${set.join(", ")} WHERE id = ?`).run(...values, id);
     }
 
     // If FTS needs sync, insert new entry
@@ -348,68 +322,33 @@ export function mergeEntities(
     const keepEntity = rowToEntity(keepRow);
     const mergeEntity = rowToEntity(mergeRow);
 
-    // 1. Pre-dedup: delete merge entity's edges that would conflict with
-    //    keep entity's existing edges after repointing (unique constraint).
-    //    For each mergeId edge, check if keepId already has an equivalent edge
-    //    (same target/source and type). If so, delete the lower-weight one.
-
-    // Outgoing edges from mergeId that would conflict with keepId's outgoing
-    const mergeOutgoing = db
-      .prepare(
-        "SELECT id, target_entity_id, type, weight FROM relationships WHERE source_entity_id = ?",
-      )
-      .all(mergeId) as Array<{ id: string; target_entity_id: string; type: string; weight: number }>;
-
-    for (const edge of mergeOutgoing) {
-      const keepEdge = db
-        .prepare(
-          "SELECT id, weight FROM relationships WHERE source_entity_id = ? AND target_entity_id = ? AND type = ?",
-        )
-        .get(keepId, edge.target_entity_id, edge.type) as { id: string; weight: number } | undefined;
-
-      if (keepEdge) {
-        // Conflict: delete the lower-weight edge
-        if (edge.weight > keepEdge.weight) {
-          db.prepare("DELETE FROM relationships WHERE id = ?").run(keepEdge.id);
-        } else {
-          db.prepare("DELETE FROM relationships WHERE id = ?").run(edge.id);
+    // 1. Pre-dedup, then repoint, once per edge direction. A mergeId edge
+    //    that keepId already has (same far endpoint and type) would violate
+    //    the unique constraint after repointing, so the lower-weight one goes.
+    const directions = [
+      ["source_entity_id", "target_entity_id"],
+      ["target_entity_id", "source_entity_id"],
+    ] as const;
+    for (const [near, far] of directions) {
+      const edges = db
+        .prepare(`SELECT id, ${far} AS far, type, weight FROM relationships WHERE ${near} = ?`)
+        .all(mergeId) as Array<{ id: string; far: string; type: string; weight: number }>;
+      for (const edge of edges) {
+        const keepEdge = db
+          .prepare(`SELECT id, weight FROM relationships WHERE ${near} = ? AND ${far} = ? AND type = ?`)
+          .get(keepId, edge.far, edge.type) as { id: string; weight: number } | undefined;
+        if (keepEdge) {
+          db.prepare("DELETE FROM relationships WHERE id = ?").run(
+            edge.weight > keepEdge.weight ? keepEdge.id : edge.id,
+          );
         }
       }
     }
 
-    // Incoming edges to mergeId that would conflict with keepId's incoming
-    const mergeIncoming = db
-      .prepare(
-        "SELECT id, source_entity_id, type, weight FROM relationships WHERE target_entity_id = ?",
-      )
-      .all(mergeId) as Array<{ id: string; source_entity_id: string; type: string; weight: number }>;
-
-    for (const edge of mergeIncoming) {
-      const keepEdge = db
-        .prepare(
-          "SELECT id, weight FROM relationships WHERE source_entity_id = ? AND target_entity_id = ? AND type = ?",
-        )
-        .get(edge.source_entity_id, keepId, edge.type) as { id: string; weight: number } | undefined;
-
-      if (keepEdge) {
-        // Conflict: delete the lower-weight edge
-        if (edge.weight > keepEdge.weight) {
-          db.prepare("DELETE FROM relationships WHERE id = ?").run(keepEdge.id);
-        } else {
-          db.prepare("DELETE FROM relationships WHERE id = ?").run(edge.id);
-        }
-      }
+    // 2. Repoint the remaining edges
+    for (const [near] of directions) {
+      db.prepare(`UPDATE relationships SET ${near} = ? WHERE ${near} = ?`).run(keepId, mergeId);
     }
-
-    // 2. Repoint remaining relationships where source = mergeId
-    db.prepare(
-      "UPDATE relationships SET source_entity_id = ? WHERE source_entity_id = ?",
-    ).run(keepId, mergeId);
-
-    // 3. Repoint remaining relationships where target = mergeId
-    db.prepare(
-      "UPDATE relationships SET target_entity_id = ? WHERE target_entity_id = ?",
-    ).run(keepId, mergeId);
 
     // 4. Transfer aliases from merged entity and add merged name as alias
     const combinedAliases = new Set([

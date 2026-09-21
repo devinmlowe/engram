@@ -18,6 +18,7 @@ Unified LLM client factory with tiered provider cascade. Abstracts provider diff
 
 - `index.ts` — LLM factory, provider selection, unified interface
 - `types.ts` — LLM request/response type definitions
+- `gate.ts` — `makeLlmGate(name)`: the init/reset/setClient/config quartet the semantic extractor, consolidator and graph extractor expose (#121)
 - `providers/` — Provider-specific implementations
   - `anthropic.ts` — Anthropic API client
   - `openai-compatible.ts` — Generic OpenAI chat-completions client + the `openai` tier (OpenAI, LiteLLM, self-hosted gateways; endpoint/model/key-env-var from `ENGRAM_OPENAI_*`, #45)

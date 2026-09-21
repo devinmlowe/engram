@@ -19,6 +19,7 @@
  */
 
 import type { ExtractedFact } from "./types.js";
+import { cosineSimilarity } from "../_core/search/vector.js";
 
 /** Confidence used for ordering when the model did not emit one. */
 const DEFAULT_CONFIDENCE = 0.5;
@@ -91,19 +92,6 @@ export function collapseExact(facts: readonly ExtractedFact[]): CollapseResult {
   return { survivors, memberOf };
 }
 
-function cosine(a: readonly number[], b: readonly number[]): number {
-  let dot = 0;
-  let na = 0;
-  let nb = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-    na += a[i] * a[i];
-    nb += b[i] * b[i];
-  }
-  const denom = Math.sqrt(na) * Math.sqrt(nb);
-  return denom === 0 ? 0 : dot / denom;
-}
-
 export interface EmbeddingCollapseResult extends CollapseResult {
   /** Embedding of each survivor (the winning member's vector). */
   embeddings: number[][];
@@ -134,7 +122,7 @@ export function collapseByEmbedding(
     const embedding = embeddings[i];
     let target = -1;
     for (let j = 0; j < survivors.length; j++) {
-      if (cosine(embedding, survivorEmbeddings[j]) >= threshold) {
+      if (cosineSimilarity(embedding, survivorEmbeddings[j]) >= threshold) {
         target = j;
         break;
       }

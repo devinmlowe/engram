@@ -9,6 +9,7 @@
  */
 
 import type Database from "better-sqlite3";
+import { l2ToCosine } from "../_core/search/vector.js";
 import { scopeVisible } from "../_core/db/scope.js";
 import type {
   SearchOptions,
@@ -458,7 +459,7 @@ export async function exploreSelective(
       // vec_entities is an L2 table over unit vectors: cos = 1 - d²/2
       // (same conversion as resolver/consolidator/remember; `1 - d` is the
       // cosine-distance formula and over-prunes everything below cos 0.5)
-      const similarity = Math.max(0, Math.min(1, 1 - (r.distance * r.distance) / 2));
+      const similarity = Math.max(0, Math.min(1, l2ToCosine(r.distance)));
       scoreMap.set(r.id, similarity);
     }
   }

@@ -13,7 +13,7 @@ import { scopeInClause } from "../_core/db/scope.js";
 import { getMemoryHealth } from "./decay.js";
 import type { Memory, MemoryType, MemorySource, MemoryHealth } from "./types.js";
 import type { MemoryChange, MemoryChangeOp } from "./forget.js";
-import { getMemoryEmbedding } from "./memory.js";
+import { getMemoryEmbedding, rowToMemory, type MemoryRow } from "./memory.js";
 
 // ─── List ───────────────────────────────────────────────────────
 
@@ -166,29 +166,6 @@ export interface MemoryProvenance {
   changes: MemoryChange[];
 }
 
-interface FullMemoryRow {
-  id: string;
-  type: string;
-  content: string;
-  context: string | null;
-  confidence: number;
-  importance: number;
-  access_count: number;
-  last_accessed: number | null;
-  created_at: number;
-  updated_at: number | null;
-  source_exchanges: string | null;
-  superseded_by: string | null;
-  is_active: number;
-  source: string | null;
-  scope: string | null;
-  stability: number | null;
-  event_ts: number | null;
-  extraction_basis: string | null;
-  deleted_at: string | null;
-  deleted_by: string | null;
-}
-
 function parseSources(raw: string | null): string[] {
   if (!raw) return [];
   try {
@@ -206,32 +183,11 @@ function parseSources(raw: string | null): string[] {
 export function getMemoryProvenance(db: Database.Database, idOrPrefix: string): MemoryProvenance | null {
   const id = resolveMemoryId(db, idOrPrefix);
   if (!id) return null;
-  const row = db.prepare("SELECT * FROM memories WHERE id = ?").get(id) as FullMemoryRow | undefined;
+  const row = db.prepare("SELECT * FROM memories WHERE id = ?").get(id) as MemoryRow | undefined;
   if (!row) return null;
 
   const sourceIds = parseSources(row.source_exchanges);
-  const memory: Memory = {
-    id: row.id,
-    type: row.type as MemoryType,
-    content: row.content,
-    context: row.context ?? undefined,
-    confidence: row.confidence,
-    importance: row.importance,
-    accessCount: row.access_count,
-    lastAccessed: row.last_accessed ?? undefined,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at ?? undefined,
-    sourceExchanges: sourceIds,
-    supersededBy: row.superseded_by ?? undefined,
-    isActive: Boolean(row.is_active),
-    source: (row.source as MemorySource) ?? "user",
-    scope: row.scope ?? "global",
-    stability: row.stability ?? undefined,
-    eventTs: row.event_ts ?? undefined,
-    extractionBasis: (row.extraction_basis as Memory["extractionBasis"]) ?? undefined,
-    deletedAt: row.deleted_at ?? undefined,
-    deletedBy: row.deleted_by ?? undefined,
-  };
+  const memory: Memory = { ...rowToMemory(row), sourceExchanges: sourceIds };
 
   // Source exchanges + their conversations
   const sourceExchanges: SourceExchangeInfo[] = [];

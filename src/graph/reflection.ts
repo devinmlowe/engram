@@ -27,6 +27,7 @@ import { computeEdgeWeight, updateRelationshipWeight } from "./relationship.js";
 import { mergeEntities, deleteEntityCascade } from "./entity.js";
 import { buildIntelligenceConfig, generate } from "../_core/llm/index.js";
 import { computeConversationCounts, computeInformativeness } from "./informativeness.js";
+import { parseEvidence } from "../semantic/forget.js";
 
 // ─── Memory Linking ─────────────────────────────────────────────
 
@@ -542,74 +543,21 @@ export async function runReflection(
     };
   });
 
-  // Build bridge result items
-  const bridgeResults = bridgeScores.map((bs) => {
-    // Find which communities this entity bridges
-    const entityCommunities: string[] = [];
-    for (const c of analysis.communities) {
-      if (c.entityIds.includes(bs.entityId)) {
-        const naming = nameMap.get(c.communityId);
-        entityCommunities.push(
-          naming?.name ?? `Community ${c.communityId}`,
-        );
-      }
-    }
-    // Also check neighbor communities
-    // For simplicity, just list the communities the entity touches
+  // Build bridge result items: the communities the entity touches
+  const bridgeResults = bridgeScores.map((bs) =>
+    bridgeResult(
+      bs,
+      analysis.communities
+        .filter((c) => c.entityIds.includes(bs.entityId))
+        .map((c) => nameMap.get(c.communityId)?.name ?? `Community ${c.communityId}`),
+    ),
+  );
 
-    return {
-      entityName: bs.entityName,
-      entityType: bs.entityType,
-      bridgeScore: bs.bridgeScore,
-      communitySpan: bs.communitySpan,
-      narrative: bs.narrative,
-      connectedCommunities: entityCommunities,
-    };
-  });
-
-  // Compute orphan count
-  const orphanCount =
-    (
-      db
-        .prepare(
-          `SELECT COUNT(*) as cnt FROM entities e
-           WHERE NOT EXISTS (
-             SELECT 1 FROM relationships r
-             WHERE r.source_entity_id = e.id OR r.target_entity_id = e.id
-           )`,
-        )
-        .get() as { cnt: number }
-    ).cnt;
-
-  const avgCoherence =
-    analysis.communities.length > 0
-      ? analysis.communities.reduce((sum, c) => sum + c.coherenceScore, 0) /
-        analysis.communities.length
-      : 0;
-
-  // Count total generations
-  const genCountRow = db
-    .prepare(
-      "SELECT COUNT(DISTINCT generation) as cnt FROM topic_clusters",
-    )
-    .get() as { cnt: number };
-
-  const stale = staleEntitySummary(db);
   const partialResult: Partial<ReflectResult> = {
     communities: communityResults,
     bridges: bridgeResults,
     temporalPatterns,
-    health: {
-      totalNodes: analysis.totalNodes,
-      totalEdges: analysis.totalEdges,
-      modularity: analysis.modularity,
-      communityCount: analysis.communities.length,
-      orphanNodes: orphanCount,
-      staleNodes: stale.count,
-      averageCoherence: avgCoherence,
-      generationCount: genCountRow.cnt,
-    },
-    staleEntities: stale.entities,
+    ...buildHealth(db, communityResults, analysis),
     generation,
     generatedAt: Math.floor(Date.now() / 1000),
   };
@@ -695,15 +643,7 @@ export function buildReflectResultFromCache(
   });
 
   // Load bridge scores
-  const bridgeScores = getBridgeScores(db, generation);
-  const bridges = bridgeScores.map((bs) => ({
-    entityName: bs.entityName,
-    entityType: bs.entityType,
-    bridgeScore: bs.bridgeScore,
-    communitySpan: bs.communitySpan,
-    narrative: bs.narrative,
-    connectedCommunities: [] as string[],
-  }));
+  const bridges = getBridgeScores(db, generation).map((bs) => bridgeResult(bs, []));
 
   // Load temporal patterns
   let temporalPatterns: TemporalPattern[] = [];
@@ -741,56 +681,68 @@ export function buildReflectResultFromCache(
     generation: row.generation,
   }));
 
-  // Health metrics
-  const totalNodes =
-    (db.prepare("SELECT COUNT(*) as cnt FROM entities").get() as { cnt: number }).cnt;
-  const totalEdges =
-    (db.prepare("SELECT COUNT(*) as cnt FROM relationships").get() as { cnt: number }).cnt;
-  const orphanNodes =
-    (
-      db
-        .prepare(
-          `SELECT COUNT(*) as cnt FROM entities e
-           WHERE NOT EXISTS (
-             SELECT 1 FROM relationships r
-             WHERE r.source_entity_id = e.id OR r.target_entity_id = e.id
-           )`,
-        )
-        .get() as { cnt: number }
-    ).cnt;
-
-  const avgCoherence =
-    communities.length > 0
-      ? communities.reduce((sum, c) => sum + c.coherenceScore, 0) /
-        communities.length
-      : 0;
-
-  const genCountRow = db
-    .prepare(
-      "SELECT COUNT(DISTINCT generation) as cnt FROM topic_clusters",
-    )
-    .get() as { cnt: number };
-
-  const stale = staleEntitySummary(db);
-
   return {
     communities,
     bridges,
     temporalPatterns,
-    health: {
-      totalNodes,
-      totalEdges,
-      modularity: 0, // Not stored in cache; would need to re-analyze
-      communityCount: communities.length,
-      orphanNodes,
-      staleNodes: stale.count,
-      averageCoherence: avgCoherence,
-      generationCount: genCountRow.cnt,
-    },
-    staleEntities: stale.entities,
+    ...buildHealth(db, communities),
     observations,
     generation,
     generatedAt: Math.floor(Date.now() / 1000),
+  };
+}
+
+function count(db: Database.Database, sql: string): number {
+  return (db.prepare(sql).get() as { cnt: number }).cnt;
+}
+
+/**
+ * Health block shared by a fresh reflection and the cached result. Node and
+ * edge totals and modularity come from the analysis when there is one; the
+ * cache has no modularity and counts the tables instead.
+ */
+function buildHealth(
+  db: Database.Database,
+  communities: ReflectResult["communities"],
+  analysis?: { totalNodes: number; totalEdges: number; modularity: number },
+): Pick<ReflectResult, "health" | "staleEntities"> {
+  const stale = staleEntitySummary(db);
+  return {
+    health: {
+      totalNodes: analysis?.totalNodes ?? count(db, "SELECT COUNT(*) as cnt FROM entities"),
+      totalEdges: analysis?.totalEdges ?? count(db, "SELECT COUNT(*) as cnt FROM relationships"),
+      modularity: analysis?.modularity ?? 0,
+      communityCount: communities.length,
+      orphanNodes: count(
+        db,
+        `SELECT COUNT(*) as cnt FROM entities e
+         WHERE NOT EXISTS (
+           SELECT 1 FROM relationships r
+           WHERE r.source_entity_id = e.id OR r.target_entity_id = e.id
+         )`,
+      ),
+      staleNodes: stale.count,
+      averageCoherence:
+        communities.length > 0
+          ? communities.reduce((sum, c) => sum + c.coherenceScore, 0) / communities.length
+          : 0,
+      generationCount: count(db, "SELECT COUNT(DISTINCT generation) as cnt FROM topic_clusters"),
+    },
+    staleEntities: stale.entities,
+  };
+}
+
+function bridgeResult(
+  bs: ReturnType<typeof getBridgeScores>[number],
+  connectedCommunities: string[],
+): ReflectResult["bridges"][number] {
+  return {
+    entityName: bs.entityName,
+    entityType: bs.entityType,
+    bridgeScore: bs.bridgeScore,
+    communitySpan: bs.communitySpan,
+    narrative: bs.narrative,
+    connectedCommunities,
   };
 }
 
@@ -906,7 +858,7 @@ export function pruneOrphanEntities(
       .all() as Array<{ id: string; source_memories: string | null }>;
     const delRel = db.prepare("DELETE FROM relationships WHERE id = ?");
     for (const rel of staleRels) {
-      if (evidenceCount(rel.source_memories) > 0) continue;
+      if (parseEvidence(rel.source_memories).length > 0) continue;
       delRel.run(rel.id);
       staleRelationshipsPruned++;
     }
@@ -950,23 +902,6 @@ export function pruneOrphanEntities(
   run();
 
   return { pruned: pruned + staleEntitiesPruned, staleRelationshipsPruned, staleEntitiesPruned };
-}
-
-/** Number of evidence ids in a `relationships.source_memories` JSON array (flat or nested). */
-function evidenceCount(raw: string | null): number {
-  if (!raw) return 0;
-  try {
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return 0;
-    let n = 0;
-    for (const item of parsed) {
-      if (typeof item === "string") n++;
-      else if (Array.isArray(item)) n += item.filter((x) => typeof x === "string").length;
-    }
-    return n;
-  } catch {
-    return 0;
-  }
 }
 
 /**

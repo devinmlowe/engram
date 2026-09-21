@@ -12,20 +12,10 @@
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AnthropicClient as Anthropic } from "../_core/llm/index.js";
 import type Database from "better-sqlite3";
 import type { Memory, MemorySource, MemoryType } from "./types.js";
-import {
-  buildIntelligenceConfig,
-  generateStructured,
-  isAnthropicAvailable,
-  isOllamaAvailable,
-  isOpenRouterAvailable,
-  resetIntelligence,
-  setClient as setIntelligenceClient,
-  type IntelligenceConfig,
-} from "../_core/llm/index.js";
-import { loadConfig } from "../_core/config/index.js";
+import { generateStructured, type IntelligenceConfig } from "../_core/llm/index.js";
+import { makeLlmGate } from "../_core/llm/gate.js";
 import type {
   ExtractedFact,
   DeduplicationResult,
@@ -45,6 +35,7 @@ import {
 import { classifyNli } from "./nli.js";
 import { collapseExact, collapseByEmbedding, normalizeContent } from "./collapse.js";
 import { applyTransientPolicy } from "./transient.js";
+import { cosineSimilarity, l2ToCosine } from "../_core/search/vector.js";
 
 // ─── Module State ───────────────────────────────────────────────
 
@@ -71,40 +62,14 @@ const SUPERSESSION_CHAIN_MAX_HOPS = 5;
 
 // ─── Initialization ─────────────────────────────────────────────
 
-/**
- * Verify that at least one tier of the LLM cascade can resolve conflicts.
- *
- * Credentials and clients are owned by the _core/llm factory; this only
- * checks reachability so callers fail fast with a clear message. Per
- * SPEC.md INV-3 a reachable local Ollama model is sufficient on its own.
- */
-export async function initConsolidator(): Promise<void> {
-  if (isAnthropicAvailable() || isOpenRouterAvailable()) return;
-  if (await isOllamaAvailable(intelligenceConfig())) return;
-  throw new Error(
-    "No conflict resolution provider configured. " +
-      "Set ANTHROPIC_API_KEY or OPENROUTER_API_KEY, or run Ollama with the configured local model.",
-  );
-}
-
-/**
- * Reset the consolidator state (for testing). Clears the factory's client.
- */
-export function resetConsolidator(): void {
-  resetIntelligence();
-}
-
-/**
- * Inject a custom Anthropic client into the factory (for testing with mocks).
- */
-export function setConsolidatorClient(customClient: Anthropic): void {
-  setIntelligenceClient(customClient);
-}
-
-/** Cascade configuration derived from the application config. */
-function intelligenceConfig(): IntelligenceConfig {
-  return buildIntelligenceConfig(loadConfig());
-}
+const gate = makeLlmGate("conflict resolution");
+/** Verify that at least one tier of the LLM cascade can resolve conflicts. */
+export const initConsolidator = gate.init;
+/** Reset the consolidator state (for testing). Clears the factory's client. */
+export const resetConsolidator = gate.reset;
+/** Inject a custom Anthropic client into the factory (for testing with mocks). */
+export const setConsolidatorClient = gate.setClient;
+const intelligenceConfig = gate.config;
 
 // ─── Conflict Resolution Tool Schema ────────────────────────────
 
@@ -132,14 +97,6 @@ const RESOLVE_CONFLICT_SCHEMA: Record<string, unknown> = {
 };
 
 // ─── Core Functions ─────────────────────────────────────────────
-
-/**
- * Convert L2 distance (from sqlite-vec) to cosine similarity.
- * For unit-normalized vectors: cosine_sim = 1 - (distance^2 / 2)
- */
-function distanceToCosineSim(distance: number): number {
-  return 1 - (distance * distance) / 2;
-}
 
 /** Per-conversation consolidation options. */
 export interface ConsolidateOptions {
@@ -273,7 +230,7 @@ async function deduplicateEmbeddedFact(
 
   // 3. Check each neighbor against thresholds
   for (const neighbor of neighbors) {
-    const similarity = distanceToCosineSim(neighbor.distance);
+    const similarity = l2ToCosine(neighbor.distance);
 
     // Tier 1: Auto-merge (near duplicate)
     if (similarity >= AUTO_MERGE_THRESHOLD) {
@@ -548,20 +505,6 @@ function findSupersededAncestorMatching(
     frontier = next;
   }
   return null;
-}
-
-function cosineSimilarity(a: readonly number[], b: readonly number[]): number {
-  let dot = 0;
-  let na = 0;
-  let nb = 0;
-  const n = Math.min(a.length, b.length);
-  for (let i = 0; i < n; i++) {
-    dot += a[i] * b[i];
-    na += a[i] * a[i];
-    nb += b[i] * b[i];
-  }
-  const denom = Math.sqrt(na) * Math.sqrt(nb);
-  return denom === 0 ? 0 : dot / denom;
 }
 
 /**

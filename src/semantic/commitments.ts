@@ -19,9 +19,11 @@ import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type Database from "better-sqlite3";
+import { cosineSimilarity } from "../_core/search/vector.js";
 import { escapeXml } from "../_core/search/format.js";
 import { estimateTokens } from "../_core/search/budget.js";
 import { parseDateHint, isoDayToEpochSeconds, toIsoDay } from "../_core/search/dates.js";
+import { formatConversation } from "./extractor.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -116,11 +118,6 @@ function loadPromptTemplate(): string {
   return readFileSync(join(__dirname, "..", "..", "prompts", "extract-commitments.md"), "utf-8");
 }
 
-function clip(text: string, cap: number): string {
-  if (text.length <= cap) return text;
-  return `${text.slice(0, cap)} …[truncated]`;
-}
-
 /**
  * Build the extraction prompt. Assistant turns are abbreviated: commitments
  * come from the user's words, the assistant text is only context.
@@ -129,16 +126,8 @@ export function buildCommitmentsPrompt(
   exchanges: CommitmentExchange[],
   metadata: CommitmentMetadata,
 ): string {
-  const template = loadPromptTemplate();
-  const header = `Project: ${metadata.project}, Date Range: ${metadata.dateRange}`;
-  const body = exchanges
-    .map(
-      (ex) =>
-        `[Exchange ${ex.index}]\nUser: ${clip(ex.userMessage, USER_MESSAGE_CAP)}\n` +
-        `Assistant: ${clip(ex.assistantMessage, ASSISTANT_MESSAGE_CAP)}`,
-    )
-    .join("\n\n");
-  return `${template}\n${header}\n\n${body}`;
+  const body = formatConversation(exchanges, metadata, { user: USER_MESSAGE_CAP, assistant: ASSISTANT_MESSAGE_CAP });
+  return `${loadPromptTemplate()}\n${body}`;
 }
 
 // ─── Response validation ────────────────────────────────────────
@@ -365,17 +354,7 @@ export function lexicalOverlap(a: string, b: string): number {
   return inter / Math.min(ta.size, tb.size);
 }
 
-export function cosineSimilarity(a: number[], b: number[]): number {
-  let dot = 0, na = 0, nb = 0;
-  const n = Math.min(a.length, b.length);
-  for (let i = 0; i < n; i++) {
-    dot += a[i] * b[i];
-    na += a[i] * a[i];
-    nb += b[i] * b[i];
-  }
-  if (na === 0 || nb === 0) return 0;
-  return dot / (Math.sqrt(na) * Math.sqrt(nb));
-}
+export { cosineSimilarity };
 
 interface Comparator {
   content: string;

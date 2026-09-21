@@ -13,19 +13,9 @@
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AnthropicClient as Anthropic } from "../_core/llm/index.js";
 import type { EntityType, RelationshipType, GraphExtractionTier } from "./types.js";
-import {
-  buildIntelligenceConfig,
-  generateStructured,
-  isAnthropicAvailable,
-  isOllamaAvailable,
-  isOpenRouterAvailable,
-  resetIntelligence,
-  setClient as setIntelligenceClient,
-  type IntelligenceConfig,
-} from "../_core/llm/index.js";
-import { loadConfig } from "../_core/config/index.js";
+import { generateStructured, type IntelligenceConfig } from "../_core/llm/index.js";
+import { makeLlmGate } from "../_core/llm/gate.js";
 import type {
   ExtractedEntity,
   ExtractedRelationship,
@@ -34,6 +24,8 @@ import type {
 } from "./types.js";
 import {
   cascadeTierOf,
+  formatConversation,
+  unwrapToolResult,
   type ConversationExchange,
   type ConversationMetadata,
 } from "../semantic/extractor.js";
@@ -137,40 +129,14 @@ const EXTRACT_RELATIONSHIPS_SCHEMA: Record<string, unknown> = {
 
 // ─── Initialization ─────────────────────────────────────────────
 
-/**
- * Verify that at least one tier of the LLM cascade can serve extraction.
- *
- * Credentials and clients are owned by the _core/llm factory; this only
- * checks reachability so callers fail fast with a clear message. Per
- * SPEC.md INV-3 a reachable local Ollama model is sufficient on its own.
- */
-export async function initGraphExtractor(): Promise<void> {
-  if (isAnthropicAvailable() || isOpenRouterAvailable()) return;
-  if (await isOllamaAvailable(intelligenceConfig())) return;
-  throw new Error(
-    "No graph extraction provider configured. " +
-      "Set ANTHROPIC_API_KEY or OPENROUTER_API_KEY, or run Ollama with the configured local model.",
-  );
-}
-
-/**
- * Reset the graph extractor state (for testing). Clears the factory's client.
- */
-export function resetGraphExtractor(): void {
-  resetIntelligence();
-}
-
-/**
- * Inject a custom Anthropic client into the factory (for testing with mocks).
- */
-export function setGraphExtractorClient(customClient: Anthropic): void {
-  setIntelligenceClient(customClient);
-}
-
-/** Cascade configuration derived from the application config. */
-function intelligenceConfig(): IntelligenceConfig {
-  return buildIntelligenceConfig(loadConfig());
-}
+const gate = makeLlmGate("graph extraction");
+/** Verify that at least one tier of the LLM cascade can serve extraction. */
+export const initGraphExtractor = gate.init;
+/** Reset the graph extractor state (for testing). Clears the factory's client. */
+export const resetGraphExtractor = gate.reset;
+/** Inject a custom Anthropic client into the factory (for testing with mocks). */
+export const setGraphExtractorClient = gate.setClient;
+const intelligenceConfig = gate.config;
 
 // ─── Prompt Building ────────────────────────────────────────────
 
@@ -190,23 +156,7 @@ export function buildEntityExtractionPrompt(
   exchanges: ConversationExchange[],
   metadata: ConversationMetadata,
 ): string {
-  const template = loadPromptTemplate("extract-entities.md");
-
-  // Build metadata header
-  const metaParts: string[] = [`Project: ${metadata.project}`];
-  if (metadata.branch) metaParts.push(`Branch: ${metadata.branch}`);
-  metaParts.push(`Date Range: ${metadata.dateRange}`);
-  const metaHeader = metaParts.join(", ");
-
-  // Format exchanges
-  const formattedExchanges = exchanges
-    .map(
-      (ex) =>
-        `[Exchange ${ex.index}]\nUser: ${ex.userMessage}\nAssistant: ${ex.assistantMessage}`,
-    )
-    .join("\n\n");
-
-  return `${template}\n---\n${metaHeader}\n\n${formattedExchanges}`;
+  return `${loadPromptTemplate("extract-entities.md")}\n---\n${formatConversation(exchanges, metadata)}`;
 }
 
 /**
@@ -218,33 +168,13 @@ export function buildRelationshipExtractionPrompt(
   metadata: ConversationMetadata,
   entities: Array<{ index: number; name: string; type: EntityType }>,
 ): string {
-  let template = loadPromptTemplate("extract-relationships.md");
-
-  // Build entity list
   const entityList = entities
     .map((e) => `[${e.index}] ${e.name} (${e.type})`)
     .join("\n");
 
-  // Format exchanges
-  const metaParts: string[] = [`Project: ${metadata.project}`];
-  if (metadata.branch) metaParts.push(`Branch: ${metadata.branch}`);
-  metaParts.push(`Date Range: ${metadata.dateRange}`);
-  const metaHeader = metaParts.join(", ");
-
-  const formattedExchanges = exchanges
-    .map(
-      (ex) =>
-        `[Exchange ${ex.index}]\nUser: ${ex.userMessage}\nAssistant: ${ex.assistantMessage}`,
-    )
-    .join("\n\n");
-
-  const conversationText = `${metaHeader}\n\n${formattedExchanges}`;
-
-  // Replace placeholders
-  template = template.replace("{entity_list}", entityList);
-  template = template.replace("{conversation_text}", conversationText);
-
-  return template;
+  return loadPromptTemplate("extract-relationships.md")
+    .replace("{entity_list}", entityList)
+    .replace("{conversation_text}", formatConversation(exchanges, metadata));
 }
 
 // ─── Response Parsing ───────────────────────────────────────────
@@ -303,36 +233,10 @@ export function isBlockedEntityName(name: string): boolean {
 export function parseEntityExtractionResponse(
   toolUseResult: unknown,
 ): ExtractedEntity[] {
-  if (!toolUseResult || typeof toolUseResult !== "object") {
-    return [];
-  }
-
-  const result = toolUseResult as Record<string, unknown>;
-
-  let rawEntities: RawEntity[] = [];
-
-  // Direct entities array (from tool input)
-  if (Array.isArray(result.entities)) {
-    rawEntities = result.entities as RawEntity[];
-  }
-  // Content blocks array (from full API response)
-  else if (Array.isArray(result.content)) {
-    const contentBlocks = result.content as Array<Record<string, unknown>>;
-    for (const block of contentBlocks) {
-      if (block.type === "tool_use" && block.input) {
-        const input = block.input as Record<string, unknown>;
-        if (Array.isArray(input.entities)) {
-          rawEntities = input.entities as RawEntity[];
-          break;
-        }
-      }
-    }
-  }
-
   const entities: ExtractedEntity[] = [];
   const seenNames = new Set<string>();
 
-  for (const raw of rawEntities) {
+  for (const raw of unwrapToolResult<RawEntity>(toolUseResult, "entities")) {
     // Validate name
     if (!raw.name || typeof raw.name !== "string" || raw.name.trim() === "") {
       continue;
@@ -378,35 +282,9 @@ export function parseRelationshipExtractionResponse(
   toolUseResult: unknown,
   entityCount: number,
 ): ExtractedRelationship[] {
-  if (!toolUseResult || typeof toolUseResult !== "object") {
-    return [];
-  }
-
-  const result = toolUseResult as Record<string, unknown>;
-
-  let rawRelationships: RawRelationship[] = [];
-
-  // Direct relationships array (from tool input)
-  if (Array.isArray(result.relationships)) {
-    rawRelationships = result.relationships as RawRelationship[];
-  }
-  // Content blocks array (from full API response)
-  else if (Array.isArray(result.content)) {
-    const contentBlocks = result.content as Array<Record<string, unknown>>;
-    for (const block of contentBlocks) {
-      if (block.type === "tool_use" && block.input) {
-        const input = block.input as Record<string, unknown>;
-        if (Array.isArray(input.relationships)) {
-          rawRelationships = input.relationships as RawRelationship[];
-          break;
-        }
-      }
-    }
-  }
-
   const relationships: ExtractedRelationship[] = [];
 
-  for (const raw of rawRelationships) {
+  for (const raw of unwrapToolResult<RawRelationship>(toolUseResult, "relationships")) {
     // Validate indexes are present and numeric
     if (
       typeof raw.source_entity_index !== "number" ||

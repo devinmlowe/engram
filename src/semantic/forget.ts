@@ -240,7 +240,7 @@ function logChange(
 }
 
 /** Flatten `relationships.source_memories` (flat strings or nested one-element arrays). */
-function parseEvidence(raw: string | null): string[] {
+export function parseEvidence(raw: string | null): string[] {
   if (!raw) return [];
   let parsed: unknown;
   try {

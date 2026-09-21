@@ -19,10 +19,12 @@ import {
   deleteFtsRow,
 } from "../_core/db/index.js";
 import { onSuccessfulAccess, onContradiction } from "./decay.js";
+import { buildUpdate } from "../_core/db/update.js";
 
 // ─── Row Type Helpers ───────────────────────────────────────────
 
-interface MemoryRow {
+/** A `memories` row as better-sqlite3 returns it (`SELECT *`). */
+export interface MemoryRow {
   id: string;
   type: string;
   content: string;
@@ -45,7 +47,8 @@ interface MemoryRow {
   deleted_by?: string | null;
 }
 
-function rowToMemory(row: MemoryRow): Memory {
+/** Map a `memories` row to the Memory shape every reader returns. */
+export function rowToMemory(row: MemoryRow): Memory {
   return {
     id: row.id,
     type: row.type as MemoryType,
@@ -185,62 +188,24 @@ export function updateMemory(
       });
     }
 
-    // Build dynamic SET clause
-    const setClauses: string[] = [];
-    const values: unknown[] = [];
-
-    if (updates.content !== undefined) {
-      setClauses.push("content = ?");
-      values.push(updates.content);
-    }
-    if (updates.context !== undefined) {
-      setClauses.push("context = ?");
-      values.push(updates.context ?? null);
-    }
-    if (updates.confidence !== undefined) {
-      setClauses.push("confidence = ?");
-      values.push(updates.confidence);
-    }
-    if (updates.importance !== undefined) {
-      setClauses.push("importance = ?");
-      values.push(updates.importance);
-    }
-    if (updates.accessCount !== undefined) {
-      setClauses.push("access_count = ?");
-      values.push(updates.accessCount);
-    }
-    if (updates.lastAccessed !== undefined) {
-      setClauses.push("last_accessed = ?");
-      values.push(updates.lastAccessed);
-    }
-    if (updates.supersededBy !== undefined) {
-      setClauses.push("superseded_by = ?");
-      values.push(updates.supersededBy);
-    }
-    if (updates.isActive !== undefined) {
-      setClauses.push("is_active = ?");
-      values.push(updates.isActive ? 1 : 0);
-    }
-    if (updates.sourceExchanges !== undefined) {
-      setClauses.push("source_exchanges = ?");
-      values.push(JSON.stringify(updates.sourceExchanges));
+    const { set, values } = buildUpdate({
+      content: updates.content,
+      context: updates.context,
+      confidence: updates.confidence,
+      importance: updates.importance,
+      access_count: updates.accessCount,
+      last_accessed: updates.lastAccessed,
+      superseded_by: updates.supersededBy,
+      is_active: updates.isActive === undefined ? undefined : updates.isActive ? 1 : 0,
+      source_exchanges: updates.sourceExchanges && JSON.stringify(updates.sourceExchanges),
       // Keep the denormalized event time in step with its sources
-      setClauses.push("event_ts = ?");
-      values.push(updates.eventTs ?? resolveEventTs(db, updates.sourceExchanges));
-    } else if (updates.eventTs !== undefined) {
-      setClauses.push("event_ts = ?");
-      values.push(updates.eventTs);
-    }
-
-    // Always update updated_at
-    setClauses.push("updated_at = unixepoch()");
-
-    if (setClauses.length > 0) {
-      values.push(id);
-      db.prepare(
-        `UPDATE memories SET ${setClauses.join(", ")} WHERE id = ?`,
-      ).run(...values);
-    }
+      event_ts:
+        updates.sourceExchanges !== undefined
+          ? updates.eventTs ?? resolveEventTs(db, updates.sourceExchanges)
+          : updates.eventTs,
+    });
+    set.push("updated_at = unixepoch()");
+    db.prepare(`UPDATE memories SET ${set.join(", ")} WHERE id = ?`).run(...values, id);
 
     // If FTS needs sync, insert new entry
     if (needsFtsSync) {

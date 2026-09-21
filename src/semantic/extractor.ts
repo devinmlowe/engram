@@ -12,22 +12,14 @@
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AnthropicClient as Anthropic } from "../_core/llm/index.js";
 import type { MemoryType } from "./types.js";
 import {
-  buildIntelligenceConfig,
   generateStructured,
-  isAnthropicAvailable,
-  isOllamaAvailable,
-  isOpenRouterAvailable,
-  resetIntelligence,
-  resolveOpenAIRouteConfig,
-  setClient as setIntelligenceClient,
   type GenerationResult,
   type IntelligenceConfig,
   type LlmProvider,
 } from "../_core/llm/index.js";
-import { loadConfig } from "../_core/config/index.js";
+import { makeLlmGate } from "../_core/llm/gate.js";
 import type {
   ExtractedFact,
   ExtractionResult,
@@ -156,43 +148,14 @@ export interface ConversationMetadata {
 
 // ─── Initialization ─────────────────────────────────────────────
 
-/**
- * Verify that at least one tier of the LLM cascade can serve extraction.
- *
- * Credentials and clients are owned by the _core/llm factory; this only
- * checks reachability so callers fail fast with a clear message. Per
- * SPEC.md INV-3 a reachable local Ollama model is sufficient on its own.
- */
-export async function initExtractor(): Promise<void> {
-  // A configured OpenAI-compatible route (#45: ENGRAM_OPENAI_MODEL + key) is a
-  // tier of its own; the cascade decides reachability per call.
-  if (isAnthropicAvailable() || isOpenRouterAvailable() || resolveOpenAIRouteConfig() !== undefined) return;
-  if (await isOllamaAvailable(intelligenceConfig())) return;
-  throw new Error(
-    "No extraction provider configured. " +
-      "Set ANTHROPIC_API_KEY, OPENROUTER_API_KEY or ENGRAM_OPENAI_MODEL (+ ENGRAM_OPENAI_BASE_URL), " +
-      "or run Ollama with the configured local model.",
-  );
-}
-
-/**
- * Reset the extractor state (for testing). Clears the factory's client.
- */
-export function resetExtractor(): void {
-  resetIntelligence();
-}
-
-/**
- * Inject a custom Anthropic client into the factory (for testing with mocks).
- */
-export function setClient(customClient: Anthropic): void {
-  setIntelligenceClient(customClient);
-}
-
-/** Cascade configuration derived from the application config. */
-function intelligenceConfig(): IntelligenceConfig {
-  return buildIntelligenceConfig(loadConfig());
-}
+const gate = makeLlmGate("extraction");
+/** Verify that at least one tier of the LLM cascade can serve extraction. */
+export const initExtractor = gate.init;
+/** Reset the extractor state (for testing). Clears the factory's client. */
+export const resetExtractor = gate.reset;
+/** Inject a custom Anthropic client into the factory (for testing with mocks). */
+export const setClient = gate.setClient;
+const intelligenceConfig = gate.config;
 
 // ─── Prompt Building ────────────────────────────────────────────
 
@@ -212,23 +175,57 @@ export function buildExtractionPrompt(
   exchanges: ConversationExchange[],
   metadata: ConversationMetadata,
 ): string {
-  const template = loadPromptTemplate();
+  return `${loadPromptTemplate()}\n${formatConversation(exchanges, metadata)}`;
+}
 
-  // Build metadata header
+/** Clip `text` to `cap` characters with a truncation marker. */
+export function clipText(text: string, cap: number): string {
+  if (text.length <= cap) return text;
+  return `${text.slice(0, cap)} …[truncated]`;
+}
+
+/**
+ * The conversation block every extraction prompt ends with: a one-line
+ * metadata header ("Project: …, Branch: …, Date Range: …") and one
+ * `[Exchange N]` paragraph per exchange. `caps` clips each side's text.
+ */
+export function formatConversation(
+  exchanges: ReadonlyArray<Pick<ConversationExchange, "index" | "userMessage" | "assistantMessage">>,
+  metadata: Pick<ConversationMetadata, "project" | "dateRange"> & { branch?: string },
+  caps?: { user: number; assistant: number },
+): string {
   const metaParts: string[] = [`Project: ${metadata.project}`];
   if (metadata.branch) metaParts.push(`Branch: ${metadata.branch}`);
   metaParts.push(`Date Range: ${metadata.dateRange}`);
-  const metaHeader = metaParts.join(", ");
 
-  // Format exchanges
-  const formattedExchanges = exchanges
+  const clip = (text: string, cap?: number): string => (cap === undefined ? text : clipText(text, cap));
+  const body = exchanges
     .map(
       (ex) =>
-        `[Exchange ${ex.index}]\nUser: ${ex.userMessage}\nAssistant: ${ex.assistantMessage}`,
+        `[Exchange ${ex.index}]\nUser: ${clip(ex.userMessage, caps?.user)}\nAssistant: ${clip(ex.assistantMessage, caps?.assistant)}`,
     )
     .join("\n\n");
 
-  return `${template}\n${metaHeader}\n\n${formattedExchanges}`;
+  return `${metaParts.join(", ")}\n\n${body}`;
+}
+
+/**
+ * The array under `key` in a structured LLM result: either the tool input
+ * itself (`{ facts: [...] }`) or a full API response whose `content` holds
+ * a `tool_use` block with that input. Anything else is an empty array.
+ */
+export function unwrapToolResult<T>(raw: unknown, key: string): T[] {
+  if (!raw || typeof raw !== "object") return [];
+  const result = raw as Record<string, unknown>;
+  if (Array.isArray(result[key])) return result[key] as T[];
+  if (Array.isArray(result.content)) {
+    for (const block of result.content as Array<Record<string, unknown>>) {
+      if (block.type !== "tool_use" || !block.input) continue;
+      const input = block.input as Record<string, unknown>;
+      if (Array.isArray(input[key])) return input[key] as T[];
+    }
+  }
+  return [];
 }
 
 // ─── Chunking ───────────────────────────────────────────────────
@@ -262,36 +259,9 @@ interface RawFact {
 export function parseExtractionResponse(
   toolUseResult: unknown,
 ): ExtractedFact[] {
-  if (!toolUseResult || typeof toolUseResult !== "object") {
-    return [];
-  }
-
-  // Handle Anthropic API response shape: array of content blocks
-  const result = toolUseResult as Record<string, unknown>;
-
-  let rawFacts: RawFact[] = [];
-
-  // Direct facts array (from tool input)
-  if (Array.isArray(result.facts)) {
-    rawFacts = result.facts as RawFact[];
-  }
-  // Content blocks array (from full API response)
-  else if (Array.isArray(result.content)) {
-    const contentBlocks = result.content as Array<Record<string, unknown>>;
-    for (const block of contentBlocks) {
-      if (block.type === "tool_use" && block.input) {
-        const input = block.input as Record<string, unknown>;
-        if (Array.isArray(input.facts)) {
-          rawFacts = input.facts as RawFact[];
-          break;
-        }
-      }
-    }
-  }
-
   const facts: ExtractedFact[] = [];
 
-  for (const raw of rawFacts) {
+  for (const raw of unwrapToolResult<RawFact>(toolUseResult, "facts")) {
     // Validate type
     if (!raw.type || !VALID_MEMORY_TYPES.has(raw.type as MemoryType)) {
       continue;
