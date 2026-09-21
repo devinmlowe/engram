@@ -19,8 +19,8 @@ import type {
 } from "./types.js";
 import { CascadeError, tierErrorMessage } from "./types.js";
 import { resolveOllamaModel, ollamaGenerateStructured, ollamaGenerate } from "./providers/ollama.js";
-import { openrouterGenerateStructured, openrouterGenerate, classifyHttpStatus } from "./providers/openrouter.js";
-import { openaiGenerateStructured, openaiGenerate, openaiRoute, resolveOpenAIRouteConfig, OPENAI_BASE_URL_ENV } from "./providers/openai-compatible.js";
+import { openrouterGenerateStructured, openrouterGenerate } from "./providers/openrouter.js";
+import { openaiGenerateStructured, openaiGenerate, openaiRoute, resolveOpenAIRouteConfig, classifyHttpStatus, OPENAI_BASE_URL_ENV } from "./providers/openai-compatible.js";
 import { ALL_PROVIDERS, DEFAULT_PROVIDER_ORDER } from "./types.js";
 import {
   apiGenerateStructured,
@@ -55,13 +55,7 @@ export function resetIntelligence(): void {
   resetAnthropic();
   warnedConfigSkips.clear();
 }
-export {
-  isOpenRouterAvailable,
-  callOpenRouterTool,
-  callOpenRouterText,
-  type OpenRouterToolDef,
-  type OpenRouterCallOptions,
-} from "./providers/openrouter.js";
+export { isOpenRouterAvailable } from "./providers/openrouter.js";
 
 // ─── Configuration ───────────────────────────────────────────────
 
