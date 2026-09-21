@@ -1,6 +1,5 @@
 /**
- * #58 — distribution manifests agree with package.json and have the shape
- * their consumers require:
+ * #58 — distribution manifests agree with package.json:
  *
  *   .claude-plugin/plugin.json       Claude Code plugin (mcpServers → `npx -y @devinmlowe/engram@<v> mcp`)
  *   .claude-plugin/marketplace.json  self-hosted marketplace listing this repo as the `engram` plugin
@@ -8,8 +7,10 @@
  *   package.json                     mcpName (registry ownership check) + files[] (what the tarball carries)
  *
  * `scripts/sync-manifests.cjs --check` is what CI and the release workflow
- * run; this test pins its verdict on the committed files and its ability to
- * detect and repair drift, plus the tarball contents.
+ * run for the versions; this test pins its verdict on the committed files and
+ * its ability to detect and repair drift. The shape each consumer needs is
+ * asserted directly below (CI also runs `claude plugin validate` and the
+ * release job `mcp-publisher validate`), plus the tarball contents.
  */
 
 import { describe, it, expect } from "vitest";
@@ -61,22 +62,19 @@ describe("sync-manifests --check on the committed files", () => {
     expect(fixed.plugin.mcpServers.engram.args[1]).toBe(`${d.pkg.name}@${d.pkg.version}`);
   });
 
-  it("refuses the old file-path form of mcpServers and an unpinned npx spec", () => {
+  it("refuses a missing or unpinned npx spec (the pin is what the version sync keeps current)", () => {
     const d = docs();
     d.plugin.mcpServers = "../.mcp.json";
-    expect(sync.analyze(d).problems.join("\n")).toMatch(/mcpServers must be an inline object/);
+    expect(sync.analyze(d).problems.join("\n")).toMatch(/must contain "@devinmlowe\/engram@<version>"/);
     const e = docs();
     e.plugin.mcpServers.engram.args = ["-y", e.pkg.name, "mcp"];
     expect(sync.analyze(e).problems.join("\n")).toMatch(/must contain "@devinmlowe\/engram@<version>"/);
   });
 
-  it("insists mcpName matches the registry name and files[] carries the plugin", () => {
+  it("insists mcpName matches the registry name", () => {
     const d = docs();
     d.pkg.mcpName = "io.github.someone-else/engram";
-    d.pkg.files = d.pkg.files.filter((f: string) => f !== "commands");
-    const problems = sync.analyze(d).problems.join("\n");
-    expect(problems).toMatch(/mcpName .* must equal server\.json name/);
-    expect(problems).toMatch(/files\[\] must include "commands"/);
+    expect(sync.analyze(d).problems.join("\n")).toMatch(/mcpName .* must equal server\.json name/);
   });
 
   it("caps server.json description at the registry's 100 characters (v0.4.0 was rejected with 422)", () => {
