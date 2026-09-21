@@ -10,10 +10,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import {
-  rrfFuse,
-  normalizeMinMaxFloored,
-} from "../../src/episodic/search.js";
+import { rrfFuse, normalizeMinMaxFloored } from "../../src/_core/search/rrf.js";
 import { allocateBudget } from "../../src/_core/search/budget.js";
 import type { SearchResult } from "../../src/_core/types/index.js";
 

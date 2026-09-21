@@ -1,12 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach, beforeAll } from "vitest";
-import {
-  rrfFuse,
-  normalizeMinMaxFloored,
-  budgetResults,
-  formatRecallXml,
-  searchEpisodic,
-  searchMultiSource,
-} from "../../src/episodic/search.js";
+import { rrfFuse, normalizeMinMaxFloored } from "../../src/_core/search/rrf.js";
+import { budgetResults, searchMultiSource } from "../../src/_core/search/orchestrator.js";
+import { formatRecallXml } from "../../src/_core/search/format.js";
+import { searchEpisodic } from "../../src/episodic/search.js";
 import { insertExchange } from "../../src/episodic/store.js";
 import { insertMemory } from "../../src/semantic/memory.js";
 import { initEmbeddings, embedExchange, embedDocument } from "../../src/_core/embeddings/index.js";

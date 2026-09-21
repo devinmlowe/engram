@@ -13,7 +13,8 @@ import {
   resetConsolidator,
   setConsolidatorClient,
 } from "../../src/semantic/consolidator.js";
-import { searchMultiSource, formatRecallXml } from "../../src/episodic/search.js";
+import { searchMultiSource } from "../../src/_core/search/orchestrator.js";
+import { formatRecallXml } from "../../src/_core/search/format.js";
 import {
   insertMemory,
   getMemory,
@@ -62,7 +63,6 @@ vi.mock("../../src/_core/embeddings/index.js", () => {
     ),
     initEmbeddings: vi.fn(() => Promise.resolve()),
     getActiveModel: vi.fn(() => "nomic"),
-    getActiveDimensions: vi.fn(() => 256),
     resetEmbeddings: vi.fn(),
     embedDocumentBatch: vi.fn((texts: string[]) =>
       Promise.resolve(texts.map((t) => hashEmbedding(t))),

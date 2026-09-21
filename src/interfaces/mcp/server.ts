@@ -106,7 +106,7 @@ export async function warmUpEmbeddings(): Promise<void> {
   // non-fatal: recall degrades to the original ranking.
   if (!config) config = loadConfig();
   if (config.search.rerankEnabled && config.search.reranker.enabled) {
-    const { initReranker } = await import("../../_core/search/index.js");
+    const { initReranker } = await import("../../_core/search/reranker.js");
     await initReranker(config.search.reranker.model);
   }
 }

@@ -27,18 +27,13 @@ export {
 export {
   getDatabase,
   closeDatabase,
-  resetDatabaseState,
   withTransaction,
 } from "./connection.js";
 
 // CRUD helpers
 export {
   getById,
-  getAll,
   insertRow,
-  updateRow,
-  upsertRow,
-  deleteRow,
   count,
 } from "./helpers.js";
 
@@ -55,5 +50,4 @@ export {
   rebuildFts,
   insertFtsRow,
   deleteFtsRow,
-  syncFts,
 } from "./fts.js";

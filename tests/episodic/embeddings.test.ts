@@ -5,7 +5,6 @@ import {
   embedDocument,
   embedDocumentBatch,
   embedExchange,
-  getActiveDimensions,
   getActiveModel,
 } from "../../src/_core/embeddings/index.js";
 import { cosineSimilarity } from "../helpers.js";
@@ -18,10 +17,6 @@ describe("Embeddings", () => {
   it("returns 256-dimensional vectors", async () => {
     const vec = await embedQuery("test query");
     expect(vec).toHaveLength(256);
-  });
-
-  it("getActiveDimensions returns 256", () => {
-    expect(getActiveDimensions()).toBe(256);
   });
 
   it("getActiveModel returns a valid model name", () => {

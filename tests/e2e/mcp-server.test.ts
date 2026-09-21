@@ -181,9 +181,8 @@ describe("MCP Server Tool Definitions", () => {
 
 describe("MCP Tool Behaviors (unit-level)", () => {
   it("search pipeline returns formatted XML", async () => {
-    const { searchMultiSource, formatRecallXml } = await import(
-      "../../src/episodic/search.js"
-    );
+    const { searchMultiSource } = await import("../../src/_core/search/orchestrator.js");
+    const { formatRecallXml } = await import("../../src/_core/search/format.js");
 
     const response = await searchMultiSource(testDb.db, {
       query: "SQLite database",
@@ -244,7 +243,7 @@ describe("MCP Tool Behaviors (unit-level)", () => {
 
 describe("XML Output Format", () => {
   it("escapes special XML characters", async () => {
-    const { escapeXml } = await import("../../src/episodic/search.js");
+    const { escapeXml } = await import("../../src/_core/search/format.js");
 
     expect(escapeXml("a < b")).toBe("a &lt; b");
     expect(escapeXml("a > b")).toBe("a &gt; b");
