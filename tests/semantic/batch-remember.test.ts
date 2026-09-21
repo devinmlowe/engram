@@ -216,6 +216,34 @@ describe("storeMemoryBatch", () => {
     expect(t.db.prepare("SELECT COUNT(*) AS n FROM memories").get()).toEqual({ n: 2 });
   });
 
+  // #111: entity links from a tenant write must not land in the global graph.
+  it("stamps new related_to edges with the caller's scope and widens an existing one", async () => {
+    const { storeMemoryBatch } = await import(
+      "../../src/interfaces/shared/remember.js"
+    );
+    const ins = t.db.prepare("INSERT INTO entities (id, name, type) VALUES (?, ?, ?)");
+    ins.run("ent-c", "Gamma", "concept");
+    ins.run("ent-d", "Delta", "concept");
+
+    await storeMemoryBatch(
+      t.db,
+      [{ content: "Gamma relates to Delta", type: "fact", relates_to_entities: ["Gamma", "Delta"] }],
+      { scope: "hermes:career" },
+    );
+    const edge = () =>
+      t.db.prepare("SELECT scope FROM relationships WHERE source_entity_id = 'ent-c' AND target_entity_id = 'ent-d'")
+        .get() as { scope: string } | undefined;
+    expect(edge()?.scope).toBe("hermes:career");
+
+    // the same edge seen from a second tenant is shared knowledge
+    await storeMemoryBatch(
+      t.db,
+      [{ content: "Gamma also relates to Delta at home", type: "fact", relates_to_entities: ["Gamma", "Delta"] }],
+      { scope: "hermes:home" },
+    );
+    expect(edge()?.scope).toBe("global");
+  });
+
   it("deduplicates within the batch", async () => {
     const { storeMemoryBatch } = await import(
       "../../src/interfaces/shared/remember.js"

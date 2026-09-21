@@ -18,6 +18,7 @@ import {
 } from "../../semantic/memory.js";
 import { insertVector } from "../../_core/db/index.js";
 import { clearSuppression } from "../../semantic/forget.js";
+import { GLOBAL_SCOPE, widenScope } from "../../_core/db/scope.js";
 import { generateStructured } from "../../_core/llm/index.js";
 import type { IntelligenceConfig } from "../../_core/llm/index.js";
 
@@ -350,7 +351,7 @@ export async function storeMemoryBatch(
       // The memory is already committed; a linking failure must be reported
       // on this item, not thrown past N persisted memories as a tool error
       try {
-        const linked = linkMemoryToEntities(db, detail.id, input.relates_to_entities);
+        const linked = linkMemoryToEntities(db, detail.id, input.relates_to_entities, input.scope ?? opts?.scope);
         result.entitiesLinked += linked;
       } catch (err) {
         result.errors++;
@@ -371,7 +372,9 @@ export async function storeMemoryBatch(
  * 1. Find the entity by name (case-insensitive)
  * 2. Bump its mention_count and update last_seen
  * 3. For each pair of found entities, create or update a `related_to`
- *    relationship with the memory ID tracked in source_memories
+ *    relationship with the memory ID tracked in source_memories, stamped with
+ *    the caller's `scope` (#111); an existing edge seen from a second scope
+ *    widens to 'global' like every other graph write
  *
  * Returns the number of entities found and linked.
  */
@@ -379,6 +382,7 @@ export function linkMemoryToEntities(
   db: Database.Database,
   memoryId: string,
   entityNames: string[],
+  scope?: string,
 ): number {
   // Find all matching entities (limit to 10)
   const entities: Array<{ id: string; name: string }> = [];
@@ -418,13 +422,15 @@ export function linkMemoryToEntities(
         db.prepare(
           "UPDATE relationships SET source_memories = ?, weight = weight + 0.5, updated_at = unixepoch(), stale_since = NULL WHERE id = ?",
         ).run(JSON.stringify(memories), existing.id);
+        // #25: an edge seen from a second profile is shared knowledge
+        widenScope(db, "relationships", existing.id, scope);
       } else {
-        // Create new relationship
+        // Create new relationship in the caller's scope (#111)
         const relId = crypto.randomUUID();
         db.prepare(
-          `INSERT INTO relationships (id, source_entity_id, target_entity_id, type, weight, source_memories, created_at)
-           VALUES (?, ?, ?, 'related_to', 1.0, ?, unixepoch())`,
-        ).run(relId, sourceId, targetId, JSON.stringify([memoryId]));
+          `INSERT INTO relationships (id, source_entity_id, target_entity_id, type, weight, source_memories, created_at, scope)
+           VALUES (?, ?, ?, 'related_to', 1.0, ?, unixepoch(), ?)`,
+        ).run(relId, sourceId, targetId, JSON.stringify([memoryId]), scope ?? GLOBAL_SCOPE);
       }
     }
   }
