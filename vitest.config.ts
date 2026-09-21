@@ -7,6 +7,6 @@ export default defineConfig({
     hookTimeout: 120_000,
     // Claude Code creates isolated agent worktrees under .claude/worktrees/;
     // never collect their (possibly mid-experiment) test files from the main checkout.
-    exclude: ["**/node_modules/**", "**/dist/**", "**/.claude/**", "**/autoresearch/**"],
+    exclude: ["**/node_modules/**", "**/dist/**", "**/.claude/**"],
   },
 });

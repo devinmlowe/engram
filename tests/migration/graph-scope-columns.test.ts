@@ -9,7 +9,7 @@ import { createTestDb, type TestDb } from "../helpers.js";
 import { GRAPH_SCOPE_MIGRATION, SCOPED_TABLES, migrateGraphScope } from "../../src/_core/db/schema.js";
 import { scopeVisible, scopeInClause, widenScope } from "../../src/_core/db/scope.js";
 import { insertEntity, getEntity } from "../../src/graph/entity.js";
-import { findOrCreateRelationship, insertRelationship, getRelationship } from "../../src/graph/relationship.js";
+import { findOrCreateRelationship, insertRelationship } from "../../src/graph/relationship.js";
 import { exploreEntity } from "../../src/graph/search.js";
 import { insertExchange, getExchange } from "../../src/episodic/store.js";
 import { insertCommitments, listCommitments } from "../../src/semantic/commitments.js";
@@ -79,7 +79,7 @@ describe("write side stamps scope", () => {
     expect(again.id).toBe(rel.id);
     expect(again.scope).toBe("global");
     insertRelationship(t.db, { id: "r2", sourceEntityId: "b", targetEntityId: "a", type: "related_to", weight: 1, sourceMemories: [], createdAt: 1 });
-    expect(getRelationship(t.db, "r2")!.scope).toBe("global");
+    expect((t.db.prepare("SELECT scope FROM relationships WHERE id = ?").get("r2") as { scope: string }).scope).toBe("global");
   });
 
   it("commitments inherit the scope they are inserted with and list filters by it", () => {

@@ -226,10 +226,9 @@ function withBudget<T>(work: (budget: { expired: boolean }) => Promise<T>, budge
 
 async function defaultExtract(id: string, exchanges: ConversationExchange[], metadata: ConversationMetadata): Promise<ExtractionResult> {
   const { extractFromConversation } = await import("../../semantic/extractor.js");
-  // One chunk, no reflexion: the smallest real extraction the pipeline does.
+  // One chunk: the smallest real extraction the pipeline does.
   return extractFromConversation(id, exchanges, metadata, {
     tier: "auto",
-    reflexionEnabled: false,
     chunkSize: Math.max(exchanges.length, 1),
     chunkOverlap: 0,
   });

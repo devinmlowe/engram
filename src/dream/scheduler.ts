@@ -9,7 +9,7 @@
 
 import crypto from "node:crypto";
 import type Database from "better-sqlite3";
-import type { DreamPhase, DreamProgress, DreamReport } from "./types.js";
+import type { DreamPhase, DreamReport } from "./types.js";
 import { insertRow, getById, count } from "../_core/db/index.js";
 
 // ─── Row Type Helpers ───────────────────────────────────────────
@@ -407,66 +407,3 @@ export function prioritizeConversations(
 }
 
 // ─── Progress Tracking ──────────────────────────────────────────
-
-/**
- * Get progress information for a given phase in a run.
- * Counts processed items from checkpoints and total items from the
- * relevant source table (conversations for extract, memories for other phases).
- */
-export function getPhaseProgress(
-  db: Database.Database,
-  runId: string,
-  phase: string,
-): DreamProgress {
-  // Count processed items from checkpoints
-  const processedRow = db
-    .prepare(
-      "SELECT COUNT(*) as count FROM dream_checkpoints WHERE run_id = ? AND phase = ?",
-    )
-    .get(runId, phase) as { count: number };
-
-  // Count errors (checkpoints with status = 'error')
-  const errorRow = db
-    .prepare(
-      "SELECT COUNT(*) as count FROM dream_checkpoints WHERE run_id = ? AND phase = ? AND status = 'error'",
-    )
-    .get(runId, phase) as { count: number };
-
-  // Total depends on the phase
-  let total = 0;
-  if (phase === "extract" || phase === "ingest") {
-    const totalRow = db
-      .prepare("SELECT COUNT(*) as count FROM conversations")
-      .get() as { count: number };
-    total = totalRow.count;
-  } else if (phase === "consolidate" || phase === "prune") {
-    const totalRow = db
-      .prepare("SELECT COUNT(*) as count FROM memories WHERE is_active = 1")
-      .get() as { count: number };
-    total = totalRow.count;
-  } else if (phase === "reflect") {
-    // Reflect is a single operation on the whole graph
-    total = 1;
-  }
-
-  // Get the run's started_at for this phase
-  const runRow = db
-    .prepare("SELECT started_at FROM dream_runs WHERE id = ?")
-    .get(runId) as { started_at: number } | undefined;
-
-  // Get the most recent checkpoint timestamp for this phase
-  const lastCheckpointRow = db
-    .prepare(
-      "SELECT MAX(processed_at) as last_at FROM dream_checkpoints WHERE run_id = ? AND phase = ?",
-    )
-    .get(runId, phase) as { last_at: number | null };
-
-  return {
-    phase: phase as DreamPhase,
-    total,
-    processed: processedRow.count,
-    errors: errorRow.count,
-    startedAt: runRow?.started_at ?? Math.floor(Date.now() / 1000),
-    lastCheckpoint: lastCheckpointRow.last_at ?? undefined,
-  };
-}

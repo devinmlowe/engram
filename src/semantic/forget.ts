@@ -166,13 +166,6 @@ export function contentHash(content: string): string {
   return createHash("sha256").update(normalized).digest("hex");
 }
 
-export function isSuppressed(db: Database.Database, content: string): boolean {
-  const row = db
-    .prepare("SELECT 1 FROM memory_suppressions WHERE content_hash = ?")
-    .get(contentHash(content));
-  return row !== undefined;
-}
-
 /** Remove the suppression for this content (an explicit remember wins). Returns true when one existed. */
 export function clearSuppression(db: Database.Database, content: string): boolean {
   const r = db.prepare("DELETE FROM memory_suppressions WHERE content_hash = ?").run(contentHash(content));

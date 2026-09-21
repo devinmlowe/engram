@@ -16,12 +16,6 @@ import { allocateBudget } from "../_core/search/budget.js";
 import { buildFtsMatchQuery } from "../_core/search/fts-query.js";
 import { buildIsoDateFilter, hasDateFilter, type DateFilterInput } from "../_core/search/dates.js";
 
-// ─── Re-exports ─────────────────────────────────────────────────
-// Preserve backward compatibility for existing imports from episodic/search.
-export { rrfFuse, normalizeMinMaxFloored } from "../_core/search/rrf.js";
-export { escapeXml, formatRecallXml } from "../_core/search/format.js";
-export { budgetResults, searchMultiSource } from "../_core/search/orchestrator.js";
-
 // ─── Hybrid Search ─────────────────────────────────────────────
 
 /**

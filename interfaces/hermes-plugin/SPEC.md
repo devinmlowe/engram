@@ -5,7 +5,7 @@
 Expose engram's knowledge graph to [Hermes Agent](https://github.com/NousResearch/hermes-agent)
 as an external `MemoryProvider`: automatic recall injected before every turn,
 plus curated writes. This is the single canonical plugin tree (GitHub issue #9
-consolidated the former `integrations/hermes-plugin/` stdio provider into it).
+consolidated a former stdio-only provider into it; that directory no longer exists).
 
 ## Requirements
 

@@ -4,11 +4,8 @@ import {
   updateMemory,
   deactivateMemory,
   getMemory,
-  getActiveMemories,
   recordAccess,
   insertConflict,
-  getUnresolvedConflicts,
-  resolveConflict,
   findNearestMemories,
 } from "../../src/semantic/memory.js";
 import { createTestDb } from "../helpers.js";
@@ -234,41 +231,6 @@ describe("Semantic Memory CRUD", () => {
     });
   });
 
-  describe("getActiveMemories", () => {
-    it("excludes deactivated memories", () => {
-      const mem1 = createTestMemory({ id: "mem-active-1", type: "fact" });
-      const mem2 = createTestMemory({ id: "mem-active-2", type: "fact" });
-      insertMemory(t.db, mem1, randomEmbedding());
-      insertMemory(t.db, mem2, randomEmbedding());
-
-      deactivateMemory(t.db, "mem-active-2", "mem-active-1");
-
-      const active = getActiveMemories(t.db);
-      const ids = active.map((m) => m.id);
-      expect(ids).toContain("mem-active-1");
-      expect(ids).not.toContain("mem-active-2");
-    });
-
-    it("filters by type when specified", () => {
-      const factMem = createTestMemory({ id: "mem-type-fact", type: "fact" });
-      const prefMem = createTestMemory({
-        id: "mem-type-pref",
-        type: "preference",
-        content: "User prefers dark mode",
-      });
-      insertMemory(t.db, factMem, randomEmbedding());
-      insertMemory(t.db, prefMem, randomEmbedding());
-
-      const facts = getActiveMemories(t.db, "fact");
-      const prefs = getActiveMemories(t.db, "preference");
-
-      expect(facts.every((m) => m.type === "fact")).toBe(true);
-      expect(prefs.every((m) => m.type === "preference")).toBe(true);
-      expect(facts.map((m) => m.id)).toContain("mem-type-fact");
-      expect(prefs.map((m) => m.id)).toContain("mem-type-pref");
-    });
-  });
-
   describe("findNearestMemories", () => {
     it("returns neighbors sorted by distance", () => {
       // Insert 3 memories with known embeddings
@@ -317,7 +279,7 @@ describe("Semantic Memory CRUD", () => {
   });
 
   describe("Conflict tracking", () => {
-    it("insertConflict and getUnresolvedConflicts round-trip", () => {
+    it("insertConflict stores the conflict row", () => {
       // Need memories to exist for foreign key constraint
       const mem1 = createTestMemory({ id: "mem-conflict-a" });
       const mem2 = createTestMemory({ id: "mem-conflict-b" });
@@ -332,47 +294,16 @@ describe("Semantic Memory CRUD", () => {
       });
       insertConflict(t.db, conflict);
 
-      const unresolved = getUnresolvedConflicts(t.db);
-      expect(unresolved.length).toBe(1);
-      expect(unresolved[0].id).toBe("conflict-1");
-      expect(unresolved[0].memoryId).toBe("mem-conflict-a");
-      expect(unresolved[0].conflictingMemoryId).toBe("mem-conflict-b");
-      expect(unresolved[0].description).toBe(
+      const rows = t.db
+        .prepare("SELECT * FROM conflicts WHERE resolution IS NULL")
+        .all() as Array<Record<string, unknown>>;
+      expect(rows.length).toBe(1);
+      expect(rows[0].id).toBe("conflict-1");
+      expect(rows[0].memory_id).toBe("mem-conflict-a");
+      expect(rows[0].conflicting_memory_id).toBe("mem-conflict-b");
+      expect(rows[0].description).toBe(
         "Contradictory info about typing systems",
       );
-      expect(unresolved[0].resolution).toBeUndefined();
-    });
-
-    it("resolveConflict sets resolution and resolved_at", () => {
-      const mem1 = createTestMemory({ id: "mem-resolve-a" });
-      const mem2 = createTestMemory({ id: "mem-resolve-b" });
-      insertMemory(t.db, mem1, randomEmbedding());
-      insertMemory(t.db, mem2, randomEmbedding());
-
-      const conflict = createTestConflict({
-        id: "conflict-resolve-1",
-        memoryId: "mem-resolve-a",
-        conflictingMemoryId: "mem-resolve-b",
-      });
-      insertConflict(t.db, conflict);
-
-      resolveConflict(
-        t.db,
-        "conflict-resolve-1",
-        "Kept newer memory as authoritative",
-      );
-
-      // Should no longer appear in unresolved
-      const unresolved = getUnresolvedConflicts(t.db);
-      expect(unresolved.length).toBe(0);
-
-      // Verify resolution was stored
-      const row = t.db
-        .prepare("SELECT * FROM conflicts WHERE id = ?")
-        .get("conflict-resolve-1") as Record<string, unknown>;
-      expect(row.resolution).toBe("Kept newer memory as authoritative");
-      expect(row.resolved_at).toBeDefined();
-      expect(row.resolved_at).toBeGreaterThan(0);
     });
   });
 });

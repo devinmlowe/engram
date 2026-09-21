@@ -73,12 +73,6 @@ export interface ExtractedFact {
   extractionBasis?: "explicit" | "inferred" | "observed";
 }
 
-/** Chunk boundary metadata for diagnostics (Phase 7C.2). */
-export interface ChunkBoundaryInfo {
-  start: number;
-  end: number;
-}
-
 export interface ExtractionResult {
   conversationId: string;
   facts: ExtractedFact[];
@@ -88,16 +82,12 @@ export interface ExtractionResult {
   provider?: LlmProvider;
   confidence: number; // model self-reported confidence 1-10
   durationMs: number;
-  /** Chunk boundaries produced during extraction (Phase 7C.2). */
-  chunkBoundaries?: ChunkBoundaryInfo[];
 }
 
 export interface ExtractionConfig {
   tier: "local" | "openrouter" | "haiku" | "sonnet" | "auto";
-  reflexionEnabled: boolean;
   chunkSize: number;
   chunkOverlap: number;
-  maxTurns: number;
 }
 
 // ─── Deduplication & Conflict Resolution ────────────────────────

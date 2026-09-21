@@ -55,18 +55,3 @@ export function deleteFtsRow(
     `INSERT INTO ${ftsTable}(${ftsTable}, rowid, ${colNames.join(", ")}) VALUES (${placeholders})`,
   ).run(...values);
 }
-
-/**
- * Sync an FTS5 entry: delete old values, insert new values.
- * Use when updating content in the source table.
- */
-export function syncFts(
-  db: Database.Database,
-  ftsTable: string,
-  rowid: number,
-  oldColumns: Record<string, unknown>,
-  newColumns: Record<string, unknown>,
-): void {
-  deleteFtsRow(db, ftsTable, rowid, oldColumns);
-  insertFtsRow(db, ftsTable, rowid, newColumns);
-}

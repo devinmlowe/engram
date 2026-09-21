@@ -39,7 +39,6 @@ const FALLBACK_MODEL = "Xenova/nli-deberta-v3-xsmall";
 let tokenizer: PreTrainedTokenizer | null = null;
 let model: PreTrainedModel | null = null;
 let labelMap: Record<number, string> = {};
-let activeModelName: string | null = null;
 
 // ---------------------------------------------------------------------------
 // Initialization
@@ -62,13 +61,11 @@ export async function initNli(): Promise<void> {
     model = await AutoModelForSequenceClassification.from_pretrained(
       PREFERRED_MODEL,
     );
-    activeModelName = PREFERRED_MODEL;
   } catch {
     tokenizer = await AutoTokenizer.from_pretrained(FALLBACK_MODEL);
     model = await AutoModelForSequenceClassification.from_pretrained(
       FALLBACK_MODEL,
     );
-    activeModelName = FALLBACK_MODEL;
   }
 
   // Build label map from model config (e.g. {0: "entailment", 1: "neutral", 2: "contradiction"})
@@ -147,41 +144,3 @@ export async function classifyNli(
   };
 }
 
-/**
- * Classify a batch of premise-hypothesis pairs.
- *
- * Processes pairs sequentially since transformers.js cross-encoders
- * do not always handle batch inference reliably.
- */
-export async function classifyNliBatch(
-  pairs: [string, string][],
-): Promise<NliResult[]> {
-  if (!tokenizer || !model) await initNli();
-
-  const results: NliResult[] = [];
-  for (const [premise, hypothesis] of pairs) {
-    results.push(await classifyNli(premise, hypothesis));
-  }
-  return results;
-}
-
-// ---------------------------------------------------------------------------
-// Diagnostics / testing helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Get the name of the active NLI model (for diagnostics).
- */
-export function getActiveNliModel(): string | null {
-  return activeModelName;
-}
-
-/**
- * Reset the NLI pipeline (for testing).
- */
-export function resetNli(): void {
-  tokenizer = null;
-  model = null;
-  labelMap = {};
-  activeModelName = null;
-}

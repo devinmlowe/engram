@@ -9,7 +9,7 @@ import { insertEntity } from "../../src/graph/entity.js";
 import { insertRelationship } from "../../src/graph/relationship.js";
 import { analyzeGraph, persistAnalysis } from "../../src/graph/analyzer.js";
 import { exploreEntity, findEntityByNameOrAlias } from "../../src/graph/search.js";
-import { formatRecallXml } from "../../src/episodic/search.js";
+import { formatRecallXml } from "../../src/_core/search/format.js";
 import {
   createTestDb,
   createTestEntity,

@@ -12,7 +12,7 @@ const DEFAULT_MAX_TURNS = 100;
 /**
  * Split an array into processable chunks with overlap.
  *
- * If the array fits within maxTurns, returns a single chunk.
+ * If the array fits within DEFAULT_MAX_TURNS, returns a single chunk.
  * Otherwise, splits into windows of chunkSize with overlap to preserve
  * context across chunk boundaries. Original item ordering is preserved.
  */

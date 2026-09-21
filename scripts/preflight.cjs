@@ -5,39 +5,29 @@
  * exposed as `engram preflight [--strict] [--json]` (#63).
  *
  * Prints a platform verdict right after `npm install` so an unsupported
- * target (Windows on ARM, Alpine/musl, 32-bit ARM Linux, a Node major without
- * prebuilds, ...) learns *now* instead of at the first `engram init`. It never
- * fails the install: every probe is caught and the exit code is always 0
- * unless `--strict` is passed (CI) — then any `[FAIL]` line exits 1.
- * `--expect <status>` / `--expect <dep>=<status>,...` additionally exits 1
- * when a dependency's prebuild verdict differs from the one given (CI uses it
- * to fail a dependency bump that drops a prebuild for a matrix target).
+ * target (Windows on ARM, Alpine/musl, 32-bit ARM Linux, ...) learns *now*
+ * instead of at the first `engram init`. It never fails the install: every
+ * probe is caught and the exit code is always 0 unless `--strict` is passed
+ * (CI) — then any `[FAIL]` line exits 1. `--expect <status>` /
+ * `--expect <dep>=<status>,...` additionally exits 1 when a dependency's
+ * prebuild verdict differs from the one given (CI uses it to fail a
+ * dependency bump that drops a prebuild for a matrix target).
  *
  * Per native dependency it decides `prebuilt | compiled | will-compile |
- * unsupported | unknown` for `process.versions.modules` (the Node ABI) +
- * platform + arch + libc:
+ * unsupported | unknown` for platform + arch + libc. Every native dependency
+ * is N-API, so the Node ABI (`process.versions.modules`) is printed but never
+ * decides. The NATIVE_DEPS table below says what the pinned ranges publish;
+ * when the package is on disk the probe also checks that the binary for this
+ * target really shipped (better-sqlite3 reports `compiled` when node-gyp
+ * built it instead), otherwise the table alone answers.
  *
- *   - post-install (the package is on disk): inspect it. better-sqlite3 13.x
- *     bundles `prebuilds/<platform>[musl]-<arch>.node` (the one for this
- *     target wins, whatever else npm's implicit node-gyp run left under
- *     build/); a pre-13 install leaves only `build/Release/better_sqlite3.node`
- *     behind when prebuild-install downloaded a release tarball, while a
- *     node-gyp build also writes `build/config.gypi`, `build/Makefile` (or
- *     `*.vcxproj`) and `build/Release/obj*`;
- *     sqlite-vec resolves an optional `sqlite-vec-<os>-<arch>` platform
- *     package next to itself; onnxruntime-node bundles every binary under
- *     `bin/napi-v<N>/<platform>/<arch>/`.
- *   - pre-install / offline (no package dir): the static NATIVE_DEPS table
- *     below, which mirrors what the pinned ranges publish.
- *
- * A probe never throws or blocks: any exception becomes `unknown (<reason>)`.
  * `npm_config_platform` / `npm_config_arch` / `npm_config_target_arch` /
  * `npm_config_libc` override the target like they do for npm itself.
  *
  * Deliberately plain CommonJS with zero imports from the package: it runs
  * before `prepare` builds dist/, and must work even when a dependency is
  * broken. `ENGRAM_SKIP_PREFLIGHT=1` silences the postinstall run (Docker
- * layers, CI); `engram preflight` and `engram doctor` (which reuses these
+ * layers, CI); `engram preflight` and `engram doctor` (which reuse these
  * probes through src/interfaces/cli/preflight.ts) always run.
  */
 
@@ -48,13 +38,6 @@ const MIN_NODE_MAJOR = 22;
 
 /** Directory holding package.json — node_modules lookups start here. */
 const PACKAGE_ROOT = path.join(__dirname, "..");
-
-/**
- * NODE_MODULE_VERSION (`process.versions.modules`) → Node major, from
- * https://nodejs.org/dist/index.json. Only used to print majors and to suggest
- * `nvm use <major>`; an unlisted ABI still gets a verdict.
- */
-const NODE_ABI_MAJORS = { 108: 18, 111: 19, 115: 20, 120: 21, 127: 22, 131: 23, 137: 24, 141: 25, 147: 26 };
 
 /**
  * What each native dependency publishes for the range pinned in package.json.
@@ -88,7 +71,6 @@ const NATIVE_DEPS = [
   {
     name: "better-sqlite3",
     via: "N-API binaries bundled in the npm tarball under prebuilds/<platform>[musl]-<arch>.node (Node-version independent), node-gyp fallback",
-    abis: null,
     targets: [
       "darwin-arm64",
       "darwin-x64",
@@ -104,14 +86,12 @@ const NATIVE_DEPS = [
   {
     name: "sqlite-vec",
     via: "optional platform package sqlite-vec-<os>-<arch> (SQLite extension, Node-version independent)",
-    abis: null,
     targets: ["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64", "win32-x64"],
     compiles: false,
   },
   {
     name: "onnxruntime-node",
     via: "binaries bundled in the npm tarball under bin/napi-v3/<platform>/<arch> (N-API, Node-version independent)",
-    abis: null,
     targets: ["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64", "win32-arm64", "win32-x64"],
     compiles: false,
   },
@@ -120,23 +100,8 @@ const NATIVE_DEPS = [
 /** Targets where every native dependency ships a prebuilt (derived; used by doctor and the README). */
 const PREBUILT_TARGETS = NATIVE_DEPS[0].targets.filter((t) => NATIVE_DEPS.every((d) => d.targets.includes(t)));
 
-/** Node majors for which every ABI-dependent dependency ships prebuilts (derived from NATIVE_DEPS). */
-const PREBUILT_NODE_MAJORS = Object.keys(NODE_ABI_MAJORS)
-  .map(Number)
-  .filter((abi) => NATIVE_DEPS.every((d) => !d.abis || d.abis.includes(abi)))
-  .map((abi) => NODE_ABI_MAJORS[abi])
-  .filter((major) => major >= MIN_NODE_MAJOR)
-  .sort((a, b) => a - b);
-
-/** Files node-gyp writes under `<pkg>/build/` that a prebuild-install tarball never contains. */
-const GYP_ARTEFACTS = ["config.gypi", "Makefile", "binding.sln", "better_sqlite3.vcxproj", "Release/obj", "Release/obj.target"];
-
 function message(err) {
   return err instanceof Error ? err.message : String(err);
-}
-
-function nodeMajorOf(abi) {
-  return NODE_ABI_MAJORS[abi] || null;
 }
 
 /**
@@ -170,7 +135,7 @@ function resolveTarget(opts = {}) {
   const libc = opts.libc !== undefined ? opts.libc : detectLibc(env, platform);
   const abi = opts.abi !== undefined ? Number(opts.abi) : Number(process.versions.modules);
   const key = `${platform}${libc === "musl" ? "musl" : ""}-${arch}`;
-  return { platform, arch, libc, abi, nodeMajor: nodeMajorOf(abi), key };
+  return { platform, arch, libc, abi, key };
 }
 
 /**
@@ -234,16 +199,6 @@ function linuxFamily() {
   return "";
 }
 
-/** The LTS (even) Node major with prebuilts closest to `current`, preferring the newer on a tie. */
-function nearestPrebuiltMajor(current) {
-  const candidates = PREBUILT_NODE_MAJORS.filter((m) => m % 2 === 0);
-  let best = null;
-  for (const m of candidates) {
-    if (best === null || Math.abs(m - current) < Math.abs(best - current) || (Math.abs(m - current) === Math.abs(best - current) && m > best)) best = m;
-  }
-  return best;
-}
-
 /** Why a target has no build at all, and what to do instead. */
 function unsupportedFix(target) {
   if (target.libc === "musl") return "use a glibc-based image (node:22-bookworm-slim, node:22-slim) — sqlite-vec and onnxruntime-node publish no musl builds";
@@ -255,139 +210,84 @@ function unsupportedFix(target) {
 function verdict(spec, target, source, status, detail, extra = {}) {
   const level = { prebuilt: "ok", compiled: "warn", "will-compile": "warn", unsupported: "fail", unknown: "skip" }[status];
   const fix = [];
-  if (status === "will-compile" || status === "compiled") {
-    // A local build already proved the toolchain is there; only the Node-major
-    // alternative is worth repeating then (it makes the next upgrade prebuilt).
-    if (status === "will-compile") fix.push(`fix: ${toolchainFix(target)}`);
-    if (spec.abis && !spec.abis.includes(target.abi)) {
-      const major = nearestPrebuiltMajor(target.nodeMajor || MIN_NODE_MAJOR);
-      if (major) fix.push(`${status === "will-compile" ? "or: " : "fix:"} nvm use ${major}   (a Node major ${spec.name} ships prebuilts for)`);
-    }
-  } else if (status === "unsupported") {
-    fix.push(`fix: ${unsupportedFix(target)}`);
-  }
+  if (status === "will-compile") fix.push(`fix: ${toolchainFix(target)}`);
+  else if (status === "unsupported") fix.push(`fix: ${unsupportedFix(target)}`);
   return { dep: spec.name, status, label: describeStatus(status), level, source, target: target.key, abi: target.abi, detail, fix, ...extra };
 }
 
 /** Verdict from the static table alone (package not on disk, or offline). */
 function staticVerdict(spec, target) {
-  const onTarget = spec.targets.includes(target.key);
-  const major = target.nodeMajor ? `Node ${target.nodeMajor} (node-v${target.abi})` : `node-v${target.abi}`;
-  if (spec.abis) {
-    const abiOk = spec.abis.includes(target.abi);
-    if (onTarget && abiOk) return verdict(spec, target, "static", "prebuilt", `node-v${target.abi}-${target.key} is in ${spec.name}'s release assets`);
-    const majors = spec.abis.map(nodeMajorOf).filter(Boolean).join(", ");
-    const reason = !onTarget
-      ? `${spec.name} publishes no prebuilt for ${target.key} (it has: ${spec.targets.join(", ")})`
-      : `${spec.name} publishes no prebuilt for ${major}; its prebuilts cover Node ${majors}`;
-    return verdict(spec, target, "static", spec.compiles ? "will-compile" : "unsupported", reason);
-  }
-  if (onTarget) return verdict(spec, target, "static", "prebuilt", `${target.key} is in ${spec.name}'s platform list`);
+  if (spec.targets.includes(target.key)) return verdict(spec, target, "static", "prebuilt", `${target.key} is in ${spec.name}'s platform list`);
   return spec.compiles
     ? verdict(spec, target, "static", "will-compile", `${spec.name} bundles no prebuilt for ${target.key} (it has: ${spec.targets.join(", ")})`)
     : verdict(spec, target, "static", "unsupported", `${spec.name} ships no build for ${target.key} (it has: ${spec.targets.join(", ")})`);
 }
 
-function inspectBetterSqlite(spec, dir, target) {
-  const bundled = path.join("prebuilds", `${target.key}.node`);
-  if (fs.existsSync(path.join(dir, bundled))) {
-    // better-sqlite3 13.x layout: N-API binaries inside the tarball, no install script.
-    return verdict(spec, target, "installed", "prebuilt", `${bundled} is bundled in the package`, { location: dir });
-  }
-  const binary = path.join("build", "Release", "better_sqlite3.node");
-  if (!fs.existsSync(path.join(dir, binary))) {
-    return verdict(spec, target, "installed", "unknown", `${binary} is missing from ${dir}: the install failed, is still running, or uses a layout this preflight does not know`, { location: dir });
-  }
-  // Pre-13 layout (prebuild-install tarball or a node-gyp build under build/Release).
-  const gyp = GYP_ARTEFACTS.filter((p) => fs.existsSync(path.join(dir, "build", p)));
-  const expectation = staticVerdict(spec, target);
-  if (gyp.length > 0) {
-    const why = expectation.status === "prebuilt"
-      ? `a prebuilt exists for ${target.key} but the install did not use it (offline, proxy, npm_config_build_from_source, or a pre-13 better-sqlite3 whose prebuild-install download failed?)`
-      : `no prebuilt for ${target.key}, so every upgrade needs the toolchain`;
-    return verdict(spec, target, "installed", "compiled", `node-gyp artefacts build/${gyp.join(", build/")}; ${why}`, { location: dir });
-  }
-  return verdict(spec, target, "installed", "prebuilt", `${binary} with no node-gyp artefacts (prebuild-install tarball node-v${target.abi}-${target.key}, pre-13 layout)`, { location: dir });
-}
+/**
+ * The binary each dependency ships for a target: where it is under the package
+ * dir (sqlite-vec: a sibling platform package, like its own loader resolves
+ * it), how the verdict names it, and the fix when it is missing.
+ */
+const SHIPPED = {
+  "better-sqlite3": (dir, target) => {
+    const rel = path.join("prebuilds", `${target.key}.node`);
+    return { file: path.join(dir, rel), name: rel, detail: `${rel} is bundled in the package`, location: dir };
+  },
+  "sqlite-vec": (dir, target) => {
+    const os = target.platform === "win32" ? "windows" : target.platform;
+    const ext = target.platform === "win32" ? "dll" : target.platform === "darwin" ? "dylib" : "so";
+    const pkg = `sqlite-vec-${os}-${target.arch}`;
+    const name = `${pkg}/vec0.${ext}`;
+    return {
+      file: path.join(path.dirname(dir), pkg, `vec0.${ext}`),
+      name,
+      detail: name,
+      location: path.join(path.dirname(dir), pkg),
+      fix: `fix: npm install ${pkg}   (or delete node_modules + package-lock.json and reinstall — a package-lock.json generated on another platform can drop the optional platform package)`,
+    };
+  },
+  "onnxruntime-node": (dir, target) => {
+    const rel = path.join("bin", "napi-v3", target.platform, target.arch, "onnxruntime_binding.node");
+    return { file: path.join(dir, rel), name: rel, detail: rel, location: dir };
+  },
+};
 
-function inspectSqliteVec(spec, dir, target) {
-  const os = target.platform === "win32" ? "windows" : target.platform;
-  const pkg = `sqlite-vec-${os}-${target.arch}`;
-  const ext = target.platform === "win32" ? "dll" : target.platform === "darwin" ? "dylib" : "so";
-  const lib = path.join(path.dirname(dir), pkg, `vec0.${ext}`); // sibling, like sqlite-vec's own loader
-  if (target.libc === "musl") {
-    return verdict(spec, target, "installed", "unsupported", `${spec.name} publishes glibc-only Linux builds; ${pkg}/vec0.so does not load on musl (needs ld-linux and __memcpy_chk)`, { location: dir });
+/**
+ * Verdict for a package on disk: the table's answer, confirmed against the
+ * binary it should have shipped for this target. Off the table (or musl,
+ * which the table already excludes) nothing on disk changes the answer.
+ */
+function installedVerdict(spec, dir, target) {
+  const expected = staticVerdict(spec, target);
+  if (expected.status !== "prebuilt") return { ...expected, source: "installed", location: dir };
+  const shipped = SHIPPED[spec.name](dir, target);
+  if (fs.existsSync(shipped.file)) return verdict(spec, target, "installed", "prebuilt", shipped.detail, { location: shipped.location });
+  if (spec.name === "better-sqlite3" && fs.existsSync(path.join(dir, "build", "Release", "better_sqlite3.node"))) {
+    return verdict(
+      spec,
+      target,
+      "installed",
+      "compiled",
+      `build/Release/better_sqlite3.node came from node-gyp although ${spec.name} ships a prebuilt for ${target.key} (offline, proxy, npm_config_build_from_source?); every upgrade needs the toolchain until the prebuilt is used`,
+      { location: dir },
+    );
   }
-  if (fs.existsSync(lib)) return verdict(spec, target, "installed", "prebuilt", `${pkg}/vec0.${ext}`, { location: path.dirname(lib) });
-  if (!spec.targets.includes(target.key)) {
-    return verdict(spec, target, "installed", "unsupported", `${spec.name} publishes no ${pkg} package (it has: ${spec.targets.join(", ")})`, { location: dir });
-  }
-  const v = verdict(spec, target, "installed", "unknown", `${pkg} is not installed next to ${dir} although sqlite-vec publishes it — optional dependency skipped? a package-lock.json generated on another platform can drop it`, { location: dir });
-  v.fix.push(`fix: npm install ${pkg}   (or delete node_modules + package-lock.json and reinstall)`);
+  const v = verdict(spec, target, "installed", "unknown", `${shipped.name} is missing from ${dir}: the install failed, is still running, or skipped it`, { location: dir });
+  if (shipped.fix) v.fix.push(shipped.fix);
   return v;
 }
-
-function inspectOnnxRuntime(spec, dir, target) {
-  const bin = path.join(dir, "bin");
-  if (!fs.existsSync(bin)) return verdict(spec, target, "installed", "unknown", `${dir} has no bin/ directory`, { location: dir });
-  const napiDirs = fs.readdirSync(bin).filter((n) => /^napi-v\d+$/.test(n));
-  const bundled = [];
-  for (const napi of napiDirs) {
-    const rel = path.join("bin", napi, target.platform, target.arch, "onnxruntime_binding.node");
-    if (fs.existsSync(path.join(dir, rel))) {
-      if (target.libc === "musl") {
-        return verdict(spec, target, "installed", "unsupported", `${spec.name} bundles glibc-only Linux binaries (${path.dirname(rel)} needs ld-linux; it aborts on musl)`, { location: dir });
-      }
-      return verdict(spec, target, "installed", "prebuilt", rel, { location: dir });
-    }
-    for (const platform of safeReaddir(path.join(bin, napi))) {
-      for (const arch of safeReaddir(path.join(bin, napi, platform))) bundled.push(`${platform}/${arch}`);
-    }
-  }
-  return verdict(spec, target, "installed", "unsupported", `${spec.name} bundles no bin/napi-v*/${target.platform}/${target.arch}/ binary (bundled: ${bundled.join(", ") || "none"})`, { location: dir });
-}
-
-function safeReaddir(dir) {
-  try {
-    return fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name);
-  } catch {
-    return [];
-  }
-}
-
-const INSPECTORS = {
-  "better-sqlite3": inspectBetterSqlite,
-  "sqlite-vec": inspectSqliteVec,
-  "onnxruntime-node": inspectOnnxRuntime,
-};
 
 /**
  * Prebuild verdict for one native dependency. `opts.root` (default: this
  * package) is where the node_modules lookup starts; `opts.platform` / `arch`
  * / `libc` / `abi` / `env` override the target (tests, cross-target checks).
- * Never throws: an exception becomes `unknown (<reason>)`.
  */
 function probePrebuild(dep, opts = {}) {
-  const spec = typeof dep === "string" ? NATIVE_DEPS.find((d) => d.name === dep) : dep;
+  const spec = NATIVE_DEPS.find((d) => d.name === dep);
   if (!spec) throw new Error(`unknown native dependency: ${dep}`);
-  let target;
-  try {
-    target = opts.target || resolveTarget(opts);
-    const dir = locatePackage(spec.name, opts.root || PACKAGE_ROOT);
-    return dir ? INSPECTORS[spec.name](spec, dir, target) : staticVerdict(spec, target);
-  } catch (err) {
-    return {
-      dep: spec.name,
-      status: "unknown",
-      label: describeStatus("unknown"),
-      level: "skip",
-      source: "installed",
-      target: target ? target.key : undefined,
-      abi: target ? target.abi : undefined,
-      detail: `probe threw: ${message(err)}`,
-      fix: [],
-    };
-  }
+  const target = opts.target || resolveTarget(opts);
+  const dir = locatePackage(spec.name, opts.root || PACKAGE_ROOT);
+  return dir ? installedVerdict(spec, dir, target) : staticVerdict(spec, target);
 }
 
 /** Human label for a verdict status; the report line reads `<dep>: <label> — <detail>`. */
@@ -401,7 +301,7 @@ function describeStatus(status) {
   }[status] || status;
 }
 
-// ─── runtime load probes (unchanged from the first preflight) ─────────────────
+// ─── runtime load probes ──────────────────────────────────────────────────────
 
 function probeBetterSqlite() {
   const Database = require("better-sqlite3");
@@ -446,7 +346,7 @@ function preflight(opts = {}) {
     lines.push(`  ${PREFIX.skip} ${target.key}: not every native module ships a prebuilt for this target (node-v${target.abi}${target.libc ? `, ${target.libc}` : ""}); see the lines below and README "Supported platforms"`);
   }
 
-  const deps = NATIVE_DEPS.map((spec) => probePrebuild(spec, { ...opts, target }));
+  const deps = NATIVE_DEPS.map((spec) => probePrebuild(spec.name, { ...opts, target }));
   for (const d of deps) {
     if (d.level === "fail") failed++;
     if (d.level === "warn") warned++;
@@ -550,14 +450,10 @@ module.exports = {
   locatePackage,
   describeStatus,
   checkExpectations,
-  nearestPrebuiltMajor,
   toolchainFix,
   NATIVE_DEPS,
-  NODE_ABI_MAJORS,
   PREBUILT_TARGETS,
-  PREBUILT_NODE_MAJORS,
   MIN_NODE_MAJOR,
-  GYP_ARTEFACTS,
 };
 
 if (require.main === module) {

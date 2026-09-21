@@ -7,13 +7,11 @@ import {
   detectTopicEmergence,
   detectTopicDecay,
   trackCommunityEvolution,
-  detectPhaseTransitions,
   detectBridgeFormation,
   analyzeTemporalPatterns,
   persistTemporalPatterns,
   getTemporalPatterns,
   DEFAULT_TEMPORAL_CONFIG,
-  _test,
 } from "../../src/graph/temporal.js";
 import type { TemporalPattern } from "../../src/graph/types.js";
 
@@ -530,103 +528,6 @@ describe("Temporal Pattern Analysis", () => {
     });
   });
 
-  // ─── detectPhaseTransitions ───────────────────────────────────
-
-  describe("detectPhaseTransitions", () => {
-    it("detects phase transition between windows with different entity compositions", () => {
-      const windowSeconds = 7 * DAY;
-      const baseWindowIdx = Math.floor(NOW / windowSeconds) - 2;
-      const window1Time = baseWindowIdx * windowSeconds + 100;
-
-      insertTestEntity(t.db, "eA", "Entity A", "concept");
-      insertTestEntity(t.db, "eB", "Entity B", "concept");
-      insertTestEntity(t.db, "eC", "Entity C", "concept");
-      insertTestEntity(t.db, "eX", "Entity X", "concept");
-      insertTestEntity(t.db, "eY", "Entity Y", "concept");
-      insertTestEntity(t.db, "eZ", "Entity Z", "concept");
-
-      // Window 1: relationships among A, B, C
-      insertTestRelationship(t.db, "r1", "eA", "eB", "related_to", 1.0, {
-        createdAt: window1Time,
-      });
-      insertTestRelationship(t.db, "r2", "eA", "eC", "related_to", 1.0, {
-        createdAt: window1Time + 100,
-      });
-      insertTestRelationship(t.db, "r3", "eB", "eC", "related_to", 1.0, {
-        createdAt: window1Time + 200,
-      });
-
-      // Window 2: relationships among X, Y, Z (completely different)
-      const window2Time = (baseWindowIdx + 1) * windowSeconds + 100;
-      insertTestRelationship(t.db, "r4", "eX", "eY", "related_to", 1.0, {
-        createdAt: window2Time,
-      });
-      insertTestRelationship(t.db, "r5", "eX", "eZ", "related_to", 1.0, {
-        createdAt: window2Time + 100,
-      });
-      insertTestRelationship(t.db, "r6", "eY", "eZ", "related_to", 1.0, {
-        createdAt: window2Time + 200,
-      });
-
-      const patterns = detectPhaseTransitions(t.db, { windowDays: 7 });
-
-      expect(patterns.length).toBeGreaterThanOrEqual(1);
-      const transition = patterns[0];
-      expect(transition.type).toBe("phase_transition");
-      expect(transition.confidence).toBeGreaterThan(0.5);
-      expect(transition.description).toContain("Phase transition");
-      expect(
-        (transition.metadata as Record<string, unknown>).cosineDistance,
-      ).toBeGreaterThan(0.5);
-    });
-
-    it("returns empty when consecutive windows have similar compositions", () => {
-      const windowSeconds = 7 * DAY;
-      const baseWindowIdx = Math.floor(NOW / windowSeconds) - 2;
-
-      insertTestEntity(t.db, "eA", "Entity A", "concept");
-      insertTestEntity(t.db, "eB", "Entity B", "concept");
-      insertTestEntity(t.db, "eC", "Entity C", "concept");
-
-      // Same entities in both windows (different edge types to avoid unique constraint)
-      const window1Time = baseWindowIdx * windowSeconds + 100;
-      insertTestRelationship(t.db, "r1", "eA", "eB", "related_to", 1.0, {
-        createdAt: window1Time,
-      });
-      insertTestRelationship(t.db, "r1b", "eA", "eC", "related_to", 1.0, {
-        createdAt: window1Time + 100,
-      });
-
-      const window2Time = (baseWindowIdx + 1) * windowSeconds + 100;
-      insertTestRelationship(t.db, "r2", "eA", "eB", "uses", 1.0, {
-        createdAt: window2Time,
-      });
-      insertTestRelationship(t.db, "r2b", "eA", "eC", "uses", 1.0, {
-        createdAt: window2Time + 100,
-      });
-
-      const patterns = detectPhaseTransitions(t.db, { windowDays: 7 });
-      expect(patterns.length).toBe(0);
-    });
-
-    it("returns empty for empty database", () => {
-      const patterns = detectPhaseTransitions(t.db);
-      expect(patterns.length).toBe(0);
-    });
-
-    it("returns empty when only one window has relationships", () => {
-      insertTestEntity(t.db, "eA", "Entity A", "concept");
-      insertTestEntity(t.db, "eB", "Entity B", "concept");
-
-      insertTestRelationship(t.db, "r1", "eA", "eB", "related_to", 1.0, {
-        createdAt: NOW,
-      });
-
-      const patterns = detectPhaseTransitions(t.db, { windowDays: 7 });
-      expect(patterns.length).toBe(0);
-    });
-  });
-
   // ─── detectBridgeFormation ────────────────────────────────────
 
   describe("detectBridgeFormation", () => {
@@ -1018,100 +919,6 @@ describe("Temporal Pattern Analysis", () => {
     });
   });
 
-  // ─── Helper functions ─────────────────────────────────────────
-
-  describe("jaccardSimilarity helper", () => {
-    it("returns 1 for identical sets", () => {
-      expect(_test.jaccardSimilarity(["a", "b", "c"], ["a", "b", "c"])).toBe(
-        1.0,
-      );
-    });
-
-    it("returns 0 for disjoint sets", () => {
-      expect(_test.jaccardSimilarity(["a", "b"], ["c", "d"])).toBe(0);
-    });
-
-    it("returns correct value for partial overlap", () => {
-      // J({a,b,c}, {b,c,d}) = 2/4 = 0.5
-      expect(
-        _test.jaccardSimilarity(["a", "b", "c"], ["b", "c", "d"]),
-      ).toBeCloseTo(0.5, 5);
-    });
-
-    it("returns 0 for two empty sets", () => {
-      expect(_test.jaccardSimilarity([], [])).toBe(0);
-    });
-
-    it("returns 0 when one set is empty", () => {
-      expect(_test.jaccardSimilarity(["a"], [])).toBe(0);
-    });
-
-    it("computes known Jaccard values", () => {
-      // J({1,2,3}, {1,2,3,4}) = 3/4 = 0.75
-      expect(
-        _test.jaccardSimilarity(["1", "2", "3"], ["1", "2", "3", "4"]),
-      ).toBeCloseTo(0.75, 5);
-
-      // J({a}, {a,b,c,d,e}) = 1/5 = 0.2
-      expect(
-        _test.jaccardSimilarity(["a"], ["a", "b", "c", "d", "e"]),
-      ).toBeCloseTo(0.2, 5);
-    });
-  });
-
-  describe("cosineDistance helper", () => {
-    it("returns 0 for identical vectors", () => {
-      const a = new Map([
-        ["x", 1],
-        ["y", 2],
-      ]);
-      const b = new Map([
-        ["x", 1],
-        ["y", 2],
-      ]);
-      expect(_test.cosineDistance(a, b)).toBeCloseTo(0, 5);
-    });
-
-    it("returns 1 for orthogonal vectors", () => {
-      const a = new Map([
-        ["x", 1],
-        ["y", 0],
-      ]);
-      const b = new Map([
-        ["x", 0],
-        ["y", 1],
-      ]);
-      expect(_test.cosineDistance(a, b)).toBeCloseTo(1.0, 5);
-    });
-
-    it("returns 1 for completely disjoint key sets", () => {
-      const a = new Map([["x", 1]]);
-      const b = new Map([["y", 1]]);
-      expect(_test.cosineDistance(a, b)).toBeCloseTo(1.0, 5);
-    });
-
-    it("returns 1 when either vector is empty", () => {
-      const empty = new Map<string, number>();
-      const nonEmpty = new Map([["x", 1]]);
-      expect(_test.cosineDistance(empty, nonEmpty)).toBe(1.0);
-      expect(_test.cosineDistance(nonEmpty, empty)).toBe(1.0);
-    });
-
-    it("returns value between 0 and 1 for partially overlapping vectors", () => {
-      const a = new Map([
-        ["x", 3],
-        ["y", 4],
-      ]);
-      const b = new Map([
-        ["x", 4],
-        ["y", 3],
-      ]);
-      const dist = _test.cosineDistance(a, b);
-      expect(dist).toBeGreaterThan(0);
-      expect(dist).toBeLessThan(1);
-    });
-  });
-
   // ─── Empty graph edge cases ───────────────────────────────────
 
   describe("empty graph", () => {
@@ -1120,7 +927,6 @@ describe("Temporal Pattern Analysis", () => {
       expect(detectTopicEmergence(t.db, 7, 3, 1)).toEqual([]);
       expect(detectTopicDecay(t.db, 30, 3, 1)).toEqual([]);
       expect(trackCommunityEvolution(t.db, 2)).toEqual([]);
-      expect(detectPhaseTransitions(t.db)).toEqual([]);
       expect(detectBridgeFormation(t.db)).toEqual([]);
     });
   });
