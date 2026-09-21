@@ -16,13 +16,7 @@ import {
   setGraphExtractorClient,
 } from "../../src/graph/extractor.js";
 import type { ConversationExchange, ConversationMetadata } from "../../src/semantic/extractor.js";
-
-/** URLs the fetch stub saw that would have reached the real Anthropic Messages API (#118: the client is a plain fetch POST). */
-function anthropicCalls(): string[] {
-  return vi.mocked(fetch).mock.calls
-    .map((c) => (c[0] instanceof Request ? c[0].url : String(c[0])))
-    .filter((u) => u.includes("api.anthropic.com"));
-}
+import { anthropicCalls, anthropicToolMock, stubFetch as stubLlmFetch, type StubFetchOptions } from "../mocks/llm-fetch.js";
 
 // ─── Helpers ────────────────────────────────────────────────────
 
@@ -56,79 +50,15 @@ const OPENROUTER_ENTITIES = {
   entities: [{ name: "OpenRouter", type: "tool" }],
 };
 
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status });
-}
-
-function urlOf(input: string | URL | Request): string {
-  return typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-}
-
-function stubFetch(opts: {
-  ollamaUp: boolean;
-  openrouter?: "ok" | "unauthorized";
-}): { calls: string[]; bodies: Array<Record<string, unknown>> } {
-  const calls: string[] = [];
-  const bodies: Array<Record<string, unknown>> = [];
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-      const url = urlOf(input);
-      calls.push(url);
-      const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : undefined;
-      if (body) bodies.push(body);
-
-      if (url.endsWith("/api/tags")) {
-        if (!opts.ollamaUp) throw new Error("ECONNREFUSED (stubbed)");
-        return json({ models: [{ name: "qwen2.5:7b" }] });
-      }
-      if (url.endsWith("/api/generate")) {
-        // Route by requested schema: entities vs relationships
-        const props = (body?.format as { properties?: Record<string, unknown> })?.properties ?? {};
-        const payload = "relationships" in props ? OLLAMA_RELATIONSHIPS : OLLAMA_ENTITIES;
-        return json({ response: JSON.stringify(payload) });
-      }
-      if (url.includes("openrouter.ai")) {
-        if (opts.openrouter === "unauthorized") return json({ error: "nope" }, 401);
-        return json({
-          model: "google/gemini-2.5-flash-lite",
-          choices: [
-            {
-              message: {
-                tool_calls: [
-                  {
-                    id: "call_1",
-                    type: "function",
-                    function: {
-                      name: "extract_entities",
-                      arguments: JSON.stringify(OPENROUTER_ENTITIES),
-                    },
-                  },
-                ],
-              },
-              finish_reason: "tool_calls",
-            },
-          ],
-        });
-      }
-      throw new Error(`Unexpected fetch in test: ${url}`);
-    }),
-  );
-  return { calls, bodies };
-}
-
-function makeAnthropicMock(): ReturnType<typeof vi.fn> {
-  return vi.fn().mockResolvedValue({
-    content: [
-      {
-        type: "tool_use",
-        id: "toolu_1",
-        name: "extract_entities",
-        input: { entities: [{ name: "Anthropic", type: "tool" }] },
-      },
-    ],
+/** Ollama answers by requested schema (entities vs relationships); OpenRouter/Anthropic answer with their own entity lists. */
+const stubFetch = (opts: Pick<StubFetchOptions, "ollamaUp" | "openrouter">) =>
+  stubLlmFetch({
+    ...opts,
+    ollama: (body) => ("relationships" in ((body?.format as { properties?: Record<string, unknown> })?.properties ?? {}) ? OLLAMA_RELATIONSHIPS : OLLAMA_ENTITIES),
+    tool: "extract_entities",
+    openrouterResult: OPENROUTER_ENTITIES,
   });
-}
+const makeAnthropicMock = () => anthropicToolMock("extract_entities", { entities: [{ name: "Anthropic", type: "tool" }] });
 
 // ─── Env isolation ──────────────────────────────────────────────
 

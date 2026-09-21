@@ -19,13 +19,7 @@ import {
   type ConversationExchange,
   type ConversationMetadata,
 } from "../../src/semantic/extractor.js";
-
-/** URLs the fetch stub saw that would have reached the real Anthropic Messages API (#118: the client is a plain fetch POST). */
-function anthropicCalls(): string[] {
-  return vi.mocked(fetch).mock.calls
-    .map((c) => (c[0] instanceof Request ? c[0].url : String(c[0])))
-    .filter((u) => u.includes("api.anthropic.com"));
-}
+import { anthropicCalls, anthropicToolMock, stubFetch as stubLlmFetch, type StubFetchOptions } from "../mocks/llm-fetch.js";
 
 // ─── Helpers ────────────────────────────────────────────────────
 
@@ -64,88 +58,12 @@ const OPENROUTER_FACTS = {
   ],
 };
 
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status });
-}
-
-function urlOf(input: string | URL | Request): string {
-  return typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-}
-
-/**
- * Stub global fetch with a router. `ollamaUp` controls whether /api/tags
- * lists the configured model; `openrouter` controls the OpenRouter reply.
- */
-function stubFetch(opts: {
-  ollamaUp: boolean;
-  openrouter?: "ok" | "unauthorized";
-}): { calls: string[]; bodies: Array<Record<string, unknown>> } {
-  const calls: string[] = [];
-  const bodies: Array<Record<string, unknown>> = [];
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-      const url = urlOf(input);
-      calls.push(url);
-      if (init?.body) bodies.push(JSON.parse(String(init.body)));
-
-      if (url.endsWith("/api/tags")) {
-        if (!opts.ollamaUp) throw new Error("ECONNREFUSED (stubbed)");
-        return json({ models: [{ name: "qwen2.5:7b" }] });
-      }
-      if (url.endsWith("/api/generate")) {
-        return json({ response: JSON.stringify(OLLAMA_FACTS) });
-      }
-      if (url.includes("openrouter.ai")) {
-        if (opts.openrouter === "unauthorized") return json({ error: "nope" }, 401);
-        return json({
-          model: "google/gemini-2.5-flash-lite",
-          choices: [
-            {
-              message: {
-                tool_calls: [
-                  {
-                    id: "call_1",
-                    type: "function",
-                    function: {
-                      name: "extract_memories",
-                      arguments: JSON.stringify(OPENROUTER_FACTS),
-                    },
-                  },
-                ],
-              },
-              finish_reason: "tool_calls",
-            },
-          ],
-        });
-      }
-      throw new Error(`Unexpected fetch in test: ${url}`);
-    }),
-  );
-  return { calls, bodies };
-}
-
-function makeAnthropicMock(): ReturnType<typeof vi.fn> {
-  return vi.fn().mockResolvedValue({
-    content: [
-      {
-        type: "tool_use",
-        id: "toolu_1",
-        name: "extract_memories",
-        input: {
-          facts: [
-            {
-              type: "decision",
-              content: "Anthropic served this extraction.",
-              importance: 0.7,
-              source_exchange_indexes: [0],
-            },
-          ],
-        },
-      },
-    ],
+const stubFetch = (opts: Pick<StubFetchOptions, "ollamaUp" | "openrouter">) =>
+  stubLlmFetch({ ...opts, ollama: OLLAMA_FACTS, tool: "extract_memories", openrouterResult: OPENROUTER_FACTS });
+const makeAnthropicMock = () =>
+  anthropicToolMock("extract_memories", {
+    facts: [{ type: "decision", content: "Anthropic served this extraction.", importance: 0.7, source_exchange_indexes: [0] }],
   });
-}
 
 // ─── Env isolation ──────────────────────────────────────────────
 

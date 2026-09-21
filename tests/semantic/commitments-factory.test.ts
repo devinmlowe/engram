@@ -12,13 +12,7 @@ import { defaultCommitmentsLlm, hasCommitmentsProvider } from "../../src/semanti
 import { runCommitmentsPass } from "../../src/dream/commitments-pass.js";
 import { resetIntelligence, setClient } from "../../src/_core/llm/index.js";
 import { createTestDb, type TestDb } from "../helpers.js";
-
-/** URLs the fetch stub saw that would have reached the real Anthropic Messages API (#118: the client is a plain fetch POST). */
-function anthropicCalls(): string[] {
-  return vi.mocked(fetch).mock.calls
-    .map((c) => (c[0] instanceof Request ? c[0].url : String(c[0])))
-    .filter((u) => u.includes("api.anthropic.com"));
-}
+import { anthropicCalls, anthropicToolMock, stubFetch as stubLlmFetch, type StubFetchOptions } from "../mocks/llm-fetch.js";
 
 // ─── Helpers ────────────────────────────────────────────────────
 
@@ -30,62 +24,6 @@ const OLLAMA_RAW = {
 const OPENROUTER_RAW = { commitments: [{ content: "Ping Sam", subject: "devin", origin: "stated", due_hint: null, source_exchange_indexes: [0] }] };
 const ANTHROPIC_RAW = { commitments: [] as unknown[] };
 
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status });
-}
-
-function urlOf(input: string | URL | Request): string {
-  return typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-}
-
-function stubFetch(opts: {
-  ollamaUp: boolean;
-  openrouter?: "ok" | "unauthorized";
-}): { calls: string[]; bodies: Array<Record<string, unknown>> } {
-  const calls: string[] = [];
-  const bodies: Array<Record<string, unknown>> = [];
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-      const url = urlOf(input);
-      calls.push(url);
-      if (init?.body) bodies.push(JSON.parse(String(init.body)));
-
-      if (url.endsWith("/api/tags")) {
-        if (!opts.ollamaUp) throw new Error("ECONNREFUSED (stubbed)");
-        return json({ models: [{ name: "qwen2.5:7b" }] });
-      }
-      if (url.endsWith("/api/generate")) {
-        return json({ response: JSON.stringify(OLLAMA_RAW) });
-      }
-      if (url.includes("openrouter.ai")) {
-        if (opts.openrouter === "unauthorized") return json({ error: "nope" }, 401);
-        return json({
-          model: "google/gemini-2.5-flash-lite",
-          choices: [
-            {
-              message: {
-                tool_calls: [
-                  { id: "call_1", type: "function", function: { name: "extract_commitments", arguments: JSON.stringify(OPENROUTER_RAW) } },
-                ],
-              },
-              finish_reason: "tool_calls",
-            },
-          ],
-        });
-      }
-      throw new Error(`Unexpected fetch in test: ${url}`);
-    }),
-  );
-  return { calls, bodies };
-}
-
-function makeAnthropicMock(): ReturnType<typeof vi.fn> {
-  return vi.fn().mockResolvedValue({
-    content: [{ type: "tool_use", id: "toolu_1", name: "extract_commitments", input: ANTHROPIC_RAW }],
-  });
-}
-
 function seedConversation(t: TestDb, id: string, userText: string): void {
   t.db.prepare(
     "INSERT INTO conversations (id, project, exchange_count, last_indexed) VALUES (?, 'demo', 1, 100)",
@@ -95,6 +33,10 @@ function seedConversation(t: TestDb, id: string, userText: string): void {
      VALUES (?, ?, 'demo', '2026-09-10T10:00:00Z', ?, 'ok', 1)`,
   ).run(`${id}-ex-1`, id, userText);
 }
+
+const stubFetch = (opts: Pick<StubFetchOptions, "ollamaUp" | "openrouter">) =>
+  stubLlmFetch({ ...opts, ollama: OLLAMA_RAW, tool: "extract_commitments", openrouterResult: OPENROUTER_RAW });
+const makeAnthropicMock = () => anthropicToolMock("extract_commitments", ANTHROPIC_RAW);
 
 // ─── Setup ──────────────────────────────────────────────────────
 
