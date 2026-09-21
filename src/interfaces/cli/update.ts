@@ -37,10 +37,6 @@ import {
 import { listServices, START_ORDER, STOP_ORDER, type ServiceDeps, type ServiceStatus } from "./services.js";
 import { snapshotCounts, formatSnapshot, type CountSnapshot } from "./snapshot.js";
 
-// The backup allowlist, the cold-start budgets and the #54 note moved to
-// rollback.ts (the rollback shares them); re-exported so callers keep importing them from here.
-export { MODEL_CACHE_BACKUP_NOTE, START_WAIT_MS, backupDataDir, checkpointWal } from "./rollback.js";
-
 export interface UpdateDeps {
   config: EngramConfig;
   services: ServiceDeps;

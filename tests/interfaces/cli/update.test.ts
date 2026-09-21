@@ -28,8 +28,9 @@ import {
 import {
   planDataDir, applyDataDirPlan, planModelCache, applyModelCachePlan, reportSchema, isSqliteFile, DATA_DIR_ITEMS,
 } from "../../../src/interfaces/cli/data-migration.js";
-import { buildUpdatePlan, formatPlan, runUpdate, backupDirFor, backupDataDir, pluginDeployTargets, MODEL_CACHE_BACKUP_NOTE, type UpdateDeps } from "../../../src/interfaces/cli/update.js";
+import { buildUpdatePlan, formatPlan, runUpdate, backupDirFor, pluginDeployTargets, type UpdateDeps } from "../../../src/interfaces/cli/update.js";
 import {
+  MODEL_CACHE_BACKUP_NOTE, backupDataDir,
   listRollbackPlans, readRollbackPlan, restoreDataDir, rollbackPlanPath, rollbackUpdate, schemaRollbackCheck, selectRollbackPlan, formatRollbackPlans,
   writeRollbackPlan, ROLLBACK_PLANS_KEPT, type RollbackPlan,
 } from "../../../src/interfaces/cli/rollback.js";
