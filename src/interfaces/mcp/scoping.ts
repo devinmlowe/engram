@@ -68,6 +68,12 @@ function requireScope(value: string, param: string): string {
  * - `scope` overrides ENGRAM_SCOPE. When ENGRAM_READ_SCOPES is unset it also
  *   re-derives the read default to global + own, mirroring the env rule.
  * - `read_scopes` overrides ENGRAM_READ_SCOPES (and the derived default).
+ *
+ * #108: the env is a ceiling, never a default the client may raise. When the
+ * env restricts reads, `read_scopes` is intersected with it (empty → throw)
+ * and `scope` must be one of the readable scopes (write only where you may
+ * read). With no env restriction the params are the only tenant identity
+ * (shared HTTP daemon) and apply as given.
  */
 export function resolveCallScoping(
   env: Record<string, string | undefined>,
@@ -77,12 +83,23 @@ export function resolveCallScoping(
 
   const writeScope = params.scope !== undefined ? requireScope(params.scope, "scope") : base.writeScope;
 
-  let readScopes = base.readScopes;
+  const allowed = base.readScopes;
+  if (allowed && writeScope !== undefined && params.scope !== undefined && !allowed.includes(writeScope)) {
+    throw new Error(`scope "${writeScope}" is outside this server's read scopes (${allowed.join(", ")})`);
+  }
+
+  let readScopes = allowed;
   if (params.read_scopes !== undefined) {
     if (!Array.isArray(params.read_scopes) || params.read_scopes.length === 0) {
       throw new Error("read_scopes must contain at least one scope");
     }
     readScopes = params.read_scopes.map((s) => requireScope(s, "read_scopes"));
+    if (allowed) {
+      readScopes = readScopes.filter((s) => allowed.includes(s));
+      if (readScopes.length === 0) {
+        throw new Error(`read_scopes has no scope in common with this server's read scopes (${allowed.join(", ")})`);
+      }
+    }
   } else if (params.scope !== undefined && !env.ENGRAM_READ_SCOPES?.trim()) {
     readScopes = ["global", writeScope as string];
   }

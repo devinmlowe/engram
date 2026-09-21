@@ -182,9 +182,10 @@ describe("per-request scope / read_scopes params", () => {
       // env read default = global + own, so the career memory is hidden…
       const hidden = await handleToolCall("recall", { query: "interview", sources: ["semantic"] });
       expect(hidden.content[0].text as string).not.toContain("Databricks");
-      // …unless the call overrides read_scopes
-      const shown = await handleToolCall("recall", { query: "interview", sources: ["semantic"], read_scopes: ["hermes:career"] });
-      expect(shown.content[0].text as string).toContain("Databricks");
+      // …and a call cannot widen past the env ceiling (#108)
+      const refused = await handleToolCall("recall", { query: "interview", sources: ["semantic"], read_scopes: ["hermes:career"] });
+      expect(refused.isError).toBe(true);
+      expect(refused.content[0].text as string).toMatch(/no scope in common/);
     } finally {
       delete process.env.ENGRAM_SCOPE;
     }

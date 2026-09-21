@@ -57,18 +57,37 @@ describe("resolveCallScoping (per-request override)", () => {
     expect(s.readScopes).toEqual(["global", "hermes:career"]);
   });
 
-  it("scope param overrides ENGRAM_SCOPE but keeps an explicit ENGRAM_READ_SCOPES", () => {
-    const env = { ENGRAM_SCOPE: "hermes:pmp", ENGRAM_READ_SCOPES: "global,hermes:pmp" };
+  it("scope param overrides ENGRAM_SCOPE within an explicit ENGRAM_READ_SCOPES", () => {
+    const env = { ENGRAM_SCOPE: "hermes:pmp", ENGRAM_READ_SCOPES: "global,hermes:pmp,hermes:career" };
     const s = resolveCallScoping(env, { scope: "hermes:career" });
     expect(s.writeScope).toBe("hermes:career");
-    expect(s.readScopes).toEqual(["global", "hermes:pmp"]);
+    expect(s.readScopes).toEqual(["global", "hermes:pmp", "hermes:career"]);
   });
 
-  it("read_scopes param overrides env read scopes and leaves writeScope alone", () => {
-    const env = { ENGRAM_SCOPE: "hermes:pmp" };
+  it("read_scopes param narrows env read scopes and leaves writeScope alone", () => {
+    const env = { ENGRAM_SCOPE: "hermes:pmp", ENGRAM_READ_SCOPES: "global,hermes:pmp,hermes:career" };
     const s = resolveCallScoping(env, { read_scopes: [" hermes:career "] });
     expect(s.writeScope).toBe("hermes:pmp");
     expect(s.readScopes).toEqual(["hermes:career"]);
+  });
+
+  // #108: an env-pinned child (Hermes stdio) must not be widened by tool args.
+  it("read_scopes outside the env ceiling are dropped; none left → throws", () => {
+    const env = { ENGRAM_SCOPE: "hermes:pmp" }; // reads default to global + own
+    expect(resolveCallScoping(env, { read_scopes: ["hermes:career", "global"] }).readScopes).toEqual(["global"]);
+    expect(() => resolveCallScoping(env, { read_scopes: ["hermes:career"] })).toThrow(/no scope in common/);
+  });
+
+  it("scope outside the env read scopes throws (write only where you may read)", () => {
+    const env = { ENGRAM_SCOPE: "hermes:pmp", ENGRAM_READ_SCOPES: "global,hermes:pmp" };
+    expect(() => resolveCallScoping(env, { scope: "hermes:career" })).toThrow(/outside this server's read scopes/);
+    expect(resolveCallScoping(env, { scope: "global" }).writeScope).toBe("global");
+  });
+
+  it("with no env restriction the params apply as given (shared HTTP daemon)", () => {
+    const s = resolveCallScoping({}, { scope: "hermes:career", read_scopes: ["hermes:pmp"] });
+    expect(s.writeScope).toBe("hermes:career");
+    expect(s.readScopes).toEqual(["hermes:pmp"]);
   });
 
   it("rejects empty / whitespace scope strings and empty read_scopes", () => {
