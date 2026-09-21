@@ -8,7 +8,9 @@
  */
 
 import { terminalSharedCss } from "./shared-css.js";
-import { RED, BLUE, GREEN, ORANGE, PURPLE, AQUA, YELLOW } from '../theme.js';
+import { terminalTreemapJs } from "./treemap.js";
+import { sharedJs } from "../shared-js.js";
+import { PALETTE, hexToRgb } from '../theme.js';
 
 export function terminalCommunitiesPage(): string {
   return `<!DOCTYPE html>
@@ -77,29 +79,12 @@ export function terminalCommunitiesPage(): string {
 
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script>
-// Everforest Hard Dark hues — one per community, cycled
-const HUES = [
-  [230, 126, 128],  // red
-  [127, 187, 179],  // blue
-  [167, 192, 128],  // green
-  [230, 152, 117],  // peach
-  [214, 153, 182],  // mauve
-  [131, 192, 146],  // sapphire
-  [219, 188, 127],  // yellow
-  [131, 192, 146],  // teal
-  [230, 152, 117],  // flamingo
-  [214, 153, 182],  // lavender
-  [230, 126, 128],  // maroon
-  [131, 192, 146],  // sky
-];
+// Everforest palette as RGB — one hue per community, cycled
+const HUES = ${JSON.stringify(PALETTE.map(hexToRgb))};
+${sharedJs()}
+${terminalTreemapJs()}
 
 let communityData = [];
-
-function esc(s) {
-  const el = document.createElement('span');
-  el.textContent = s;
-  return el.innerHTML;
-}
 
 function closeInfo() {
   document.getElementById('info-panel').classList.remove('open');
@@ -141,130 +126,15 @@ function cellColor(index, coherence) {
   return 'rgb(' + r + ',' + g + ',' + b + ')';
 }
 
-function renderTreemap(communities) {
-  const container = document.getElementById('treemap');
-  container.innerHTML = '';
-
-  if (communities.length === 0) return;
-
-  const width = Math.max(window.innerWidth - 32, 768);
-  const height = Math.max(window.innerHeight - 78, 500);
-
+function renderCommunityTreemap(communities) {
   // Budget: show top 80 communities to keep the treemap readable
-  const BUDGET = 80;
-  const shown = communities.slice(0, BUDGET);
-
-  const root = d3.hierarchy({ children: shown.map((c, i) => ({ ...c, rank: i })) })
-    .sum(d => d.entityCount)
-    .sort((a, b) => b.value - a.value);
-
-  d3.treemap()
-    .size([width, height])
-    .padding(2)
-    .round(true)(root);
-
-  const svg = d3.select(container).append('svg')
-    .attr('width', width)
-    .attr('height', height);
-
-  const cells = svg.selectAll('g')
-    .data(root.leaves())
-    .join('g')
-    .attr('class', 'cell')
-    .attr('transform', d => 'translate(' + d.x0 + ',' + d.y0 + ')')
-    .on('click', function(event, d) {
-      event.stopPropagation();
-      showCommunityInfo(d.data, this);
-    });
-
-  cells.append('rect')
-    .attr('width', d => d.x1 - d.x0)
-    .attr('height', d => d.y1 - d.y0)
-    .attr('fill', d => cellColor(d.data.rank, d.data.coherenceScore))
-    .attr('rx', 2);
-
-  // Fit labels into cells with word-wrapping and proper centering
-  cells.each(function(d) {
-    const cellW = d.x1 - d.x0;
-    const cellH = d.y1 - d.y0;
-    const name = d.data.name;
-    const pad = 6;
-
-    if (cellW < 30 || cellH < 16) return;
-
-    const g = d3.select(this);
-    const usableW = cellW - pad * 2;
-    const usableH = cellH - pad * 2;
-
-    // Start with a font size based on cell height, then shrink if needed
-    const charRatio = 0.65; // monospace char width / font size (tuned for carbonyl)
-    let fontSize = Math.min(usableH * 0.35, 28);
-
-    function wrapText(fs) {
-      const cw = fs * charRatio;
-      const maxChars = Math.max(Math.floor(usableW / cw), 1);
-      const words = name.split(/\\s+/);
-      const lines = [];
-      let cur = '';
-      for (const w of words) {
-        if (w.length > maxChars) {
-          // Word too wide — put it on its own line, truncated with ellipsis
-          if (cur) { lines.push(cur); cur = ''; }
-          lines.push(w.slice(0, maxChars - 1) + '\\u2026');
-          continue;
-        }
-        const test = cur ? cur + ' ' + w : w;
-        if (test.length > maxChars && cur) {
-          lines.push(cur);
-          cur = w;
-        } else {
-          cur = test;
-        }
-      }
-      if (cur) lines.push(cur);
-      return { lines, maxChars };
-    }
-
-    // Try wrapping at current font size, shrink if lines don't fit
-    let result, lineHeight, maxLines;
-    for (let attempt = 0; attempt < 5; attempt++) {
-      if (fontSize < 6) return;
-      result = wrapText(fontSize);
-      lineHeight = fontSize * 1.25;
-      maxLines = Math.floor(usableH / lineHeight);
-      if (maxLines >= 1 && (result.lines.length <= maxLines || maxLines >= 2)) break;
-      fontSize *= 0.8;
-    }
-
-    if (fontSize < 6) return;
-
-    const shownLines = result.lines.slice(0, Math.max(maxLines, 1));
-
-    // Truncate last visible line if there are hidden lines
-    if (shownLines.length < result.lines.length && shownLines.length > 0) {
-      const last = shownLines[shownLines.length - 1];
-      const mc = result.maxChars;
-      shownLines[shownLines.length - 1] = last.length > mc - 1
-        ? last.slice(0, mc - 1) + '\\u2026'
-        : last + '\\u2026';
-    }
-
-    // Center the text block vertically and horizontally
-    const totalH = shownLines.length * lineHeight;
-    const baseY = pad + (usableH - totalH) / 2 + fontSize * 0.8;
-
-    shownLines.forEach((line, i) => {
-      g.append('text')
-        .attr('x', cellW / 2)
-        .attr('y', baseY + i * lineHeight)
-        .attr('font-size', fontSize + 'px')
-        .attr('text-anchor', 'middle')
-        .attr('dominant-baseline', 'auto')
-        .text(line);
-    });
+  const items = communities.slice(0, 80).map((c, i) => ({
+    ...c, label: c.name, value: c.entityCount, fill: cellColor(i, c.coherenceScore),
+  }));
+  renderTreemap(document.getElementById('treemap'), items, {
+    maxFont: 28,
+    onClick: (d, cellEl) => showCommunityInfo(d, cellEl),
   });
-
-  svg.on('click', closeInfo);
 }
 
 // Load data
@@ -275,7 +145,7 @@ fetch('/api/communities')
     const totalEntities = data.reduce((s, c) => s + c.entityCount, 0);
     document.getElementById('stats-bar').textContent =
       data.length + ' communities | ' + totalEntities + ' total entities | generation ' + (data[0]?.generation ?? '?');
-    renderTreemap(data);
+    renderCommunityTreemap(data);
   });
 
 document.addEventListener('click', (e) => {

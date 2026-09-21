@@ -2,7 +2,11 @@
  * Graph page — D3 force-directed knowledge graph with Canvas rendering.
  */
 
-import { TYPE_COLORS, DEFAULT_COLOR, BG_DEEP, FG, FG_FAINT } from './theme.js';
+import { sharedPanelCss } from "./shared-css.js";
+import { sharedJs, panelToggleJs } from "./shared-js.js";
+import { sparkColorsJs } from "./spark-colors.js";
+import { diffPollingJs } from "./diff-polling.js";
+import { growthAnimationJs } from "./growth-animation.js";
 
 export function graphPage(): string {
   return `<!DOCTYPE html>
@@ -40,199 +44,13 @@ export function graphPage(): string {
   #tooltip .desc { margin-top: 6px; color: #d3c6aa; line-height: 1.4; }
   #tooltip .community { margin-top: 6px; color: #83c092; font-size: 11px; }
 
-  /* ─── Settings toggle button ─── */
-  #settings-toggle {
-    position: fixed;
-    top: 16px;
-    right: 16px;
-    z-index: 60;
-    width: 36px; height: 36px;
-    border-radius: 50%;
-    background: #272e33;
-    border: 1px solid #374145;
-    color: #d3c6aa;
-    font-size: 18px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.2s;
-    line-height: 1;
-  }
-  #settings-toggle:hover { background: #374145; border-color: #7fbbb3; }
-
-  /* ─── Settings panel ─── */
-  #settings-panel {
-    position: fixed;
-    top: 0; right: 0;
-    width: 300px;
-    height: 100vh;
-    background: rgba(30, 30, 46, 0.95);
-    border-left: 1px solid #374145;
-    z-index: 55;
-    overflow-y: auto;
-    transform: translateX(100%);
-    transition: transform 0.25s ease;
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-  }
-  #settings-panel.open { transform: translateX(0); }
-  #settings-panel::-webkit-scrollbar { width: 4px; }
-  #settings-panel::-webkit-scrollbar-track { background: transparent; }
-  #settings-panel::-webkit-scrollbar-thumb { background: #374145; border-radius: 2px; }
-
-  .panel-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 16px 20px 12px;
-    border-bottom: 1px solid #272e33;
-  }
-  .panel-header h2 {
-    font-size: 15px;
-    font-weight: 600;
-    color: #d3c6aa;
-  }
-  .panel-header-actions {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-  }
-  .panel-header-actions button {
-    background: none;
-    border: none;
-    color: #7a8478;
-    cursor: pointer;
-    font-size: 16px;
-    padding: 2px;
-    line-height: 1;
-    transition: color 0.15s;
-  }
-  .panel-header-actions button:hover { color: #d3c6aa; }
-
-  /* Collapsible sections */
-  .section {
-    border-bottom: 1px solid #272e33;
-  }
-  .section-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 12px 20px;
-    cursor: pointer;
-    user-select: none;
-    transition: background 0.1s;
-  }
-  .section-header:hover { background: rgba(69, 71, 90, 0.3); }
-  .section-header .arrow {
-    font-size: 10px;
-    color: #7a8478;
-    transition: transform 0.2s;
-    width: 12px;
-    text-align: center;
-  }
-  .section.open .section-header .arrow { transform: rotate(90deg); }
-  .section-header .section-title {
-    font-size: 14px;
-    font-weight: 500;
-    color: #d3c6aa;
-  }
-  .section-body {
-    display: none;
-    padding: 4px 20px 16px;
-  }
-  .section.open .section-body { display: block; }
-
-  /* Control rows */
-  .ctrl-row {
-    margin-bottom: 12px;
-  }
-  .ctrl-row:last-child { margin-bottom: 0; }
-  .ctrl-label {
-    font-size: 12px;
-    color: #9da9a0;
-    margin-bottom: 6px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-  .ctrl-label .val {
-    font-size: 11px;
-    color: #7a8478;
-    min-width: 32px;
-    text-align: right;
-  }
-  .ctrl-row input[type=range] {
-    width: 100%;
-    accent-color: #7fbbb3;
-    height: 4px;
-  }
-  .ctrl-row input[type=text] {
-    width: 100%;
-    background: #272e33;
-    border: 1px solid #374145;
-    border-radius: 6px;
-    padding: 7px 12px;
-    color: #d3c6aa;
-    font-size: 13px;
-    outline: none;
-  }
-  .ctrl-row input[type=text]:focus { border-color: #7fbbb3; }
-  .ctrl-row input[type=text]::placeholder { color: #7a8478; }
-
-  /* Toggle switch */
-  .ctrl-toggle {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 12px;
-  }
-  .ctrl-toggle .label { font-size: 12px; color: #9da9a0; }
-  .switch {
-    width: 36px; height: 20px;
-    background: #374145;
-    border-radius: 10px;
-    position: relative;
-    cursor: pointer;
-    transition: background 0.2s;
-  }
-  .switch.on { background: #7fbbb3; }
-  .switch::after {
-    content: '';
-    position: absolute;
-    top: 2px; left: 2px;
-    width: 16px; height: 16px;
-    background: #d3c6aa;
-    border-radius: 50%;
-    transition: transform 0.2s;
-  }
-  .switch.on::after { transform: translateX(16px); }
+  ${sharedPanelCss()}
 
   /* Type filter pills in panel */
   #filters {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
-  }
-  .pill {
-    background: #272e33;
-    border: 1px solid #374145;
-    border-radius: 14px;
-    padding: 4px 10px;
-    font-size: 11px;
-    color: #9da9a0;
-    cursor: pointer;
-    transition: all 0.15s;
-    user-select: none;
-  }
-  .pill:hover { border-color: #7fbbb3; color: #d3c6aa; }
-  .pill.active { background: #374145; color: #d3c6aa; border-color: #7fbbb3; }
-  .pill .dot {
-    display: inline-block;
-    width: 8px; height: 8px;
-    border-radius: 50%;
-    margin-right: 5px;
-    vertical-align: middle;
   }
 
   /* Stats bar (minimal, always visible) */
@@ -245,29 +63,6 @@ export function graphPage(): string {
     color: #495156;
     pointer-events: none;
   }
-
-  /* Dream button (always visible, bottom-right) */
-  #dream-btn {
-    position: fixed;
-    bottom: 16px;
-    right: 16px;
-    z-index: 50;
-    background: #272e33;
-    border: 1px solid #374145;
-    border-radius: 8px;
-    padding: 8px 16px;
-    color: #d699b6;
-    font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  #dream-btn:hover { border-color: #d699b6; background: #374145; }
-  #dream-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-  #dream-btn .icon { font-size: 16px; }
 
   /* Dream status (in panel) */
   #dream-status {
@@ -346,20 +141,6 @@ export function graphPage(): string {
   }
   .ds-phase-names span.done { color: #a7c080; }
   .ds-phase-names span.active { color: #d699b6; }
-
-  /* ─── View tab bar ─── */
-  #view-tabs {
-    position: fixed; top: 12px; left: 16px; z-index: 60;
-    display: flex; gap: 4px;
-  }
-  #view-tabs a {
-    background: rgba(39,46,51,0.85); border: 1px solid #374145; border-radius: 14px;
-    padding: 5px 14px; font-size: 12px; font-weight: 500;
-    color: #9da9a0; text-decoration: none; cursor: pointer;
-    transition: all 0.15s; user-select: none;
-  }
-  #view-tabs a:hover { border-color: #7fbbb3; color: #d3c6aa; }
-  #view-tabs a.active { background: #374145; color: #7fbbb3; border-color: #7fbbb3; }
 
   /* ─── Settings persistence buttons ─── */
   .panel-footer {
@@ -639,74 +420,17 @@ export function graphPage(): string {
       <h3>Settings Guide</h3>
       <button class="info-close" id="info-close">&times;</button>
     </div>
-    <div class="info-section">
-      <div class="info-section-title">Filters</div>
-      <div class="info-item"><div class="info-item-name">Search nodes</div><div class="info-item-desc">Filter visible nodes by name, description, or community</div></div>
-      <div class="info-item"><div class="info-item-name">Min mentions</div><div class="info-item-desc">Only show entities mentioned at least this many times across conversations</div></div>
-    </div>
-    <div class="info-section">
-      <div class="info-section-title">Groups</div>
-      <div class="info-item"><div class="info-item-name">Type filters</div><div class="info-item-desc">Toggle visibility of entity types (e.g., projects, tools, people)</div></div>
-    </div>
-    <div class="info-section">
-      <div class="info-section-title">Display</div>
-      <div class="info-item"><div class="info-item-name">Show labels</div><div class="info-item-desc">Toggle text labels on graph nodes</div></div>
-      <div class="info-item"><div class="info-item-name">Label threshold</div><div class="info-item-desc">At higher densities, hide labels to reduce clutter. Lower = more labels visible</div></div>
-      <div class="info-item"><div class="info-item-name">Node size</div><div class="info-item-desc">Scale the radius of all nodes. Based on mention count</div></div>
-      <div class="info-item"><div class="info-item-name">Link thickness</div><div class="info-item-desc">Scale the width of relationship lines. Based on relationship strength</div></div>
-      <div class="info-item"><div class="info-item-name">Link gradient</div><div class="info-item-desc">Opacity falloff for links \u2014 higher values fade weak links more</div></div>
-      <div class="info-item"><div class="info-item-name">Auto-zoom</div><div class="info-item-desc">Automatically pan/zoom to center newly loaded or changed nodes</div></div>
-    </div>
-    <div class="info-section">
-      <div class="info-section-title">Forces</div>
-      <div class="info-item"><div class="info-item-name">Center force</div><div class="info-item-desc">How strongly nodes are pulled toward the center of the canvas</div></div>
-      <div class="info-item"><div class="info-item-name">Repel force</div><div class="info-item-desc">How strongly nodes push each other apart (higher = more spacing)</div></div>
-      <div class="info-item"><div class="info-item-name">Link force</div><div class="info-item-desc">How strongly connected nodes are pulled together</div></div>
-      <div class="info-item"><div class="info-item-name">Link distance</div><div class="info-item-desc">Target resting distance between connected nodes</div></div>
-    </div>
+    <!-- Sections are generated from SETTING_HINTS / SECTION_HINTS by buildInfoDialog() -->
   </div>
 </div>
 
-<button id="dream-btn" style="display:none"><span class="icon">&#x2728;</span> Dream</button>
-
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script>
-// ─── Color System ─────────────────────────────────────────────────
-const TYPE_COLORS = ${JSON.stringify(TYPE_COLORS)};
+${panelToggleJs()}
+${sharedJs()}
+${sparkColorsJs({ bg: [25, 29, 32], minBlend: 0.35, maxBlend: 0.35 })}
 
-// Pre-compute RGB for type colors and their muted versions
-const BG = [25, 29, 32]; // #191d20
-const FADE_DURATION = 60000; // 60 seconds to fully mute
 const GLOW_DURATION = 3000;  // 3 seconds of glow effect
-
-function hexToRgb(hex) {
-  return [parseInt(hex.slice(1,3),16), parseInt(hex.slice(3,5),16), parseInt(hex.slice(5,7),16)];
-}
-
-const TYPE_RGB = {};
-const TYPE_MUTED = {};
-for (const [k, hex] of Object.entries(TYPE_COLORS)) {
-  const [r, g, b] = hexToRgb(hex);
-  TYPE_RGB[k] = [r, g, b];
-  TYPE_MUTED[k] = [
-    Math.round(r * 0.35 + BG[0] * 0.65),
-    Math.round(g * 0.35 + BG[1] * 0.65),
-    Math.round(b * 0.35 + BG[2] * 0.65),
-  ];
-}
-
-function sparkNodeColor(type, lastSpark) {
-  const muted = TYPE_MUTED[type] || [60, 60, 70];
-  if (!lastSpark) return 'rgb(' + muted.join(',') + ')';
-  const age = Date.now() - lastSpark;
-  if (age >= FADE_DURATION) return 'rgb(' + muted.join(',') + ')';
-  const t = age / FADE_DURATION; // 0=fresh, 1=muted
-  const bright = TYPE_RGB[type] || [136, 136, 136];
-  const r = Math.round(bright[0] + (muted[0] - bright[0]) * t);
-  const g = Math.round(bright[1] + (muted[1] - bright[1]) * t);
-  const b = Math.round(bright[2] + (muted[2] - bright[2]) * t);
-  return 'rgb(' + r + ',' + g + ',' + b + ')';
-}
 
 function sparkLinkAlpha(lastSpark) {
   if (!lastSpark) return 0.06;
@@ -723,18 +447,7 @@ function glowAlpha(lastSpark) {
   return 0.5 * (1 - age / GLOW_DURATION);
 }
 
-const REL_RGB = {
-  uses:          [127,187,179],
-  depends_on:    [230,126,128],
-  related_to:    [214,153,182],
-  part_of:       [167,192,128],
-  configured_by: [230,152,117],
-  solved_by:     [219,188,127],
-};
-
 let allNodes = [], allLinks = [];
-let nodeMap = new Map();
-let linkKey = new Set();
 let filteredNodes = [], filteredLinks = [];
 let activeTypes = new Set(Object.keys(TYPE_COLORS));
 let searchTerm = '';
@@ -746,8 +459,6 @@ let focusedNode = null;
 let focusNeighbors = null;
 let draggedNode = null;
 let totalInDb = 0;
-let lastDiffTimestamp = 0;
-let diffPollTimer = null;
 let hasFreshNodes = false;
 let autoZoom2D = true;
 let lastAutoZoomTime2D = 0;
@@ -830,7 +541,11 @@ function buildFilters() {
 function rebuildSim() {
   filterGraph();
   updateStats();
+  buildSim();
+}
 
+// (Re)start the force simulation over filteredNodes / filteredLinks
+function buildSim() {
   if (simulation) simulation.stop();
 
   simulation = d3.forceSimulation(filteredNodes)
@@ -927,7 +642,7 @@ function draw() {
     if (ga > 0) {
       hasActiveSparks = true;
       const r = nodeRadius(n);
-      const bright = TYPE_RGB[n.type] || [136, 136, 136];
+      const bright = typeRgb(n.type);
       ctx.beginPath();
       ctx.arc(n.x, n.y, r + 6, 0, Math.PI * 2);
       ctx.fillStyle = 'rgba(' + bright[0] + ',' + bright[1] + ',' + bright[2] + ',' + ga + ')';
@@ -947,7 +662,7 @@ function draw() {
 
     ctx.beginPath();
     ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
-    ctx.fillStyle = sparkNodeColor(n.type, n.lastSpark);
+    ctx.fillStyle = sparkNodeColor(n);
     ctx.globalAlpha = alpha;
     ctx.fill();
 
@@ -1109,28 +824,8 @@ function moveTooltip(event) {
 function hideTooltip() {
   document.getElementById('tooltip').style.display = 'none';
 }
-function esc(s) {
-  const el = document.createElement('span');
-  el.textContent = s;
-  return el.innerHTML;
-}
 
 // ─── Settings Panel ──────────────────────────────────────────────
-
-// Panel toggle
-document.getElementById('settings-toggle').addEventListener('click', () => {
-  document.getElementById('settings-panel').classList.toggle('open');
-});
-document.getElementById('close-panel').addEventListener('click', () => {
-  document.getElementById('settings-panel').classList.remove('open');
-});
-
-// Section collapse
-document.querySelectorAll('.section-header').forEach(hdr => {
-  hdr.addEventListener('click', () => {
-    hdr.parentElement.classList.toggle('open');
-  });
-});
 
 // Filters
 document.getElementById('search').addEventListener('input', (e) => {
@@ -1485,6 +1180,35 @@ function hideHintBubble() {
 }
 
 // ─── Info Dialog ─────────────────────────────────────────────────
+
+// Display name for a hinted control: its label text, or the search placeholder
+function settingName(el) {
+  if (el.placeholder) return el.placeholder.replace(/\\.\\.\\.$/, '');
+  const row = el.closest('.ctrl-row') || el.closest('.ctrl-toggle');
+  const label = row && (row.querySelector('.ctrl-label') || row.querySelector('.label'));
+  return label ? label.firstChild.textContent.trim() : el.id;
+}
+
+// One dialog section per settings section; rows come from SETTING_HINTS, and a
+// section without hinted controls (Groups, Dream) shows its SECTION_HINTS line.
+function buildInfoDialog() {
+  const dialog = document.getElementById('info-dialog');
+  document.querySelectorAll('#settings-panel .section').forEach(section => {
+    const title = section.querySelector('.section-title').textContent;
+    const rows = [...section.querySelectorAll('[id]')]
+      .filter(el => SETTING_HINTS[el.id])
+      .map(el => [settingName(el), SETTING_HINTS[el.id]]);
+    if (rows.length === 0 && SECTION_HINTS[title]) rows.push([title, SECTION_HINTS[title]]);
+    const sec = document.createElement('div');
+    sec.className = 'info-section';
+    sec.innerHTML = '<div class="info-section-title">' + esc(title) + '</div>' +
+      rows.map(([name, desc]) =>
+        '<div class="info-item"><div class="info-item-name">' + esc(name) + '</div><div class="info-item-desc">' + esc(desc) + '</div></div>'
+      ).join('');
+    dialog.appendChild(sec);
+  });
+}
+
 document.getElementById('info-btn').addEventListener('click', () => {
   document.getElementById('info-overlay').classList.add('open');
 });
@@ -1523,15 +1247,6 @@ Promise.all([
     allLinks = data.links.map(l => { l.lastSpark = 0; return l; });
     totalInDb = allNodes.length;
 
-    // Build lookup structures
-    nodeMap.clear();
-    linkKey.clear();
-    for (const n of allNodes) nodeMap.set(n.id, n);
-    for (const l of allLinks) linkKey.add(l.source + '|' + l.target + '|' + l.type);
-
-    // Set initial diff timestamp to now (only fetch changes after load)
-    lastDiffTimestamp = Math.floor(Date.now() / 1000);
-
     buildFilters();
 
     // Load saved settings (after buildFilters so type filter pills exist)
@@ -1540,167 +1255,70 @@ Promise.all([
       applySettings(savedSettings);
     }
 
-    // Create hint icons (after DOM is ready)
+    // Create hint icons and the settings guide (after DOM is ready)
+    buildInfoDialog();
     createHintIcons();
 
     rebuildSim();
 
-    // Start diff polling
-    startDiffPolling();
+    startDiffPolling('/graph', onDiffChanged);
 
     // Auto-fit after settling
     setTimeout(() => {
-      if (filteredNodes.length === 0) return;
-      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-      for (const n of filteredNodes) {
-        if (n.x == null) continue;
-        minX = Math.min(minX, n.x); maxX = Math.max(maxX, n.x);
-        minY = Math.min(minY, n.y); maxY = Math.max(maxY, n.y);
-      }
-      const pad = 60;
-      const bw = maxX - minX + pad * 2;
-      const bh = maxY - minY + pad * 2;
-      const scale = Math.min(window.innerWidth / bw, window.innerHeight / bh, 2);
-      const cx = (minX + maxX) / 2;
-      const cy = (minY + maxY) / 2;
-      const t = d3.zoomIdentity
-        .translate(window.innerWidth / 2, window.innerHeight / 2)
-        .scale(scale)
-        .translate(-cx, -cy);
-      d3.select(canvas).transition().duration(750).call(zoomBehavior.transform, t);
+      const placed = filteredNodes.filter(n => n.x != null);
+      if (placed.length > 0) zoomToNodes(placed, 60);
     }, 3000);
   });
 
-// ─── Diff Polling ─────────────────────────────────────────────────
+${diffPollingJs()}
 
-function startDiffPolling() {
-  if (diffPollTimer) return;
-  diffPollTimer = setInterval(pollDiff, 1500);
+// Zoom the canvas to fit a set of positioned nodes
+function zoomToNodes(nodes, pad) {
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const n of nodes) {
+    minX = Math.min(minX, n.x); maxX = Math.max(maxX, n.x);
+    minY = Math.min(minY, n.y); maxY = Math.max(maxY, n.y);
+  }
+  const bw = maxX - minX + pad * 2;
+  const bh = maxY - minY + pad * 2;
+  const scale = Math.min(window.innerWidth / bw, window.innerHeight / bh, 2);
+  const t = d3.zoomIdentity
+    .translate(window.innerWidth / 2, window.innerHeight / 2)
+    .scale(scale)
+    .translate(-(minX + maxX) / 2, -(minY + maxY) / 2);
+  d3.select(canvas).transition().duration(750).call(zoomBehavior.transform, t);
 }
 
-function pollDiff() {
-  fetch('/graph/api/diff?since=' + lastDiffTimestamp)
-    .then(r => r.json())
-    .then(mergeDiff)
-    .catch(() => {});
-}
+function onDiffChanged(newNodeIds) {
+  totalInDb = allNodes.length;
 
-function mergeDiff(diff) {
-  if (!diff) return;
-  lastDiffTimestamp = diff.timestamp;
-  const sparkTime = Date.now();
-  let changed = false;
-  const newNodeIds = [];
+  // Incremental sim update: re-filter and add new nodes/links without full restart
+  const prevNodeCount = filteredNodes.length;
+  filterGraph();
+  updateStats();
 
-  // New nodes
-  for (const n of diff.newNodes) {
-    if (!nodeMap.has(n.id)) {
-      n.lastSpark = sparkTime;
-      allNodes.push(n);
-      nodeMap.set(n.id, n);
-      newNodeIds.push(n.id);
-      changed = true;
-    }
+  if (filteredNodes.length !== prevNodeCount) {
+    // New visible nodes appeared — warm-restart the sim
+    simulation.nodes(filteredNodes);
+    simulation.force('link').links(filteredLinks);
+    simulation.alpha(0.15).restart();
   }
 
-  // Updated nodes — refresh properties, spark them
-  for (const n of diff.updatedNodes) {
-    const existing = nodeMap.get(n.id);
-    if (existing) {
-      existing.name = n.name;
-      existing.description = n.description;
-      existing.mentionCount = n.mentionCount;
-      existing.community = n.community;
-      existing.lastSpark = sparkTime;
-      changed = true;
-    }
-  }
-
-  // New links
-  for (const l of diff.newLinks) {
-    const key = l.source + '|' + l.target + '|' + l.type;
-    if (!linkKey.has(key)) {
-      l.lastSpark = sparkTime;
-      allLinks.push(l);
-      linkKey.add(key);
-      changed = true;
-      // Also spark the connected nodes
-      const sn = nodeMap.get(l.source);
-      const tn = nodeMap.get(l.target);
-      if (sn) sn.lastSpark = sparkTime;
-      if (tn) tn.lastSpark = sparkTime;
-    }
-  }
-
-  // Updated links
-  for (const l of diff.updatedLinks) {
-    const key = l.source + '|' + l.target + '|' + l.type;
-    // Find and update existing link
-    for (const el of allLinks) {
-      const sid = typeof el.source === 'object' ? el.source.id : el.source;
-      const tid = typeof el.target === 'object' ? el.target.id : el.target;
-      if (sid === l.source && tid === l.target && el.type === l.type) {
-        el.weight = l.weight;
-        el.context = l.context;
-        el.lastSpark = sparkTime;
-        changed = true;
-        break;
+  // Auto-zoom to new nodes
+  if (autoZoom2D && newNodeIds.length >= 2 && Date.now() - lastAutoZoomTime2D > 5000) {
+    setTimeout(() => {
+      const newNodes = newNodeIds.map(id => nodeMap.get(id)).filter(n => n && n.x != null);
+      if (newNodes.length >= 2) {
+        zoomToNodes(newNodes, 150);
+        lastAutoZoomTime2D = Date.now();
       }
-    }
+    }, 500);
   }
 
-  if (changed) {
-    totalInDb = allNodes.length;
-
-    // Incremental sim update: re-filter and add new nodes/links without full restart
-    const prevNodeCount = filteredNodes.length;
-    filterGraph();
-    updateStats();
-
-    if (filteredNodes.length !== prevNodeCount) {
-      // New visible nodes appeared — warm-restart the sim
-      simulation.nodes(filteredNodes);
-      simulation.force('link').links(filteredLinks);
-      simulation.alpha(0.15).restart();
-    }
-
-    // Show update indicator
-    const live = document.getElementById('live');
-    live.textContent = '+' + (diff.newNodes.length + diff.updatedNodes.length) + ' changes';
-    live.classList.add('show');
-    setTimeout(() => live.classList.remove('show'), 2000);
-
-    // Auto-zoom to new nodes
-    if (autoZoom2D && newNodeIds.length >= 2 && Date.now() - lastAutoZoomTime2D > 5000) {
-      setTimeout(() => {
-        const newNodes = newNodeIds.map(id => nodeMap.get(id)).filter(n => n && n.x != null);
-        if (newNodes.length >= 2) {
-          let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-          for (const n of newNodes) {
-            minX = Math.min(minX, n.x); maxX = Math.max(maxX, n.x);
-            minY = Math.min(minY, n.y); maxY = Math.max(maxY, n.y);
-          }
-          const pad = 150;
-          const bw = maxX - minX + pad * 2;
-          const bh = maxY - minY + pad * 2;
-          const scale = Math.min(window.innerWidth / bw, window.innerHeight / bh, 2);
-          const cx = (minX + maxX) / 2;
-          const cy = (minY + maxY) / 2;
-          const t = d3.zoomIdentity
-            .translate(window.innerWidth / 2, window.innerHeight / 2)
-            .scale(scale)
-            .translate(-cx, -cy);
-          d3.select(canvas).transition().duration(750).call(zoomBehavior.transform, t);
-          lastAutoZoomTime2D = Date.now();
-        }
-      }, 500);
-    }
-
-    // Trigger rAF fade loop
-    if (!hasFreshNodes) {
-      hasFreshNodes = true;
-      requestAnimationFrame(draw);
-    }
+  // Trigger rAF fade loop
+  if (!hasFreshNodes) {
+    hasFreshNodes = true;
+    requestAnimationFrame(draw);
   }
 }
 
@@ -1823,149 +1441,17 @@ function updateDreamUI(status) {
 
 initDreamUI();
 
-// ─── Growth Animation ────────────────────────────────────────────
+${growthAnimationJs()}
 
-let animating2D = false;
-let animTime2D = 0;
-let animMinTime2D = 0;
-let animMaxTime2D = 0;
-let animSpeed2D = 1;
-const ANIM_SPEEDS_2D = [1, 2, 5, 10, 20];
-let animSpeedIdx2D = 0;
-let animLastFrame2D = 0;
-let animNodeOrder2D = [];
-let animVisibleCount2D = 0;
-let animSavedThreshold2D = 0;
-
-const animBtn2D = document.getElementById('animate-btn');
-const animProgress2D = document.getElementById('anim-progress');
-const animBar2D = document.getElementById('anim-bar');
-const animDate2D = document.getElementById('anim-date');
-const animSpeedEl2D = document.getElementById('anim-speed');
-
-function formatAnimDate2D(ts) {
-  const d = new Date(ts * 1000);
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-}
-
-function startAnimation2D() {
-  // Animate within the current threshold — keeps node count manageable
-  const thresholdFiltered = allNodes.filter(n => (n.mentionCount || 0) >= mentionThreshold);
-  animNodeOrder2D = thresholdFiltered
-    .filter(n => (n.firstSeen || 0) > 0)
-    .sort((a, b) => (a.firstSeen || 0) - (b.firstSeen || 0));
-  if (animNodeOrder2D.length < 2) return;
-
-  animMinTime2D = animNodeOrder2D[0].firstSeen;
-  animMaxTime2D = animNodeOrder2D[animNodeOrder2D.length - 1].firstSeen;
-  animTime2D = animMinTime2D;
-  animVisibleCount2D = 0;
-  animSavedThreshold2D = mentionThreshold;
-
-  animating2D = true;
-  animLastFrame2D = performance.now();
-  animBtn2D.classList.add('playing');
-  animBtn2D.innerHTML = '&#x25A0;';
-  animProgress2D.classList.add('show');
-
-  // Start with empty graph
-  filteredNodes = [];
-  filteredLinks = [];
-  rebuildSim();
-  requestAnimationFrame(animTick2D);
-}
-
-function stopAnimation2D() {
-  animating2D = false;
-  animBtn2D.classList.remove('playing');
-  animBtn2D.innerHTML = '&#x25B6;';
-  animProgress2D.classList.remove('show');
-
-  mentionThreshold = animSavedThreshold2D;
-  document.getElementById('threshold').value = mentionThreshold;
-  document.getElementById('threshold-val').textContent = mentionThreshold;
-  rebuildSim();
-}
-
-function animTick2D(now) {
-  if (!animating2D) return;
-  const dt = (now - animLastFrame2D) / 1000;
-  animLastFrame2D = now;
-
-  const BASE_DURATION = 45;
-  const timeSpan = animMaxTime2D - animMinTime2D || 1;
-  const timeScale = timeSpan / BASE_DURATION;
-  animTime2D += dt * timeScale * animSpeed2D;
-
-  if (animTime2D >= animMaxTime2D) {
-    animTime2D = animMaxTime2D;
-    animVisibleCount2D = animNodeOrder2D.length;
-    animRebuild2D();
-    updateAnimUI2D();
-    setTimeout(stopAnimation2D, 1500);
-    return;
-  }
-
-  let newCount = animVisibleCount2D;
-  while (newCount < animNodeOrder2D.length && (animNodeOrder2D[newCount].firstSeen || 0) <= animTime2D) {
-    newCount++;
-  }
-
-  if (newCount > animVisibleCount2D) {
-    const sparkTime = Date.now();
-    for (let i = animVisibleCount2D; i < newCount; i++) {
-      animNodeOrder2D[i].lastSpark = sparkTime;
-    }
-    animVisibleCount2D = newCount;
-    animRebuild2D();
-  }
-
-  updateAnimUI2D();
-  requestAnimationFrame(animTick2D);
-}
-
-function animRebuild2D() {
-  const visibleIds = new Set();
-  for (let i = 0; i < animVisibleCount2D; i++) {
-    visibleIds.add(animNodeOrder2D[i].id);
-  }
-
-  filteredNodes = allNodes.filter(n => visibleIds.has(n.id));
-  filteredLinks = allLinks.filter(l => {
-    const s = typeof l.source === 'object' ? l.source.id : l.source;
-    const t = typeof l.target === 'object' ? l.target.id : l.target;
-    return visibleIds.has(s) && visibleIds.has(t);
-  });
-
-  updateStats();
-
-  if (simulation) simulation.stop();
-  simulation = d3.forceSimulation(filteredNodes)
-    .force('link', d3.forceLink(filteredLinks).id(d => d.id).distance(forceLinkDistance).strength(d => Math.min((d.weight || 0.5) * forceLinkStrength, forceLinkStrength * 2)))
-    .force('charge', d3.forceManyBody().strength(forceRepel).distanceMax(600).theta(0.9))
-    .force('center', d3.forceCenter(window.innerWidth / 2, window.innerHeight / 2).strength(forceCenter))
-    .force('collision', d3.forceCollide().radius(d => nodeRadius(d) + 1).strength(0.3))
-    .alphaDecay(0.03)
-    .velocityDecay(0.4)
-    .on('tick', draw);
-}
-
-function updateAnimUI2D() {
-  const pct = ((animTime2D - animMinTime2D) / (animMaxTime2D - animMinTime2D || 1)) * 100;
-  animBar2D.style.width = pct + '%';
-  animDate2D.textContent = formatAnimDate2D(animTime2D);
-}
-
-animBtn2D.addEventListener('click', () => {
-  if (animating2D) stopAnimation2D();
-  else startAnimation2D();
-});
-
-animSpeedEl2D.addEventListener('click', () => {
-  animSpeedIdx2D = (animSpeedIdx2D + 1) % ANIM_SPEEDS_2D.length;
-  animSpeed2D = ANIM_SPEEDS_2D[animSpeedIdx2D];
-  animSpeedEl2D.textContent = animSpeed2D + 'x';
-});
+setupGrowthAnimation(
+  (nodes, links) => {
+    filteredNodes = nodes;
+    filteredLinks = links;
+    updateStats();
+    buildSim();
+  },
+  rebuildSim,
+);
 </script>
 </body>
 </html>`;

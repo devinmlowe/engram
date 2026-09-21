@@ -29,6 +29,7 @@ HTTP server for interactive knowledge graph visualization and dream pipeline con
   - `words.html.ts` — D3 word cloud
   - `terminal/` — SVG views for carbonyl and other terminal browsers
   - `shared-css.ts`, `theme.ts` — Everforest theme and shared styles
+  - `shared-js.ts`, `spark-colors.ts`, `diff-polling.ts`, `growth-animation.ts`, `relevance.ts`, `three-helpers.ts`, `terminal/treemap.ts` — client-side JS shared by several pages, returned as strings the templates interpolate
 - `routes/` — The one handler with process state
   - `dream.ts` — Dream status (tails the daemon's `dream.log`) and the detached `engram dream` spawn
 
