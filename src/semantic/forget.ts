@@ -166,16 +166,29 @@ export function contentHash(content: string): string {
   return createHash("sha256").update(normalized).digest("hex");
 }
 
-export function isSuppressed(db: Database.Database, content: string): boolean {
+/**
+ * #106: a suppression belongs to the scope the forgotten memory lived in. It
+ * applies to that scope, and a 'global' one applies everywhere (global
+ * knowledge); it never reaches across tenants.
+ */
+const SUPPRESSION_MATCH = "content_hash = ? AND scope IN (?, 'global')";
+
+export function isSuppressed(db: Database.Database, content: string, scope?: string): boolean {
   const row = db
-    .prepare("SELECT 1 FROM memory_suppressions WHERE content_hash = ?")
-    .get(contentHash(content));
+    .prepare(`SELECT 1 FROM memory_suppressions WHERE ${SUPPRESSION_MATCH}`)
+    .get(contentHash(content), scope ?? GLOBAL_SCOPE);
   return row !== undefined;
 }
 
-/** Remove the suppression for this content (an explicit remember wins). Returns true when one existed. */
-export function clearSuppression(db: Database.Database, content: string): boolean {
-  const r = db.prepare("DELETE FROM memory_suppressions WHERE content_hash = ?").run(contentHash(content));
+/**
+ * Remove this scope's suppression for this content (an explicit remember
+ * wins). Returns true when one existed. A 'global' suppression is only
+ * cleared by a global remember — one tenant must not lift it for everyone.
+ */
+export function clearSuppression(db: Database.Database, content: string, scope?: string): boolean {
+  const r = db
+    .prepare("DELETE FROM memory_suppressions WHERE content_hash = ? AND scope = ?")
+    .run(contentHash(content), scope ?? GLOBAL_SCOPE);
   return r.changes > 0;
 }
 
@@ -187,13 +200,15 @@ export function clearSuppression(db: Database.Database, content: string): boolea
 export function filterSuppressedFacts<T extends Pick<ExtractedFact, "content">>(
   db: Database.Database,
   facts: readonly T[],
+  scope?: string,
 ): { kept: T[]; suppressed: T[] } {
   if (facts.length === 0) return { kept: [], suppressed: [] };
-  const lookup = db.prepare("SELECT 1 FROM memory_suppressions WHERE content_hash = ?");
+  const lookup = db.prepare(`SELECT 1 FROM memory_suppressions WHERE ${SUPPRESSION_MATCH}`);
+  const seenFrom = scope ?? GLOBAL_SCOPE;
   const kept: T[] = [];
   const suppressed: T[] = [];
   for (const fact of facts) {
-    if (lookup.get(contentHash(fact.content))) suppressed.push(fact);
+    if (lookup.get(contentHash(fact.content), seenFrom)) suppressed.push(fact);
     else kept.push(fact);
   }
   return { kept, suppressed };
@@ -451,7 +466,8 @@ export function restoreMemory(db: Database.Database, options: RestoreOptions): M
       "UPDATE memories SET is_active = 1, deleted_at = NULL, deleted_by = NULL, updated_at = unixepoch() WHERE id = ?",
     ).run(row.id);
     reindex(db, row, options.embedding);
-    db.prepare("DELETE FROM memory_suppressions WHERE content_hash = ?").run(contentHash(row.content));
+    db.prepare("DELETE FROM memory_suppressions WHERE content_hash = ? AND scope = ?")
+      .run(contentHash(row.content), row.scope ?? GLOBAL_SCOPE);
     return logChange(db, { memoryId: row.id, op: "restore", before: null, after: row.content, actor: options.actor, at: now });
   });
   return run.immediate();

@@ -971,7 +971,8 @@ function getConversationScope(db: Database.Database, conversationId: string): st
 /**
  * #55: drop extracted facts whose content hash is in memory_suppressions — a
  * statement the user forgot must not come back from the same exchanges on
- * the next run. Counted in the report as `suppressedFacts`.
+ * the next run. Counted in the report as `suppressedFacts`. #106: only this
+ * conversation's own scope (and 'global') suppresses.
  */
 function dropSuppressed(
   db: Database.Database,
@@ -980,7 +981,7 @@ function dropSuppressed(
   logPath: string,
   report: DreamReport,
 ): ExtractedFact[] {
-  const { kept, suppressed } = filterSuppressedFacts(db, facts);
+  const { kept, suppressed } = filterSuppressedFacts(db, facts, getConversationScope(db, conversationId));
   if (suppressed.length > 0) {
     report.suppressedFacts = (report.suppressedFacts ?? 0) + suppressed.length;
     logEntry(logPath, "extract", `Suppressed ${suppressed.length} forgotten fact(s) re-extracted from ${conversationId}`, {

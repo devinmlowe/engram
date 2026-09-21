@@ -968,7 +968,7 @@ describe("engram update --rollback (#65, decision #66)", () => {
     // the additive caveat when the update added checkpoints that are not breaking
     const additive = await rollbackUpdate(older, res.planFile!, d);
     expect(additive.ok, additive.lines.join("\n")).toBe(true);
-    expect(additive.lines.join("\n")).toContain("additive migration(s) applied by the update stay in place (forget_v1; version 4 -> 5)");
+    expect(additive.lines.join("\n")).toContain(`additive migration(s) applied by the update stay in place (forget_v1; version 4 -> ${SCHEMA_VERSION})`);
     expect(readRollbackPlan(res.planFile!).rolledBack).toMatchObject({ ok: true, mode: "code-only" });
     // with a backup, --restore-data is allowed across a breaking migration (the backup predates it)
     mkdirSync(join(root, "bk"), { recursive: true });

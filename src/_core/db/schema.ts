@@ -398,6 +398,7 @@ function createSchema(db: Database.Database, config: EngramConfig): void {
   // the graph `stale_since` flags (#56/#57). Must run AFTER
   // migrateExpandedTypes (entities/relationships rebuild).
   migrateForget(db);
+  migrateSuppressionScope(db);
 
   // FTS5 virtual tables (created separately — can't use IF NOT EXISTS)
   createFtsIfNeeded(db, "exchanges_fts", `
@@ -785,14 +786,58 @@ export function migrateForget(db: Database.Database): boolean {
     CREATE INDEX IF NOT EXISTS idx_memory_changes_at ON memory_changes(at);
 
     CREATE TABLE IF NOT EXISTS memory_suppressions (
-      content_hash TEXT PRIMARY KEY,
+      content_hash TEXT NOT NULL,
       memory_id TEXT,
-      scope TEXT DEFAULT 'global',
-      created_at TEXT NOT NULL
+      scope TEXT NOT NULL DEFAULT 'global',
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (content_hash, scope)
     );
   `);
   if (!hadChanges || !hadSuppressions) added = true;
   db.prepare("INSERT OR IGNORE INTO schema_migrations (name) VALUES (?)").run(FORGET_MIGRATION);
+  return added;
+}
+
+/** Checkpoint name recorded when memory_suppressions becomes per-scope. */
+export const SUPPRESSION_SCOPE_MIGRATION = "suppression_scope_v1";
+
+/**
+ * #106: `memory_suppressions` was keyed on `content_hash` alone, so one
+ * tenant's forget suppressed dream re-extraction of the same sentence for
+ * every tenant (and any tenant's remember lifted it). Rebuild the table with
+ * `PRIMARY KEY (content_hash, scope)`, carrying the existing rows over.
+ * Additive for an older build: the columns are unchanged.
+ */
+export function migrateSuppressionScope(db: Database.Database): boolean {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      name TEXT PRIMARY KEY,
+      applied_at INTEGER DEFAULT (unixepoch())
+    )
+  `);
+  const ddl = db
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'memory_suppressions'")
+    .get() as { sql: string } | undefined;
+  let added = false;
+  if (ddl && !/PRIMARY KEY \(content_hash, scope\)/.test(ddl.sql)) {
+    db.transaction(() => {
+      db.exec(`
+        CREATE TABLE memory_suppressions_new (
+          content_hash TEXT NOT NULL,
+          memory_id TEXT,
+          scope TEXT NOT NULL DEFAULT 'global',
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (content_hash, scope)
+        );
+        INSERT OR REPLACE INTO memory_suppressions_new (content_hash, memory_id, scope, created_at)
+          SELECT content_hash, memory_id, COALESCE(scope, 'global'), created_at FROM memory_suppressions;
+        DROP TABLE memory_suppressions;
+        ALTER TABLE memory_suppressions_new RENAME TO memory_suppressions;
+      `);
+    }).immediate();
+    added = true;
+  }
+  db.prepare("INSERT OR IGNORE INTO schema_migrations (name) VALUES (?)").run(SUPPRESSION_SCOPE_MIGRATION);
   return added;
 }
 
@@ -810,9 +855,10 @@ export const SCHEMA_MIGRATIONS = [
   CONVERSATIONS_SCOPE_MIGRATION,
   EXCHANGES_AUTHOR_MIGRATION,
   FORGET_MIGRATION,
+  SUPPRESSION_SCOPE_MIGRATION,
 ] as const;
 
-/** Number of checkpointed migrations this build applies (5 as of `forget_v1`). */
+/** Number of checkpointed migrations this build applies (6 as of `suppression_scope_v1`). */
 export const SCHEMA_VERSION: number = SCHEMA_MIGRATIONS.length;
 
 /**

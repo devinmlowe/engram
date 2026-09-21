@@ -523,6 +523,42 @@ describe("extraction suppression", () => {
     expect(isSuppressed(t.db, "keep me after all")).toBe(false);
     expect(clearSuppression(t.db, "keep me after all")).toBe(false);
   });
+
+  // #106: a suppression belongs to the scope it was forgotten in.
+  it("one tenant's forget does not suppress the same sentence for another", () => {
+    seed("career", "Standups are at 9", { scope: "hermes:career" });
+    forgetMemory(t.db, { memoryId: "career", actor: "hermes" });
+    const facts = [{ type: "fact" as const, content: "standups are at 9", importance: 0.5, sourceExchangeIds: [] }];
+
+    expect(filterSuppressedFacts(t.db, facts, "hermes:career").suppressed).toHaveLength(1);
+    expect(filterSuppressedFacts(t.db, facts, "hermes:home").suppressed).toHaveLength(0);
+    expect(filterSuppressedFacts(t.db, facts).suppressed).toHaveLength(0); // 'global'
+    expect(isSuppressed(t.db, "Standups are at 9", "hermes:career")).toBe(true);
+    expect(isSuppressed(t.db, "Standups are at 9", "hermes:home")).toBe(false);
+  });
+
+  it("a global suppression applies to every scope, and only a global remember lifts it", () => {
+    seed("g1", "Deploy freeze in December");
+    forgetMemory(t.db, { memoryId: "g1", actor: "cli" });
+    expect(isSuppressed(t.db, "deploy freeze in december", "hermes:career")).toBe(true);
+    expect(clearSuppression(t.db, "deploy freeze in december", "hermes:career")).toBe(false);
+    expect(isSuppressed(t.db, "deploy freeze in december", "hermes:career")).toBe(true);
+    expect(clearSuppression(t.db, "deploy freeze in december")).toBe(true);
+  });
+
+  it("two tenants forgetting the same sentence keep separate suppressions", () => {
+    seed("a", "Same sentence", { scope: "hermes:career" });
+    seed("b", "Same sentence", { scope: "hermes:home" });
+    forgetMemory(t.db, { memoryId: "a", actor: "hermes" });
+    forgetMemory(t.db, { memoryId: "b", actor: "hermes" });
+    const rows = t.db
+      .prepare("SELECT memory_id, scope FROM memory_suppressions WHERE content_hash = ? ORDER BY scope")
+      .all(contentHash("Same sentence")) as Array<{ memory_id: string; scope: string }>;
+    expect(rows).toEqual([
+      { memory_id: "a", scope: "hermes:career" },
+      { memory_id: "b", scope: "hermes:home" },
+    ]);
+  });
 });
 
 // ─── Inspection ─────────────────────────────────────────────────

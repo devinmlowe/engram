@@ -158,7 +158,7 @@ export async function rememberFact(
   // statement the user once forgot lifts its extraction suppression (#55).
   const newId = crypto.randomUUID();
   const now = Math.floor(Date.now() / 1000);
-  clearSuppression(db, params.content);
+  clearSuppression(db, params.content, scope);
 
   insertMemory(
     db,
@@ -295,7 +295,7 @@ export async function storeMemoryBatch(
         if (!isDuplicate) {
           const newId = crypto.randomUUID();
           const now = Math.floor(Date.now() / 1000);
-          clearSuppression(db, input.content);
+          clearSuppression(db, input.content, scope);
 
           insertMemory(
             db,
