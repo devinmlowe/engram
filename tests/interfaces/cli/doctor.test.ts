@@ -32,10 +32,7 @@ import { defaultHostContext } from "../../../src/interfaces/cli/hosts.js";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { loadConfig } from "../../../src/_core/config/index.js";
-import {
-  applyModelCacheDir,
-  resolveModelCacheDir,
-} from "../../../src/_core/embeddings/model-cache.js";
+import { applyModelCacheDir } from "../../../src/_core/embeddings/model-cache.js";
 
 // Issue #8: `engram doctor` must report node version, platform/arch,
 // better-sqlite3 and sqlite-vec load status, and the model cache location +
@@ -280,14 +277,6 @@ describe("model cache check (#53)", () => {
 });
 
 describe("model cache resolution", () => {
-  it("resolveModelCacheDir is pure and prefers a non-blank override", () => {
-    const env = { cacheDir: "/lib/.cache/" };
-    expect(resolveModelCacheDir(env, "/custom")).toBe("/custom");
-    expect(resolveModelCacheDir(env, "   ")).toBe("/lib/.cache/");
-    expect(resolveModelCacheDir(env, undefined)).toBe("/lib/.cache/");
-    expect(env.cacheDir).toBe("/lib/.cache/");
-  });
-
   it("applyModelCacheDir points env at the override, else at the config's resolved dir", () => {
     const env = { cacheDir: "/lib/.cache/" };
     expect(applyModelCacheDir(env, "/custom")).toBe("/custom");

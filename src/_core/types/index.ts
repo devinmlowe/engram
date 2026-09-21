@@ -106,6 +106,8 @@ export interface EngramConfig {
   claudeProjectsDir: string; // ~/.claude/projects
   /** resolved by loadConfig(): ENGRAM_MODEL_CACHE_DIR, else $HF_HOME/hub, else {dataDir}/models (#53) */
   modelCacheDir: string;
+  /** which of those tiers won, for `engram doctor` / `engram migrate` output */
+  modelCacheSource: "ENGRAM_MODEL_CACHE_DIR" | "override" | "HF_HOME" | "default";
 
   embedding: {
     model: string; // nomic-embed-text-v1.5
