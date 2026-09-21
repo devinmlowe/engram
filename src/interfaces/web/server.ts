@@ -6,10 +6,12 @@
  *   /graph/depth  — Three.js 3D visualization
  *   /graph/galaxy — Orbital mechanics visualization
  *   /graph/words  — D3 word cloud from episodic conversation data
+ *   /terminal/*   — SVG views for carbonyl / terminal browsers
  *
- * Watches the SQLite WAL for changes and pushes updates via SSE.
+ * Every page polls its `.../api/diff` route; the WAL watcher only drops the
+ * per-process caches so the next poll sees live data.
  *
- * Usage: npx tsx src/interfaces/web/server.ts [--port 3001]
+ * Usage: PORT=3001 npx tsx src/interfaces/web/server.ts
  */
 
 import Database from "better-sqlite3";
@@ -17,28 +19,19 @@ import { assertBindAllowed, resolveWebToken, WEB_TOKEN_ENV, WWW_AUTHENTICATE } f
 import { gateWebRequest } from "./auth-gate.js";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { watch, type FSWatcher } from "node:fs";
+import { loadConfig } from "../../_core/config/index.js";
 
 // Data queries
-import { getStats, computeOptimalThreshold } from "./data/graph-queries.js";
-import { getBindHost } from "./bind.js";
-import { resolveWebDbPath } from "./paths.js";
-
-// Route handlers
 import {
-  handleGraphData,
-  handleGraphEvents,
-  handleGraphDiff,
-  handleThreshold,
-  handleDreamStatus,
-  handleDreamStart,
-  handleDepthGraphData,
-  handleCommunityData,
-} from "./routes/graph.js";
-import { handleWordFrequencies } from "./routes/words.js";
-import { handleHealth } from "./routes/health.js";
-import { broadcastUpdate } from "./routes/sse.js";
-import { resetWordCache } from "./data/word-queries.js";
-import { resetThresholdCache } from "./data/graph-queries.js";
+  getGraphData,
+  getGraphDiff,
+  getStats,
+  computeOptimalThreshold,
+  getCommunityData,
+  resetThresholdCache,
+} from "./data/graph-queries.js";
+import { getWordFrequencies, resetWordCache } from "./data/word-queries.js";
+import { getDreamStatus, startDream } from "./routes/dream.js";
 
 // Page templates
 import { graphPage } from "./pages/graph.html.js";
@@ -55,27 +48,83 @@ import { terminalCommunitiesPage } from "./pages/terminal/communities.html.js";
 // ─── Configuration ──────────────────────────────────────────────
 
 // Resolved through loadConfig() (ENGRAM_DATA_DIR / ENGRAM_DB_PATH aware).
-const DB_PATH = resolveWebDbPath();
+const DB_PATH = loadConfig().dbPath;
 
 const PORT = parseInt(process.env.PORT ?? "3001", 10);
-// Bind to loopback by default; set ENGRAM_BIND=0.0.0.0 (or HOST) to expose on the network.
-const BIND_HOST = getBindHost(process.env);
+// Bind to loopback by default; ENGRAM_BIND (documented) or HOST (ADR-010) exposes it on the network.
+const BIND_HOST = process.env.ENGRAM_BIND?.trim() || process.env.HOST?.trim() || "127.0.0.1";
 // ENGRAM_WEB_TOKEN (or ENGRAM_MCP_TOKEN) gates every route except /api/health;
 // required when BIND_HOST is not loopback (#27).
 const WEB_TOKEN = resolveWebToken(process.env);
 
-// ─── Pre-render pages ───────────────────────────────────────────
+const JSON_HEADERS = { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } as const;
+
+// ─── Routes ─────────────────────────────────────────────────────
+// Paths are matched after stripping a trailing slash. Each page's API calls
+// live under that page's prefix; the terminal graph and communities pages use
+// the bare /api prefix.
 
 const HTML_PAGE = graphPage();
 const DEPTH_PAGE = depthPage();
 const GALAXY_PAGE = galaxyPage();
 const WORDS_PAGE = wordsPage();
-
-// Terminal-optimized pages (pre-rendered)
 const TERMINAL_GRAPH_PAGE = terminalGraphPage();
-const TERMINAL_DEPTH_PAGE = terminalDepthPage();
-const TERMINAL_WORDS_PAGE = terminalWordsPage();
-const TERMINAL_COMMUNITIES_PAGE = terminalCommunitiesPage();
+
+const PAGES = new Map<string, string>([
+  ["/", HTML_PAGE],
+  ["/graph", HTML_PAGE],
+  ["/graph/depth", DEPTH_PAGE],
+  ["/graph/galaxy", GALAXY_PAGE],
+  ["/graph/words", WORDS_PAGE],
+  ["/terminal", TERMINAL_GRAPH_PAGE],
+  ["/terminal/graph", TERMINAL_GRAPH_PAGE],
+  ["/terminal/depth", terminalDepthPage()],
+  ["/terminal/words", terminalWordsPage()],
+  ["/terminal/communities", terminalCommunitiesPage()],
+]);
+
+// Legacy page paths
+const REDIRECTS = new Map<string, string>([
+  ["/depth", "/graph/depth"],
+  ["/words", "/graph/words"],
+]);
+
+type JsonHandler = (db: Database.Database, url: URL) => unknown;
+
+/** Integer query parameter; NaN would bind as NULL in better-sqlite3, so fall back instead. */
+function intParam(url: URL, name: string, fallback: number): number {
+  const parsed = parseInt(url.searchParams.get(name) ?? "", 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+const graph: JsonHandler = (db) => getGraphData(db);
+const threshold: JsonHandler = (db) => computeOptimalThreshold(db);
+const diff: JsonHandler = (db, url) => getGraphDiff(db, intParam(url, "since", 0));
+
+const JSON_ROUTES = new Map<string, JsonHandler>([
+  ["/api/graph", graph],
+  ["/graph/api/graph", graph],
+  ["/graph/depth/api/graph", graph],
+  ["/graph/galaxy/api/graph", graph],
+  ["/api/threshold", threshold],
+  ["/graph/api/threshold", threshold],
+  ["/graph/depth/api/threshold", threshold],
+  ["/graph/galaxy/api/threshold", threshold],
+  ["/graph/api/diff", diff],
+  ["/graph/depth/api/diff", diff],
+  ["/graph/galaxy/api/diff", diff],
+  ["/graph/api/dream/status", (db) => getDreamStatus(db)],
+  ["/api/communities", (db) => getCommunityData(db)],
+  ["/graph/words/api/words", (db, url) => {
+    const limit = intParam(url, "limit", 200);
+    return getWordFrequencies(db, limit > 0 ? limit : 200);
+  }],
+]);
+
+function sendJson(res: ServerResponse, status: number, body: unknown): void {
+  res.writeHead(status, JSON_HEADERS);
+  res.end(JSON.stringify(body));
+}
 
 // ─── HTTP Server ─────────────────────────────────────────────────
 
@@ -94,11 +143,10 @@ function serve() {
         // a threshold computed against an empty DB must not outlive the first import.
         resetWordCache();
         resetThresholdCache();
-        broadcastUpdate(db);
       }, 5000);
     });
   } catch {
-    console.log("Note: WAL watcher not available, SSE updates disabled");
+    console.log("Note: WAL watcher not available, caches will not refresh until restart");
   }
 
   // Route handlers are synchronous; an uncaught throw here would take the
@@ -118,7 +166,8 @@ function serve() {
   function route(req: IncomingMessage, res: ServerResponse): void {
     // Fixed base: the Host header is client-controlled and may not parse
     const url = new URL(req.url ?? "/", "http://localhost");
-    const pathname = url.pathname;
+    const pathname = url.pathname.replace(/\/+$/, "") || "/";
+    url.pathname = pathname; // the auth gate must see the same path the router matches
 
     const gate = gateWebRequest(req, url, WEB_TOKEN);
     if (!gate.ok) {
@@ -128,139 +177,39 @@ function serve() {
     }
     if (gate.setCookie) res.setHeader("Set-Cookie", gate.setCookie);
 
-    // ─── Health route ───────────────────────────────────
-    if (pathname === "/api/health" || pathname === "/graph/api/health") {
-      handleHealth(req, res, db);
+    // Liveness probe for the supervisor scripts: the one route with a non-200 JSON path
+    if (pathname === "/api/health") {
+      try {
+        sendJson(res, 200, { status: "ok", uptime: process.uptime(), ...getStats(db) });
+      } catch (err) {
+        sendJson(res, 503, { status: "error", error: err instanceof Error ? err.message : String(err) });
+      }
       return;
     }
 
-    // ─── Threshold route ────────────────────────────────
-    if (pathname === "/api/threshold" || pathname === "/graph/api/threshold" || pathname === "/depth/api/threshold" || pathname === "/graph/depth/api/threshold") {
-      handleThreshold(req, res, db);
+    if (pathname === "/graph/api/dream/start" && req.method === "POST") {
+      const result = startDream();
+      sendJson(res, result.ok ? 200 : 409, result);
       return;
     }
 
-    // ─── Graph routes ──────────────────────────────────
-    if (pathname === "/graph/api/graph" || pathname === "/api/graph") {
-      handleGraphData(req, res, db);
+    const json = JSON_ROUTES.get(pathname);
+    if (json) {
+      sendJson(res, 200, json(db, url));
       return;
     }
 
-    if (pathname === "/graph/api/events" || pathname === "/api/events") {
-      handleGraphEvents(req, res, db);
-      return;
-    }
-
-    // ─── Diff route ────────────────────────────────────
-    if (pathname === "/api/diff" || pathname === "/graph/api/diff" || pathname === "/depth/api/diff" || pathname === "/graph/depth/api/diff") {
-      handleGraphDiff(req, res, db, url);
-      return;
-    }
-
-    // ─── Dream routes ──────────────────────────────────
-    if (pathname === "/api/dream/status" || pathname === "/graph/api/dream/status") {
-      handleDreamStatus(req, res, db);
-      return;
-    }
-
-    if ((pathname === "/api/dream/start" || pathname === "/graph/api/dream/start") && req.method === "POST") {
-      handleDreamStart(req, res, db);
-      return;
-    }
-
-    // ─── Depth (3D) routes ────────────────────────────
-    if (pathname === "/depth/api/graph" || pathname === "/graph/depth/api/graph") {
-      handleDepthGraphData(req, res, db);
-      return;
-    }
-
-    if (pathname === "/graph/depth" || pathname === "/graph/depth/") {
+    const page = PAGES.get(pathname);
+    if (page) {
       res.writeHead(200, { "Content-Type": "text/html" });
-      res.end(DEPTH_PAGE);
+      res.end(page);
       return;
     }
 
-    // ─── Galaxy routes ─────────────────────────────────
-    if (pathname === "/graph/galaxy/api/graph") {
-      handleDepthGraphData(req, res, db);
-      return;
-    }
-
-    if (pathname === "/graph/galaxy/api/diff") {
-      handleGraphDiff(req, res, db, url);
-      return;
-    }
-
-    if (pathname === "/graph/galaxy/api/threshold") {
-      handleThreshold(req, res, db);
-      return;
-    }
-
-    if (pathname === "/graph/galaxy" || pathname === "/graph/galaxy/") {
-      res.writeHead(200, { "Content-Type": "text/html" });
-      res.end(GALAXY_PAGE);
-      return;
-    }
-
-    // Legacy redirects
-    if (pathname === "/depth" || pathname === "/depth/") {
-      res.writeHead(301, { Location: "/graph/depth" });
+    const redirect = REDIRECTS.get(pathname);
+    if (redirect) {
+      res.writeHead(301, { Location: redirect });
       res.end();
-      return;
-    }
-    if (pathname === "/words" || pathname === "/words/") {
-      res.writeHead(301, { Location: "/graph/words" });
-      res.end();
-      return;
-    }
-
-    // ─── Communities routes ───────────────────────────
-    if (pathname === "/api/communities") {
-      handleCommunityData(req, res, db);
-      return;
-    }
-
-    // ─── Words routes ──────────────────────────────────
-    if (pathname === "/words/api/words" || pathname === "/api/words" || pathname === "/graph/words/api/words") {
-      handleWordFrequencies(req, res, db, url);
-      return;
-    }
-
-    if (pathname === "/graph/words" || pathname === "/graph/words/") {
-      res.writeHead(200, { "Content-Type": "text/html" });
-      res.end(WORDS_PAGE);
-      return;
-    }
-
-    // ─── Terminal-optimized routes (for carbonyl) ──────
-    if (pathname === "/terminal/graph" || pathname === "/terminal/graph/" || pathname === "/terminal" || pathname === "/terminal/") {
-      res.writeHead(200, { "Content-Type": "text/html" });
-      res.end(TERMINAL_GRAPH_PAGE);
-      return;
-    }
-
-    if (pathname === "/terminal/depth" || pathname === "/terminal/depth/") {
-      res.writeHead(200, { "Content-Type": "text/html" });
-      res.end(TERMINAL_DEPTH_PAGE);
-      return;
-    }
-
-    if (pathname === "/terminal/words" || pathname === "/terminal/words/") {
-      res.writeHead(200, { "Content-Type": "text/html" });
-      res.end(TERMINAL_WORDS_PAGE);
-      return;
-    }
-
-    if (pathname === "/terminal/communities" || pathname === "/terminal/communities/") {
-      res.writeHead(200, { "Content-Type": "text/html" });
-      res.end(TERMINAL_COMMUNITIES_PAGE);
-      return;
-    }
-
-    // ─── Default: graph page ───────────────────────────
-    if (pathname === "/graph" || pathname === "/graph/" || pathname === "/") {
-      res.writeHead(200, { "Content-Type": "text/html" });
-      res.end(HTML_PAGE);
       return;
     }
 
@@ -287,7 +236,7 @@ function serve() {
     console.log(`  ${stats.nodes} nodes, ${stats.edges} edges, ${stats.communities} communities`);
     console.log(`  Auto-threshold: ${threshold.value} (${threshold.nodes} nodes, ${threshold.edges} edges, ${threshold.edgePct}% edge retention)`);
     console.log(`  Auth: ${WEB_TOKEN ? "bearer token / ?token= required (except /api/health)" : "none (loopback only)"}`);
-    console.log(`  Watching for real-time updates...`);
+    console.log(`  Watching the WAL for cache refreshes...`);
   });
 
   process.on("SIGINT", () => {

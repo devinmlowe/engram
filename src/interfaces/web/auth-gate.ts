@@ -1,15 +1,15 @@
 /**
  * Visualizer request gate (#27). With a token configured every route needs
  * it except `/api/health` (supervisor probes). Browsers cannot attach an
- * `Authorization` header to page loads or `EventSource`, so the token is
- * also accepted as `?token=` on any request and, once presented that way on
- * a page, remembered in an HttpOnly cookie for the page's own API calls.
+ * `Authorization` header to page loads, so the token is also accepted as
+ * `?token=` on any request and, once presented that way on a page,
+ * remembered in an HttpOnly cookie for the page's own API calls.
  */
 import type { IncomingMessage } from "node:http";
 import { bearerFromHeaders, tokensEqual } from "../mcp/auth.js";
 
 export const WEB_TOKEN_COOKIE = "engram_token";
-export const OPEN_WEB_PATHS = new Set(["/api/health", "/graph/api/health"]);
+export const OPEN_WEB_PATHS = new Set(["/api/health"]);
 
 export interface GateDecision {
   /** true: serve the request. */

@@ -96,12 +96,12 @@ describe("visualizer gate", () => {
   });
   it("token configured: health open; bearer, cookie, or ?token= accepted; ?token= sets the cookie", () => {
     expect(gateWebRequest({ headers: {} }, url("/api/health"), "t").ok).toBe(true);
-    expect(gateWebRequest({ headers: {} }, url("/graph/api/health"), "t").ok).toBe(true);
+    expect(gateWebRequest({ headers: {} }, url("/graph/api/health"), "t").ok).toBe(false); // alias removed (#122)
     const denied = gateWebRequest({ headers: {} }, url("/api/graph"), "t");
     expect(denied.ok).toBe(false);
     expect(denied.reason).toContain("Bearer");
     expect(gateWebRequest({ headers: { authorization: "Bearer t" } }, url("/api/graph"), "t").ok).toBe(true);
-    expect(gateWebRequest({ headers: { cookie: `x=1; ${WEB_TOKEN_COOKIE}=t` } }, url("/api/events"), "t").ok).toBe(true);
+    expect(gateWebRequest({ headers: { cookie: `x=1; ${WEB_TOKEN_COOKIE}=t` } }, url("/graph/api/diff"), "t").ok).toBe(true);
     expect(gateWebRequest({ headers: { cookie: `${WEB_TOKEN_COOKIE}=wrong` } }, url("/graph"), "t").ok).toBe(false);
     const viaQuery = gateWebRequest({ headers: {} }, url("/graph?token=t"), "t");
     expect(viaQuery.ok).toBe(true);
