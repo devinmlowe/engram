@@ -2,7 +2,7 @@
  * Contract: chunk_metadata table schema and operations.
  *
  * Phase 7C.2 — validates the chunk_metadata table used for
- * adaptive chunking diagnostics exists with the correct schema,
+ * chunk-boundary diagnostics exists with the correct schema,
  * supports insert/query, and has the expected index.
  */
 

@@ -126,7 +126,6 @@ const defaults: EngramConfig = {
     apiFallbackModel: "claude-sonnet-4-6",
     concurrency: 1,
     scheduleHour: 2,
-    chunkingStrategy: "fixed" as const,
   },
 
   decay: {
@@ -211,10 +210,6 @@ export function loadConfig(overrides?: Partial<EngramConfig>): EngramConfig {
           : (overrides?.dream?.localModelFallbacks ?? []),
       openrouterModel:
         env.ENGRAM_OPENROUTER_MODEL ?? overrides?.dream?.openrouterModel ?? undefined,
-      chunkingStrategy:
-        (env.ENGRAM_CHUNKING_STRATEGY === "adaptive" ? "adaptive" : undefined) ??
-        overrides?.dream?.chunkingStrategy ??
-        defaults.dream.chunkingStrategy,
     },
 
     decay: {
