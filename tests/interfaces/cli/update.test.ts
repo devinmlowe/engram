@@ -957,24 +957,25 @@ describe("engram update --rollback (#65, decision #66)", () => {
     const noBackup = await rollbackUpdate(rb, res.planFile!, d, { restoreData: true });
     expect(noBackup).toMatchObject({ ok: false, mode: "code + data", refused: expect.stringContaining("--no-backup") });
     expect(calls).toHaveLength(0);
-    // pretend the update applied forget_v1 and that it is breaking
-    const older: RollbackPlan = { ...rb, schema: { version: 4, applied: rb.schema.applied.filter((n) => n !== "forget_v1") } };
-    const refused = await rollbackUpdate(older, res.planFile!, d, { breaking: new Set(["forget_v1"]) });
+    // pretend the update applied the newest checkpoint and that it is breaking
+    const newest = SCHEMA_MIGRATIONS[SCHEMA_MIGRATIONS.length - 1];
+    const older: RollbackPlan = { ...rb, schema: { version: SCHEMA_VERSION - 1, applied: rb.schema.applied.filter((n) => n !== newest) } };
+    const refused = await rollbackUpdate(older, res.planFile!, d, { breaking: new Set([newest]) });
     expect(refused.ok).toBe(false);
-    expect(refused.refused).toContain("breaking migration(s) forget_v1");
+    expect(refused.refused).toContain(`breaking migration(s) ${newest}`);
     expect(refused.lines.join("\n")).toContain("engram update --rollback 20260917-123456Z --restore-data");
     expect(calls).toHaveLength(0);
     expect(readRollbackPlan(res.planFile!).rolledBack).toBeUndefined();
     // the additive caveat when the update added checkpoints that are not breaking
     const additive = await rollbackUpdate(older, res.planFile!, d);
     expect(additive.ok, additive.lines.join("\n")).toBe(true);
-    expect(additive.lines.join("\n")).toContain("additive migration(s) applied by the update stay in place (forget_v1; version 4 -> 5)");
+    expect(additive.lines.join("\n")).toContain(`additive migration(s) applied by the update stay in place (${newest}; version ${SCHEMA_VERSION - 1} -> ${SCHEMA_VERSION})`);
     expect(readRollbackPlan(res.planFile!).rolledBack).toMatchObject({ ok: true, mode: "code-only" });
     // with a backup, --restore-data is allowed across a breaking migration (the backup predates it)
     mkdirSync(join(root, "bk"), { recursive: true });
     backupDataDir(dataDir, join(root, "bk"));
     const withBackup: RollbackPlan = { ...older, backupDir: join(root, "bk") };
-    const restored = await rollbackUpdate(withBackup, res.planFile!, d, { restoreData: true, breaking: new Set(["forget_v1"]) });
+    const restored = await rollbackUpdate(withBackup, res.planFile!, d, { restoreData: true, breaking: new Set([newest]) });
     expect(restored.ok, restored.lines.join("\n")).toBe(true);
     expect(restored.lines.join("\n")).toContain("rollback mode: code + data");
   });

@@ -530,7 +530,7 @@ describe("extraction suppression", () => {
     seed("g", "Prefer TypeScript over Python");
     forgetMemory(t.db, { memoryId: "g", actor: "cli" });
     expect(filterSuppressedFacts(t.db, facts, "hermes:personal").suppressed).toHaveLength(1);
-    restoreMemory(t.db, { memoryId: "g", actor: "cli" });
+    restoreMemory(t.db, { memoryId: "g", embedding: vec("g"), actor: "cli" });
     expect(isSuppressed(t.db, "Prefer TypeScript over Python", "hermes:personal")).toBe(false);
     expect(isSuppressed(t.db, "Prefer TypeScript over Python", "hermes:career")).toBe(true);
   });
