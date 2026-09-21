@@ -1,5 +1,7 @@
 # Phase 6A: Adaptive Dream Extraction — Detailed Implementation Plan
 
+> Superseded 2026-09-20: removed, unreachable (#117)
+
 **Branch:** `phase-6-rlm` (worktree: `~/Documents/git/engram-phase-6-rlm`)
 **Status:** READY
 **Depends on:** Nothing (independent)
