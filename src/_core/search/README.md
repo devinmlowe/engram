@@ -25,6 +25,7 @@ Multi-source search orchestration — combines episodic, semantic, and graph sea
 - `format.ts` — Search result formatting for MCP/CLI output
 - `dates.ts` — Temporal recall: natural-language `dateHint` parser (deterministic, UTC), filed/event date basis, shared after/before/anniversary SQL filters used by both stores
 - `text.ts` — Full-text search utilities
+- `vector.ts` — `cosineSimilarity` and the sqlite-vec `l2ToCosine` conversion used by every neighbour scorer (#121)
 - `session.ts` — Stateful recall session management (Phase 6B)
 - `drill.ts` — Deep drill into search results (Phase 6B)
 - `snippets.ts` — Multi-range file snippet fetching (Phase 7A)
