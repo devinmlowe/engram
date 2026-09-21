@@ -10,29 +10,16 @@ import { join } from "node:path";
 import { existsSync, statSync, openSync, readSync, closeSync } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
 import { resetThresholdCache } from "../data/graph-queries.js";
-import { loadConfig } from "../../../_core/config/index.js";
+// The daemon owns the log path, so this route tails exactly the file runDream() writes
+import { resolveDreamLogPath } from "../../../dream/daemon.js";
 
 // ─── Constants ──────────────────────────────────────────────────
-
-/**
- * The dream daemon's log file, resolved through loadConfig() so this route
- * tails the same file runDream() writes (ENGRAM_DATA_DIR / ENGRAM_LOGS_DIR
- * aware). Resolved per call rather than at import so the environment is
- * read when it is used.
- */
-export function resolveDreamLogPath(): string {
-  return join(loadConfig().logsDir, "dream.log");
-}
 
 const DREAM_PHASES = ["ingest", "extract", "consolidate", "reflect", "prune"] as const;
 
 // ─── Process State ──────────────────────────────────────────────
 
 let dreamProcess: ChildProcess | null = null;
-
-export function isDreamRunning(): boolean {
-  return dreamProcess !== null;
-}
 
 // ─── Dream Status ───────────────────────────────────────────────
 
