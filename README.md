@@ -5,7 +5,7 @@
 > *An engram is the hypothetical physical trace of memory in neural tissue — the biochemical change that encodes what we've learned.*
 
 <p align="center">
-  <img src="assets/galaxy-view.webp" alt="Engram Galaxy View — 3D knowledge graph visualization" width="100%">
+  <img src="assets/view-galaxy.webp" alt="Engram Galaxy View — 3D knowledge graph visualization" width="100%">
 </p>
 
 Local-first cognitive memory system that transforms raw LLM conversation history into structured, consolidated knowledge. Unlike traditional conversation search (which treats sessions as documents to retrieve), Engram mimics human memory architecture: **episodic memories are captured, consolidated into semantic knowledge during "dream state" processing, and emergent connections surface through graph analysis** — much like how a Zettelkasten's backlinks reveal Maps of Content that no individual note anticipated.
@@ -366,10 +366,10 @@ Three things tell you where you stand:
   unsupported`, `[--] unknown (<reason>)` — followed by the exact fix for your OS
   (`xcode-select --install`, `sudo apt install build-essential python3`, `sudo dnf install
   gcc-c++ make python3`, `apk add build-base python3`, Visual Studio Build Tools with the
-  "Desktop development with C++" workload) and `nvm use <major>` when the gap is a Node major
-  without prebuilds. After an install it inspects `node_modules` (a `build/Release` binary with
-  no node-gyp artefacts is a prebuild; `config.gypi` / `Makefile` / `*.vcxproj` next to it mean
-  it was compiled locally); before one, or offline, it answers from the static table. `--json`
+  "Desktop development with C++" workload). The verdict comes from the static target table
+  (every native module is N-API, so the Node major never matters); after an install it also
+  confirms the shipped binary is really in `node_modules` (a `build/Release/better_sqlite3.node`
+  in place of the bundled `prebuilds/<target>.node` means node-gyp compiled it locally). `--json`
   prints the structured result; `--strict` exits 1 on any `[FAIL]`; `--expect prebuilt` (or
   `--expect better-sqlite3=prebuilt,sqlite-vec=unsupported`) exits 1 unless the verdicts match,
   which is how CI fails a dependency bump that drops a prebuild. `npm_config_platform` /
@@ -380,8 +380,8 @@ Three things tell you where you stand:
   unlisted target.
 - `engram doctor` runs the full post-build checks; its `better-sqlite3` and `sqlite-vec` lines
   end with `prebuilt — …` or `compiled locally — …`, which tells an upgrade that silently fell
-  back to node-gyp apart from one that used the prebuild (a bump that drops a prebuild for your
-  Node major is the usual cause: `nvm use 24` or install the toolchain).
+  back to node-gyp apart from one that used the prebuild (an offline or proxied install, or
+  `npm_config_build_from_source`, is the usual cause).
 
 **Caveats: Windows on ARM, armv7 and Alpine/musl.** `sqlite-vec` publishes no binary for
 `win32-arm64` or `linux-arm` (armv7), and its Linux builds — like `onnxruntime-node`'s — are

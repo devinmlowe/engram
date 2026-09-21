@@ -4,11 +4,11 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { NativeDepSpec, PreflightModule, PrebuildProbe } from "../../src/interfaces/cli/preflight.js";
+import type { PreflightModule, PrebuildProbe } from "../../src/interfaces/cli/preflight.js";
 
 // Issue #63: scripts/preflight.cjs decides prebuilt | compiled | will-compile |
-// unsupported | unknown per native dependency, inspecting node_modules when the
-// package is on disk and falling back to the static table otherwise. These
+// unsupported | unknown per native dependency from its static target table,
+// confirming against the shipped binary when the package is on disk. These
 // tests build fake node_modules trees under a temp root and point the probe at
 // them, so they hold on every CI target regardless of the real verdict there.
 
@@ -16,14 +16,11 @@ const script = fileURLToPath(new URL("../../scripts/preflight.cjs", import.meta.
 const cjs = createRequire(import.meta.url)(script) as PreflightModule & {
   detectLibc(env: Record<string, string | undefined>, platform: string): string;
   locatePackage(name: string, root: string): string | null;
-  nearestPrebuiltMajor(current: number): number | null;
-  GYP_ARTEFACTS: string[];
-  NODE_ABI_MAJORS: Record<string, number>;
 };
 
-type BetterSqliteShape = "prebuilt" | "compiled" | "missing-binary" | "bundled";
+type BetterSqliteShape = "bundled" | "compiled" | "missing-binary";
 type VecShape = "prebuilt" | "no-platform-pkg";
-type OnnxShape = "prebuilt" | "other-arch" | "no-bin" | "bin-is-a-file";
+type OnnxShape = "prebuilt" | "other-arch";
 
 interface TreeSpec {
   betterSqlite?: BetterSqliteShape;
@@ -60,16 +57,8 @@ function tree(name: string, spec: TreeSpec): string {
   if (spec.betterSqlite) {
     const dir = join(nm, "better-sqlite3");
     file(join(dir, "package.json"), '{"name":"better-sqlite3"}');
-    if (spec.betterSqlite === "bundled") {
-      file(join(dir, "prebuilds", `${platform}-${arch}.node`));
-    } else if (spec.betterSqlite !== "missing-binary") {
-      file(join(dir, "build", "Release", "better_sqlite3.node"));
-    }
-    if (spec.betterSqlite === "compiled") {
-      file(join(dir, "build", "config.gypi"));
-      file(join(dir, "build", "Makefile"));
-      mkdirSync(join(dir, "build", "Release", "obj.target"), { recursive: true });
-    }
+    if (spec.betterSqlite === "bundled") file(join(dir, "prebuilds", `${platform}-${arch}.node`));
+    if (spec.betterSqlite === "compiled") file(join(dir, "build", "Release", "better_sqlite3.node"));
   }
 
   if (spec.sqliteVec) {
@@ -85,86 +74,42 @@ function tree(name: string, spec: TreeSpec): string {
     // Nested under @xenova/transformers like a non-hoisted install.
     const dir = join(nm, "@xenova", "transformers", "node_modules", "onnxruntime-node");
     file(join(dir, "package.json"), '{"name":"onnxruntime-node"}');
-    if (spec.onnx === "prebuilt") {
-      file(join(dir, "bin", "napi-v3", platform, arch, "onnxruntime_binding.node"));
-    } else if (spec.onnx === "other-arch") {
-      file(join(dir, "bin", "napi-v3", "linux", "x64", "onnxruntime_binding.node"));
-    } else if (spec.onnx === "bin-is-a-file") {
-      file(join(dir, "bin"));
-    }
+    if (spec.onnx === "prebuilt") file(join(dir, "bin", "napi-v3", platform, arch, "onnxruntime_binding.node"));
+    else file(join(dir, "bin", "napi-v3", "linux", "x64", "onnxruntime_binding.node"));
   }
   return root;
 }
 
-function probe(dep: string | NativeDepSpec, root: string, opts: Record<string, unknown> = {}): PrebuildProbe {
+function probe(dep: string, root: string, opts: Record<string, unknown> = {}): PrebuildProbe {
   return cjs.probePrebuild(dep, { root, platform: "darwin", arch: "arm64", libc: "", abi: 127, ...opts });
 }
 
-/**
- * better-sqlite3 as 12.x published it — per-Node-ABI prebuild-install tarballs.
- * 13.x (the pinned range) is N-API and needs no ABI bookkeeping, but the probe
- * keeps the ABI branches for any future dependency that ships per-ABI builds,
- * so they stay covered through this spec.
- */
-const ABI_BOUND: NativeDepSpec = {
-  name: "better-sqlite3",
-  via: "prebuild-install (GitHub release tarball per Node ABI), node-gyp fallback",
-  abis: [127, 137, 141, 147],
-  targets: ["darwin-arm64", "darwin-x64", "linux-arm", "linux-arm64", "linux-x64", "linuxmusl-arm", "linuxmusl-arm64", "linuxmusl-x64", "win32-arm64", "win32-x64"],
-  compiles: true,
-};
-
 describe("prebuild probe: installed packages", () => {
-  it("reports prebuilt when a pre-13 better-sqlite3 has only the prebuild-install binary", () => {
-    const p = probe(ABI_BOUND, tree("bs3-prebuilt", { betterSqlite: "prebuilt" }));
+  it("recognises the 13.x bundled prebuilds/ layout", () => {
+    const p = probe("better-sqlite3", tree("bs3-bundled", { betterSqlite: "bundled" }));
     expect(p.status).toBe("prebuilt");
     expect(p.level).toBe("ok");
     expect(p.source).toBe("installed");
     expect(p.label).toBe("prebuilt");
-    expect(p.detail).toContain(join("build", "Release", "better_sqlite3.node"));
-    expect(p.detail).toContain("node-v127-darwin-arm64");
+    expect(p.detail).toContain(join("prebuilds", "darwin-arm64.node"));
     expect(p.fix).toEqual([]);
   });
 
-  it("reports compiled locally when node-gyp artefacts sit next to the binary", () => {
+  it("reports compiled locally when node-gyp built the binary instead of the bundled prebuilt being used", () => {
     const p = probe("better-sqlite3", tree("bs3-compiled", { betterSqlite: "compiled" }));
     expect(p.status).toBe("compiled");
     expect(p.level).toBe("warn");
     expect(p.label).toBe("compiled locally");
-    expect(p.detail).toMatch(/config\.gypi/);
-    expect(p.detail).toMatch(/obj\.target/);
-    // a prebuilt exists for this target: a local build means the install did not use it
-    expect(p.detail).toMatch(/a prebuilt exists for darwin-arm64 but the install did not use it/);
+    expect(p.detail).toMatch(/build\/Release\/better_sqlite3\.node came from node-gyp/);
+    expect(p.detail).toMatch(/ships a prebuilt for darwin-arm64/);
     expect(p.fix).toEqual([]);
-  });
-
-  it("suggests the nearest LTS with prebuilds when a local build was forced by the Node major", () => {
-    const p = probe(ABI_BOUND, tree("bs3-compiled-abi", { betterSqlite: "compiled" }), { abi: 131 });
-    expect(p.status).toBe("compiled");
-    expect(p.detail).toMatch(/no prebuilt for darwin-arm64, so every upgrade needs the toolchain/);
-    expect(p.fix).toEqual([expect.stringMatching(/^fix: nvm use 24/)]);
-  });
-
-  it("13.x: the bundled prebuild wins even when npm's implicit node-gyp run left artefacts behind", () => {
-    const root = tree("bs3-bundled-and-gyp", { betterSqlite: "bundled" });
-    mkdirSync(join(root, "node_modules", "better-sqlite3", "build"), { recursive: true });
-    writeFileSync(join(root, "node_modules", "better-sqlite3", "build", "config.gypi"), "");
-    const p = probe("better-sqlite3", root);
-    expect(p.status).toBe("prebuilt");
-    expect(p.detail).toContain(join("prebuilds", "darwin-arm64.node"));
-  });
-
-  it("recognises the 13.x bundled prebuilds/ layout", () => {
-    const p = probe("better-sqlite3", tree("bs3-bundled", { betterSqlite: "bundled" }));
-    expect(p.status).toBe("prebuilt");
-    expect(p.detail).toContain(join("prebuilds", "darwin-arm64.node"));
   });
 
   it("is unknown (never a false verdict) when the binary is missing", () => {
     const p = probe("better-sqlite3", tree("bs3-missing", { betterSqlite: "missing-binary" }));
     expect(p.status).toBe("unknown");
     expect(p.level).toBe("skip");
-    expect(p.detail).toMatch(/better_sqlite3\.node is missing/);
+    expect(p.detail).toMatch(/darwin-arm64\.node is missing/);
   });
 
   it("finds sqlite-vec's platform package next to it", () => {
@@ -184,7 +129,7 @@ describe("prebuild probe: installed packages", () => {
   it("is unknown with a reinstall hint when a published platform package was skipped", () => {
     const p = probe("sqlite-vec", tree("vec-skipped", { sqliteVec: "no-platform-pkg" }));
     expect(p.status).toBe("unknown");
-    expect(p.detail).toMatch(/sqlite-vec-darwin-arm64 is not installed/);
+    expect(p.detail).toMatch(/sqlite-vec-darwin-arm64\/vec0\.dylib is missing/);
     expect(p.fix).toEqual([expect.stringContaining("npm install sqlite-vec-darwin-arm64")]);
   });
 
@@ -193,7 +138,8 @@ describe("prebuild probe: installed packages", () => {
     const p = probe("sqlite-vec", root, { platform: "win32", arch: "arm64" });
     expect(p.status).toBe("unsupported");
     expect(p.level).toBe("fail");
-    expect(p.detail).toMatch(/no sqlite-vec-windows-arm64 package/);
+    expect(p.source).toBe("installed");
+    expect(p.detail).toMatch(/ships no build for win32-arm64/);
     expect(p.fix).toEqual([expect.stringMatching(/^fix: install the x64 Node\.js build/)]);
   });
 
@@ -203,47 +149,39 @@ describe("prebuild probe: installed packages", () => {
     expect(p.detail).toBe(join("bin", "napi-v3", "darwin", "arm64", "onnxruntime_binding.node"));
   });
 
-  it("is unsupported when onnxruntime-node bundles no binary for the target, listing what it has", () => {
+  it("is unknown when a listed onnxruntime-node binary is not in the package", () => {
     const p = probe("onnxruntime-node", tree("onnx-other", { onnx: "other-arch" }));
-    expect(p.status).toBe("unsupported");
-    expect(p.detail).toMatch(/bundled: linux\/x64/);
-  });
-
-  it("is unknown when the package layout is unrecognisable", () => {
-    const p = probe("onnxruntime-node", tree("onnx-nobin", { onnx: "no-bin" }));
     expect(p.status).toBe("unknown");
-    expect(p.detail).toMatch(/no bin\/ directory/);
-  });
-
-  it("turns a throwing probe into unknown (<reason>) instead of propagating", () => {
-    const p = probe("onnxruntime-node", tree("onnx-throws", { onnx: "bin-is-a-file" }));
-    expect(p.status).toBe("unknown");
-    expect(p.level).toBe("skip");
-    expect(p.detail).toMatch(/^probe threw: /);
-    expect(p.fix).toEqual([]);
+    expect(p.detail).toMatch(/onnxruntime_binding\.node is missing/);
   });
 
   it("calls glibc-only Linux builds unsupported on musl even though the files are there", () => {
-    const root = tree("musl-installed", { betterSqlite: "prebuilt", sqliteVec: "prebuilt", onnx: "prebuilt", platform: "linux", arch: "x64" });
+    const root = tree("musl-installed", { betterSqlite: "bundled", sqliteVec: "prebuilt", onnx: "prebuilt", platform: "linux", arch: "x64" });
     const musl = { platform: "linux", arch: "x64", libc: "musl" };
-    expect(probe("better-sqlite3", root, musl).status).toBe("prebuilt");
+    // better-sqlite3 ships linuxmusl-* prebuilds; the fake tree has none, so the verdict is honest
+    expect(probe("better-sqlite3", root, musl).status).toBe("unknown");
     const vec = probe("sqlite-vec", root, musl);
     expect(vec.status).toBe("unsupported");
-    expect(vec.detail).toMatch(/does not load on musl/);
+    expect(vec.detail).toMatch(/ships no build for linuxmusl-x64/);
     expect(vec.fix[0]).toMatch(/glibc-based image/);
     expect(probe("onnxruntime-node", root, musl).status).toBe("unsupported");
     // the same tree on glibc is fully prebuilt
     const glibc = { platform: "linux", arch: "x64", libc: "glibc" };
+    expect(probe("better-sqlite3", root, glibc).status).toBe("prebuilt");
     expect(probe("sqlite-vec", root, glibc).status).toBe("prebuilt");
     expect(probe("onnxruntime-node", root, glibc).status).toBe("prebuilt");
   });
 
   it("walks up node_modules chains the way npm hoists", () => {
-    const root = tree("hoisted", { betterSqlite: "prebuilt" });
+    const root = tree("hoisted", { betterSqlite: "bundled" });
     const nested = join(root, "node_modules", "@devinmlowe", "engram");
     mkdirSync(nested, { recursive: true });
     expect(cjs.locatePackage("better-sqlite3", nested)).toBe(join(root, "node_modules", "better-sqlite3"));
     expect(cjs.locatePackage("sqlite-vec", nested)).toBeNull();
+  });
+
+  it("rejects a dependency that is not in the table", () => {
+    expect(() => cjs.probePrebuild("nope", { root: scratch })).toThrow(/unknown native dependency: nope/);
   });
 });
 
@@ -254,48 +192,38 @@ describe("prebuild probe: static table (package absent)", () => {
     mkdirSync(absent, { recursive: true });
   });
 
-  it("answers prebuilt from the table for a covered target and ABI", () => {
+  it("answers prebuilt from the table for a covered target", () => {
     for (const dep of ["better-sqlite3", "sqlite-vec", "onnxruntime-node"]) {
       const p = probe(dep, absent);
       expect(p.source).toBe("static");
       expect(p.status).toBe("prebuilt");
       expect(p.level).toBe("ok");
+      expect(p.fix).toEqual([]);
     }
   });
 
-  it("predicts a source build with the toolchain fix and an LTS alternative for an uncovered Node major", () => {
-    const p = probe(ABI_BOUND, absent, { platform: "linux", arch: "x64", libc: "glibc", abi: 131 });
-    expect(p.status).toBe("will-compile");
-    expect(p.level).toBe("warn");
-    expect(p.label).toBe("will compile (needs python3 + C++ toolchain)");
-    expect(p.detail).toMatch(/no prebuilt for Node 23 \(node-v131\)/);
-    expect(p.detail).toMatch(/cover Node 22, 24, 25, 26/);
-    expect(p.fix[0]).toMatch(/^fix: /);
-    expect(p.fix[0]).toMatch(/python3/);
-    expect(p.fix[1]).toMatch(/^or: {2}nvm use 24/);
-  });
-
-  it("names the OS toolchain command", () => {
-    expect(probe(ABI_BOUND, absent, { abi: 131 }).fix[0]).toBe("fix: xcode-select --install");
-    const win = probe(ABI_BOUND, absent, { platform: "win32", arch: "x64", abi: 131 });
-    expect(win.fix[0]).toMatch(/Visual Studio Build Tools.*Desktop development with C\+\+/);
-    expect(win.fix[0]).toMatch(/windows-build-tools is deprecated/);
-    const musl = probe(ABI_BOUND, absent, { platform: "linux", arch: "x64", libc: "musl", abi: 131 });
-    expect(musl.fix[0]).toBe("fix: apk add build-base python3");
-  });
-
-  it("13.x: N-API — every Node major is prebuilt on a bundled target, armv7 compiles from source", () => {
+  it("13.x: N-API — the Node ABI never changes a verdict, armv7 compiles from source", () => {
     for (const abi of [127, 131, 137, 147]) {
       const p = probe("better-sqlite3", absent, { platform: "linux", arch: "x64", libc: "glibc", abi });
       expect(p.status).toBe("prebuilt");
+      expect(p.abi).toBe(abi);
       expect(p.fix).toEqual([]);
     }
     const arm = probe("better-sqlite3", absent, { platform: "linux", arch: "arm", libc: "glibc" });
     expect(arm.status).toBe("will-compile");
+    expect(arm.level).toBe("warn");
+    expect(arm.label).toBe("will compile (needs python3 + C++ toolchain)");
     expect(arm.detail).toMatch(/bundles no prebuilt for linux-arm/);
-    expect(arm.fix[0]).toMatch(/^fix: .*python3/);
-    expect(arm.fix).toHaveLength(1); // no Node-major alternative: the ABI is irrelevant
-    expect(cjs.PREBUILT_NODE_MAJORS).toEqual([22, 23, 24, 25, 26]);
+    expect(arm.fix).toEqual([expect.stringMatching(/^fix: .*python3/)]);
+  });
+
+  it("names the OS toolchain command", () => {
+    expect(probe("better-sqlite3", absent, { arch: "ppc64" }).fix[0]).toBe("fix: xcode-select --install");
+    const win = probe("better-sqlite3", absent, { platform: "win32", arch: "ia32" });
+    expect(win.fix[0]).toMatch(/Visual Studio Build Tools.*Desktop development with C\+\+/);
+    expect(win.fix[0]).toMatch(/windows-build-tools is deprecated/);
+    const musl = probe("better-sqlite3", absent, { platform: "linux", arch: "arm", libc: "musl" });
+    expect(musl.fix[0]).toBe("fix: apk add build-base python3");
   });
 
   it("is unsupported (not will-compile) for deps without a source fallback", () => {
@@ -307,6 +235,7 @@ describe("prebuild probe: static table (package absent)", () => {
     const onnx = probe("onnxruntime-node", absent, { platform: "linux", arch: "x64", libc: "musl" });
     expect(onnx.status).toBe("unsupported");
     expect(onnx.detail).toMatch(/linuxmusl-x64/);
+    expect(onnx.fix[0]).toMatch(/glibc-based image/);
   });
 
   it("will-compile for an unlisted platform where better-sqlite3 can still be built", () => {
@@ -325,11 +254,9 @@ describe("target resolution", () => {
     expect(cjs.resolveTarget({ env: {} }).key).toBe(`${process.platform}${cjs.detectLibc({}, process.platform) === "musl" ? "musl" : ""}-${process.arch}`);
   });
 
-  it("reports the running ABI and its Node major", () => {
-    const t = cjs.resolveTarget({ env: {} });
-    expect(t.abi).toBe(Number(process.versions.modules));
-    expect(t.nodeMajor).toBe(Number(process.versions.node.split(".")[0]));
-    expect(cjs.resolveTarget({ env: {}, abi: 999 }).nodeMajor).toBeNull();
+  it("reports the running ABI", () => {
+    expect(cjs.resolveTarget({ env: {} }).abi).toBe(Number(process.versions.modules));
+    expect(cjs.resolveTarget({ env: {}, abi: 999 }).abi).toBe(999);
   });
 
   it("detects libc only on Linux and lets npm_config_libc win", () => {
@@ -354,19 +281,6 @@ describe("derived tables", () => {
   it("PREBUILT_TARGETS is the intersection of every dependency's targets", () => {
     for (const t of cjs.PREBUILT_TARGETS) for (const d of cjs.NATIVE_DEPS) expect(d.targets).toContain(t);
     expect(cjs.PREBUILT_TARGETS).toEqual(["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64", "win32-x64"]);
-  });
-
-  it("PREBUILT_NODE_MAJORS covers Node 22 and 24 (the CI matrix) and picks the nearest LTS", () => {
-    expect(cjs.PREBUILT_NODE_MAJORS).toContain(22);
-    expect(cjs.PREBUILT_NODE_MAJORS).toContain(24);
-    expect(Math.min(...cjs.PREBUILT_NODE_MAJORS)).toBeGreaterThanOrEqual(cjs.MIN_NODE_MAJOR);
-    expect(cjs.nearestPrebuiltMajor(23)).toBe(24);
-    expect(cjs.nearestPrebuiltMajor(20)).toBe(22);
-    expect(cjs.nearestPrebuiltMajor(99)).toBe(Math.max(...cjs.PREBUILT_NODE_MAJORS.filter((m) => m % 2 === 0)));
-  });
-
-  it("every ABI in the table maps to a Node major", () => {
-    for (const d of cjs.NATIVE_DEPS) for (const abi of d.abis ?? []) expect(cjs.NODE_ABI_MAJORS[abi]).toBeGreaterThanOrEqual(cjs.MIN_NODE_MAJOR);
   });
 });
 
