@@ -46,19 +46,18 @@ export type ExportKind = (typeof ALL_KINDS)[number];
 
 export type RecordKind = "memory" | "entity" | "relationship" | "commitment";
 
-const KIND_TO_TABLE: Record<RecordKind, ExportKind> = {
-  memory: "memories",
-  entity: "entities",
-  relationship: "relationships",
-  commitment: "commitments",
+/**
+ * Per record kind: the table it comes from, the columns stored as JSON
+ * text (decoded on export) and the 0/1 columns (exported as booleans).
+ * Key order is the order kinds are written to the file.
+ */
+const KINDS: Record<RecordKind, { table: ExportKind; json: string[]; bool?: string[] }> = {
+  memory: { table: "memories", json: ["source_exchanges"], bool: ["is_active"] },
+  entity: { table: "entities", json: ["aliases"] },
+  relationship: { table: "relationships", json: ["source_memories"] },
+  commitment: { table: "commitments", json: ["source_exchanges"] },
 };
-
-const TABLE_TO_KIND: Record<ExportKind, RecordKind> = {
-  memories: "memory",
-  entities: "entity",
-  relationships: "relationship",
-  commitments: "commitment",
-};
+const RECORD_KINDS = Object.keys(KINDS) as RecordKind[];
 
 /** Entity types that never take part in vector search (see file-indexer). */
 const STRUCTURAL_ENTITY_TYPES = new Set(["file", "function", "class", "module"]);
@@ -98,20 +97,6 @@ export interface ExportOptions {
 
 // ─── Export ──────────────────────────────────────────────────────
 
-const JSON_COLUMNS: Record<ExportKind, string[]> = {
-  memories: ["source_exchanges"],
-  entities: ["aliases"],
-  relationships: ["source_memories"],
-  commitments: ["source_exchanges"],
-};
-
-const BOOLEAN_COLUMNS: Record<ExportKind, string[]> = {
-  memories: ["is_active"],
-  entities: [],
-  relationships: [],
-  commitments: [],
-};
-
 function decodeJson(value: unknown): unknown {
   if (typeof value !== "string") return value;
   try {
@@ -121,21 +106,22 @@ function decodeJson(value: unknown): unknown {
   }
 }
 
-function decodeRow(kind: ExportKind, row: Record<string, unknown>): ExportRow {
+function decodeRow(kind: RecordKind, row: Record<string, unknown>): ExportRow {
   const out: Record<string, unknown> = { ...row };
-  for (const col of JSON_COLUMNS[kind]) {
+  const { json, bool = [] } = KINDS[kind];
+  for (const col of json) {
     if (col in out) out[col] = decodeJson(out[col]);
   }
-  for (const col of BOOLEAN_COLUMNS[kind]) {
-    if (col in out && out[col] !== null && out[col] !== undefined) out[col] = Boolean(out[col]);
+  for (const col of bool) {
+    if (out[col] !== null && out[col] !== undefined) out[col] = Boolean(out[col]);
   }
   return out as ExportRow;
 }
 
-function readRows(db: Database.Database, kind: ExportKind, opts: ExportOptions): ExportRow[] {
-  let sql = `SELECT * FROM ${kind}`;
+function readRows(db: Database.Database, kind: RecordKind, opts: ExportOptions): ExportRow[] {
+  let sql = `SELECT * FROM ${KINDS[kind].table}`;
   const params: unknown[] = [];
-  if (kind === "memories") {
+  if (kind === "memory") {
     // Forgotten memories (#55) are never exported, even with includeInactive:
     // importing them elsewhere would resurrect what the user deleted.
     const where: string[] = ["deleted_at IS NULL"];
@@ -166,13 +152,14 @@ function readSchemaVersion(db: Database.Database): string[] {
  */
 export function exportLines(db: Database.Database, opts: ExportOptions = {}): string[] {
   const kinds = opts.kinds ?? ALL_KINDS;
-  const rowsByKind = new Map<ExportKind, ExportRow[]>();
+  const rowsByKind = new Map<RecordKind, ExportRow[]>();
   const counts: Partial<Record<ExportKind, number>> = {};
-  for (const kind of ALL_KINDS) {
-    if (!kinds.includes(kind)) continue;
+  for (const kind of RECORD_KINDS) {
+    const { table } = KINDS[kind];
+    if (!kinds.includes(table)) continue;
     const rows = readRows(db, kind, opts);
     rowsByKind.set(kind, rows);
-    counts[kind] = rows.length;
+    counts[table] = rows.length;
   }
 
   const header: ExportHeader = {
@@ -187,12 +174,9 @@ export function exportLines(db: Database.Database, opts: ExportOptions = {}): st
   };
 
   const lines = [JSON.stringify(header)];
-  for (const kind of ALL_KINDS) {
-    const rows = rowsByKind.get(kind);
-    if (!rows) continue;
-    const recordKind = TABLE_TO_KIND[kind];
+  for (const [kind, rows] of rowsByKind) {
     for (const data of rows) {
-      const record: ExportRecord = { kind: recordKind, v: EXPORT_FORMAT_VERSION, data };
+      const record: ExportRecord = { kind, v: EXPORT_FORMAT_VERSION, data };
       lines.push(JSON.stringify(record));
     }
   }
@@ -240,7 +224,7 @@ export function parseExportLine(line: string, lineNo: number): ExportLine {
   }
   const kind = parsed.kind;
   if (kind === "header") return parsed as unknown as ExportHeader;
-  if (typeof kind !== "string" || !(kind in KIND_TO_TABLE)) {
+  if (typeof kind !== "string" || !(kind in KINDS)) {
     throw new ImportFormatError(lineNo, `unknown kind ${JSON.stringify(kind)}`);
   }
   const data = parsed.data;
@@ -454,7 +438,7 @@ export async function importLines(
   }
 
   function tally(kind: RecordKind, action: Action): void {
-    const bucket = summary[KIND_TO_TABLE[kind]];
+    const bucket = summary[KINDS[kind].table];
     if (action === "insert") bucket.inserted++;
     else if (action === "update") bucket.updated++;
     else {
