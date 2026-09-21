@@ -2,7 +2,9 @@
  * Database query functions for graph data.
  *
  * All functions accept a Database instance and return structured data
- * for the graph visualizer API endpoints.
+ * for the graph visualizer API endpoints. Every view (2D, 3D, galaxy,
+ * terminal) receives the same node shape; consumers ignore fields they
+ * do not use.
  */
 
 import type Database from "better-sqlite3";
@@ -18,6 +20,8 @@ export interface GraphNode {
   informativeness: number;
   firstSeen: number;
   community: string | null;
+  lastActive: number;
+  bridgeScore: number;
 }
 
 export interface GraphLink {
@@ -28,17 +32,65 @@ export interface GraphLink {
   context: string | null;
 }
 
-export interface DepthNode extends GraphNode {
-  lastActive: number;
+export interface DiffResult {
+  timestamp: number;
+  newNodes: GraphNode[];
+  updatedNodes: GraphNode[];
+  newLinks: GraphLink[];
+  updatedLinks: GraphLink[];
+}
+
+// ─── Shared SELECTs ─────────────────────────────────────────────
+
+interface NodeRow {
+  id: string;
+  name: string;
+  type: string;
+  description: string | null;
+  mentionCount: number;
+  informativeness: number;
+  lastActive: number | null;
+  createdAt: number | null;
+  firstSeen: number | null;
   bridgeScore: number;
 }
 
-export interface DiffResult {
-  timestamp: number;
-  newNodes: Array<DepthNode>;
-  updatedNodes: Array<DepthNode>;
-  newLinks: Array<GraphLink>;
-  updatedLinks: Array<GraphLink>;
+const NODE_SELECT = `
+  SELECT e.id, e.name, e.type, e.description, e.mention_count as mentionCount,
+         COALESCE(e.informativeness, 0) as informativeness,
+         COALESCE(e.last_seen, e.created_at) as lastActive, e.created_at as createdAt,
+         e.first_seen as firstSeen,
+         COALESCE(bs.bridge_score, 0) as bridgeScore
+  FROM entities e
+  LEFT JOIN bridge_scores bs ON bs.entity_id = e.id
+    AND bs.generation = (SELECT MAX(generation) FROM bridge_scores)`;
+
+const LINK_SELECT = `
+  SELECT source_entity_id as source, target_entity_id as target, type, weight, context
+  FROM relationships`;
+
+/** `suffix` is the SQL after the joins (WHERE / ORDER BY); `params` bind its placeholders. */
+function selectNodes(db: Database.Database, suffix: string, ...params: unknown[]): NodeRow[] {
+  return db.prepare(`${NODE_SELECT} ${suffix}`).all(...params) as NodeRow[];
+}
+
+function selectLinks(db: Database.Database, suffix: string, ...params: unknown[]): GraphLink[] {
+  return db.prepare(`${LINK_SELECT} ${suffix}`).all(...params) as GraphLink[];
+}
+
+function toNode(e: NodeRow, community: Record<string, string>): GraphNode {
+  return {
+    id: e.id,
+    name: e.name,
+    type: e.type,
+    description: e.description,
+    mentionCount: e.mentionCount,
+    informativeness: e.informativeness,
+    community: community[e.id] ?? null,
+    lastActive: e.lastActive ?? e.createdAt ?? 0,
+    firstSeen: e.firstSeen ?? e.createdAt ?? 0,
+    bridgeScore: e.bridgeScore,
+  };
 }
 
 // ─── Community Lookup Helper ────────────────────────────────────
@@ -67,59 +119,10 @@ function buildCommunityMap(
 // ─── Graph Data ─────────────────────────────────────────────────
 
 export function getGraphData(db: Database.Database): { nodes: GraphNode[]; links: GraphLink[] } {
-  const entities = db
-    .prepare(
-      `SELECT id, name, type, description, mention_count as mentionCount,
-              COALESCE(informativeness, 0) as informativeness,
-              COALESCE(first_seen, created_at) as firstSeen,
-              created_at as createdAt
-       FROM entities ORDER BY mention_count DESC`
-    )
-    .all() as Array<{
-    id: string;
-    name: string;
-    type: string;
-    description: string | null;
-    mentionCount: number;
-    informativeness: number;
-    firstSeen: number | null;
-    createdAt: number | null;
-  }>;
-
-  const relationships = db
-    .prepare(
-      `SELECT r.source_entity_id as source, r.target_entity_id as target,
-              r.type, r.weight, r.context
-       FROM relationships r`
-    )
-    .all() as Array<{
-    source: string;
-    target: string;
-    type: string;
-    weight: number;
-    context: string | null;
-  }>;
-
-  const entityCommunity = buildCommunityMap(db);
-
+  const community = buildCommunityMap(db);
   return {
-    nodes: entities.map((e) => ({
-      id: e.id,
-      name: e.name,
-      type: e.type,
-      description: e.description,
-      mentionCount: e.mentionCount,
-      informativeness: e.informativeness,
-      firstSeen: e.firstSeen ?? e.createdAt ?? 0,
-      community: entityCommunity[e.id] ?? null,
-    })),
-    links: relationships.map((r) => ({
-      source: r.source,
-      target: r.target,
-      type: r.type,
-      weight: r.weight,
-      context: r.context,
-    })),
+    nodes: selectNodes(db, "ORDER BY e.mention_count DESC").map((e) => toNode(e, community)),
+    links: selectLinks(db, ""),
   };
 }
 
@@ -134,17 +137,23 @@ export function getStats(db: Database.Database): { nodes: number; edges: number;
 
 // ─── Optimal Threshold ──────────────────────────────────────────
 
-let cachedThreshold: { value: number; nodes: number; edges: number; edgePct: number } | null = null;
+export interface Threshold {
+  value: number;
+  nodes: number;
+  edges: number;
+  edgePct: number;
+}
+
+let cachedThreshold: Threshold | null = null;
 
 export function resetThresholdCache(): void {
   cachedThreshold = null;
 }
 
-export function computeOptimalThreshold(db: Database.Database): { value: number; nodes: number; edges: number; edgePct: number } {
+export function computeOptimalThreshold(db: Database.Database): Threshold {
   if (cachedThreshold) return cachedThreshold;
 
-  const totalNodes = (db.prepare("SELECT COUNT(*) as c FROM entities").get() as { c: number }).c;
-  const totalEdges = (db.prepare("SELECT COUNT(*) as c FROM relationships").get() as { c: number }).c;
+  const { nodes: totalNodes, edges: totalEdges } = getStats(db);
 
   if (totalNodes === 0) {
     cachedThreshold = { value: 1, nodes: 0, edges: 0, edgePct: 100 };
@@ -158,113 +167,64 @@ export function computeOptimalThreshold(db: Database.Database): { value: number;
      ORDER BY mention_count`
   ).all() as Array<{ t: number }>;
 
+  const countNodes = db.prepare("SELECT COUNT(*) as c FROM entities WHERE mention_count >= ?");
+  const countEdges = db.prepare(
+    `SELECT COUNT(*) as c FROM relationships r
+     WHERE EXISTS (SELECT 1 FROM entities e WHERE e.id = r.source_entity_id AND e.mention_count >= ?)
+       AND EXISTS (SELECT 1 FROM entities e WHERE e.id = r.target_entity_id AND e.mention_count >= ?)`
+  );
+  const pct = (edges: number) => Math.round((edges / totalEdges) * 1000) / 10;
+
   const NODE_MIN = 1500;
   const NODE_MAX = 4000;
 
-  let best = { value: 1, nodes: totalNodes, edges: totalEdges, edgePct: 100, score: 1 };
+  let best: Threshold = { value: 1, nodes: totalNodes, edges: totalEdges, edgePct: 100 };
+  let bestScore = 1;
+  // First candidate at or below NODE_MAX: used when no in-band candidate beats the baseline
+  let fallback: Threshold | null = null;
 
   for (const { t } of candidates) {
-    const nodeCount = (db.prepare(
-      "SELECT COUNT(*) as c FROM entities WHERE mention_count >= ?"
-    ).get(t) as { c: number }).c;
+    const nodeCount = (countNodes.get(t) as { c: number }).c;
 
     // Skip if outside performance band
     if (nodeCount > NODE_MAX && t > 1) continue;
+
+    const edgeCount = (countEdges.get(t, t) as { c: number }).c;
+    if (nodeCount <= NODE_MAX && !fallback) {
+      fallback = { value: t, nodes: nodeCount, edges: edgeCount, edgePct: pct(edgeCount) };
+    }
     if (nodeCount < NODE_MIN) break; // thresholds only go up, so we're done
 
-    const edgeCount = (db.prepare(
-      `SELECT COUNT(*) as c FROM relationships r
-       WHERE EXISTS (SELECT 1 FROM entities e WHERE e.id = r.source_entity_id AND e.mention_count >= ?)
-         AND EXISTS (SELECT 1 FROM entities e WHERE e.id = r.target_entity_id AND e.mention_count >= ?)`
-    ).get(t, t) as { c: number }).c;
-
-    const nodePct = nodeCount / totalNodes;
-    const edgePct = edgeCount / totalEdges;
-    const score = edgePct / nodePct; // > 1 means we keep proportionally more edges than nodes
-
-    if (score >= best.score) {
-      best = { value: t, nodes: nodeCount, edges: edgeCount, edgePct: Math.round(edgePct * 1000) / 10, score };
+    const score = (edgeCount / totalEdges) / (nodeCount / totalNodes); // > 1 keeps proportionally more edges than nodes
+    if (score >= bestScore) {
+      bestScore = score;
+      best = { value: t, nodes: nodeCount, edges: edgeCount, edgePct: pct(edgeCount) };
     }
   }
 
-  // If all thresholds leave us above NODE_MAX, pick the first one that drops below
-  if (best.nodes > NODE_MAX) {
-    for (const { t } of candidates) {
-      const nodeCount = (db.prepare(
-        "SELECT COUNT(*) as c FROM entities WHERE mention_count >= ?"
-      ).get(t) as { c: number }).c;
-      if (nodeCount <= NODE_MAX) {
-        const edgeCount = (db.prepare(
-          `SELECT COUNT(*) as c FROM relationships r
-           WHERE EXISTS (SELECT 1 FROM entities e WHERE e.id = r.source_entity_id AND e.mention_count >= ?)
-             AND EXISTS (SELECT 1 FROM entities e WHERE e.id = r.target_entity_id AND e.mention_count >= ?)`
-        ).get(t, t) as { c: number }).c;
-        best = { value: t, nodes: nodeCount, edges: edgeCount, edgePct: Math.round((edgeCount / totalEdges) * 1000) / 10, score: 0 };
-        break;
-      }
-    }
-  }
+  // If every scored threshold leaves us above NODE_MAX, take the first one that drops below
+  if (best.nodes > NODE_MAX && fallback) best = fallback;
 
-  cachedThreshold = { value: best.value, nodes: best.nodes, edges: best.edges, edgePct: best.edgePct };
+  cachedThreshold = best;
   return cachedThreshold;
 }
 
 // ─── Graph Diff ─────────────────────────────────────────────────
 
 export function getGraphDiff(db: Database.Database, since: number): DiffResult {
-  const newNodes = db.prepare(
-    `SELECT e.id, e.name, e.type, e.description, e.mention_count as mentionCount,
-            COALESCE(e.informativeness, 0) as informativeness,
-            COALESCE(e.last_seen, e.created_at) as lastActive, e.created_at as createdAt,
-            e.first_seen as firstSeen,
-            COALESCE(bs.bridge_score, 0) as bridgeScore
-     FROM entities e
-     LEFT JOIN bridge_scores bs ON bs.entity_id = e.id
-       AND bs.generation = (SELECT MAX(generation) FROM bridge_scores)
-     WHERE e.created_at > ?`
-  ).all(since) as Array<{ id: string; name: string; type: string; description: string | null; mentionCount: number; informativeness: number; lastActive: number | null; createdAt: number | null; firstSeen: number | null; bridgeScore: number }>;
-
-  const updatedNodes = db.prepare(
-    `SELECT e.id, e.name, e.type, e.description, e.mention_count as mentionCount,
-            COALESCE(e.informativeness, 0) as informativeness,
-            COALESCE(e.last_seen, e.created_at) as lastActive, e.created_at as createdAt,
-            e.first_seen as firstSeen,
-            COALESCE(bs.bridge_score, 0) as bridgeScore
-     FROM entities e
-     LEFT JOIN bridge_scores bs ON bs.entity_id = e.id
-       AND bs.generation = (SELECT MAX(generation) FROM bridge_scores)
-     WHERE e.last_seen > ? AND e.created_at <= ?`
-  ).all(since, since) as Array<{ id: string; name: string; type: string; description: string | null; mentionCount: number; informativeness: number; lastActive: number | null; createdAt: number | null; firstSeen: number | null; bridgeScore: number }>;
-
-  const newLinks = db.prepare(
-    `SELECT source_entity_id as source, target_entity_id as target, type, weight, context
-     FROM relationships WHERE created_at > ?`
-  ).all(since) as Array<{ source: string; target: string; type: string; weight: number; context: string | null }>;
-
-  const updatedLinks = db.prepare(
-    `SELECT source_entity_id as source, target_entity_id as target, type, weight, context
-     FROM relationships WHERE updated_at > ? AND created_at <= ?`
-  ).all(since, since) as Array<{ source: string; target: string; type: string; weight: number; context: string | null }>;
+  const newNodes = selectNodes(db, "WHERE e.created_at > ?", since);
+  const updatedNodes = selectNodes(db, "WHERE e.last_seen > ? AND e.created_at <= ?", since, since);
 
   // Get community for new/updated nodes
-  const newIds = new Set(newNodes.map(n => n.id).concat(updatedNodes.map(n => n.id)));
-  const entityCommunity = buildCommunityMap(db, newIds);
-
-  const mapNode = (e: typeof newNodes[0]) => ({
-    id: e.id, name: e.name, type: e.type, description: e.description,
-    mentionCount: e.mentionCount, informativeness: e.informativeness,
-    community: entityCommunity[e.id] ?? null,
-    lastActive: e.lastActive ?? e.createdAt ?? 0,
-    firstSeen: e.firstSeen ?? e.createdAt ?? 0,
-    bridgeScore: e.bridgeScore,
-  });
+  const ids = new Set(newNodes.map((n) => n.id).concat(updatedNodes.map((n) => n.id)));
+  const community = buildCommunityMap(db, ids);
 
   return {
     timestamp: Math.floor(Date.now() / 1000),
-    newNodes: newNodes.map(mapNode),
-    updatedNodes: updatedNodes.map(mapNode),
-    newLinks,
-    updatedLinks,
+    newNodes: newNodes.map((e) => toNode(e, community)),
+    updatedNodes: updatedNodes.map((e) => toNode(e, community)),
+    newLinks: selectLinks(db, "WHERE created_at > ?", since),
+    updatedLinks: selectLinks(db, "WHERE updated_at > ? AND created_at <= ?", since, since),
   };
 }
 
@@ -289,71 +249,4 @@ export function getCommunityData(db: Database.Database): CommunityNode[] {
      WHERE generation = (SELECT MAX(generation) FROM topic_clusters)
      ORDER BY json_array_length(entity_ids) DESC`
   ).all() as CommunityNode[];
-}
-
-// ─── Depth (3D) Graph Data ──────────────────────────────────────
-
-export function getDepthGraphData(db: Database.Database): { nodes: DepthNode[]; links: GraphLink[] } {
-  const entities = db
-    .prepare(
-      `SELECT e.id, e.name, e.type, e.description, e.mention_count as mentionCount,
-              COALESCE(e.informativeness, 0) as informativeness,
-              COALESCE(e.last_seen, e.created_at) as lastActive, e.created_at as createdAt,
-              e.first_seen as firstSeen,
-              COALESCE(bs.bridge_score, 0) as bridgeScore
-       FROM entities e
-       LEFT JOIN bridge_scores bs ON bs.entity_id = e.id
-         AND bs.generation = (SELECT MAX(generation) FROM bridge_scores)
-       ORDER BY e.mention_count DESC`
-    )
-    .all() as Array<{
-    id: string;
-    name: string;
-    type: string;
-    description: string | null;
-    mentionCount: number;
-    informativeness: number;
-    lastActive: number | null;
-    createdAt: number | null;
-    firstSeen: number | null;
-    bridgeScore: number;
-  }>;
-
-  const relationships = db
-    .prepare(
-      `SELECT r.source_entity_id as source, r.target_entity_id as target,
-              r.type, r.weight, r.context
-       FROM relationships r`
-    )
-    .all() as Array<{
-    source: string;
-    target: string;
-    type: string;
-    weight: number;
-    context: string | null;
-  }>;
-
-  const entityCommunity = buildCommunityMap(db);
-
-  return {
-    nodes: entities.map((e) => ({
-      id: e.id,
-      name: e.name,
-      type: e.type,
-      description: e.description,
-      mentionCount: e.mentionCount,
-      informativeness: e.informativeness,
-      community: entityCommunity[e.id] ?? null,
-      lastActive: e.lastActive ?? e.createdAt ?? 0,
-      firstSeen: e.firstSeen ?? e.createdAt ?? 0,
-      bridgeScore: e.bridgeScore,
-    })),
-    links: relationships.map((r) => ({
-      source: r.source,
-      target: r.target,
-      type: r.type,
-      weight: r.weight,
-      context: r.context,
-    })),
-  };
 }
