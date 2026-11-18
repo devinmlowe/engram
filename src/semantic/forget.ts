@@ -31,6 +31,7 @@ import type Database from "better-sqlite3";
 import { deleteVector, deleteFtsRow, insertFtsRow, insertVector } from "../_core/db/index.js";
 import { GLOBAL_SCOPE, scopeVisible } from "../_core/db/scope.js";
 import { normalizeContent } from "./collapse.js";
+import { withHistoryActor } from "../_core/db/history.js";
 import type { ExtractedFact } from "./types.js";
 
 // ─── Types ──────────────────────────────────────────────────────
@@ -389,7 +390,10 @@ export function forgetMemory(db: Database.Database, options: ForgetOptions): For
       graph,
     };
   });
-  return run.immediate();
+  // Stamp the capture triggers with the same actor the change log records;
+  // the bracket clears afterwards so a later context-free write on this
+  // connection records the sentinel, never this actor.
+  return withHistoryActor(db, options.actor, () => run.immediate());
 }
 
 /**
@@ -433,7 +437,10 @@ export function editMemory(db: Database.Database, options: EditOptions): MemoryC
     reindex(db, { ...row, content }, options.embedding);
     return logChange(db, { memoryId: row.id, op: "edit", before: row.content, after: content, actor: options.actor, at: now });
   });
-  return run.immediate();
+  // Stamp the capture triggers with the same actor the change log records;
+  // the bracket clears afterwards so a later context-free write on this
+  // connection records the sentinel, never this actor.
+  return withHistoryActor(db, options.actor, () => run.immediate());
 }
 
 // ─── Restore ────────────────────────────────────────────────────
@@ -461,7 +468,10 @@ export function restoreMemory(db: Database.Database, options: RestoreOptions): M
       .run(contentHash(row.content), row.scope ?? GLOBAL_SCOPE);
     return logChange(db, { memoryId: row.id, op: "restore", before: null, after: row.content, actor: options.actor, at: now });
   });
-  return run.immediate();
+  // Stamp the capture triggers with the same actor the change log records;
+  // the bracket clears afterwards so a later context-free write on this
+  // connection records the sentinel, never this actor.
+  return withHistoryActor(db, options.actor, () => run.immediate());
 }
 
 // ─── Purge by conversation ──────────────────────────────────────

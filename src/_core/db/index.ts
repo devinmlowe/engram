@@ -16,6 +16,7 @@ export {
   COMMITMENTS_MIGRATION,
   FORGET_MIGRATION,
   SUPPRESSIONS_SCOPE_MIGRATION,
+  MEMORY_HISTORY_MIGRATION,
   MEMORY_CHANGE_OPS,
   EVENT_TS_SUBQUERY,
   SCHEMA_MIGRATIONS,
@@ -24,6 +25,15 @@ export {
   schemaVersion,
   type SchemaVersion,
 } from "./schema.js";
+
+// History trail (memory_history audit support + read API)
+export {
+  registerHistoryFunctions,
+  withHistoryActor,
+  listMemoryHistory,
+  UNKNOWN_ACTOR,
+  type MemoryHistoryRow,
+} from "./history.js";
 
 // Connection management
 export {

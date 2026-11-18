@@ -6,6 +6,7 @@ import { getDatabase, closeDatabase } from "../../_core/db/index.js";
 import { ENGRAM_VERSION } from "../../_core/version/index.js";
 import { loadPreflight } from "./preflight.js";
 import { registerMemoriesCommand } from "./memories.js";
+import { registerHistoryCommand } from "./history.js";
 import { registerMcpHostCommands } from "./hosts-command.js";
 
 const program = new Command();
@@ -167,6 +168,7 @@ program
 
 // `engram memories list|show|edit|delete|restore|purge|log` (#55)
 registerMemoriesCommand(program);
+registerHistoryCommand(program);
 
 // ─── extract ───────────────────────────────────────────────────
 

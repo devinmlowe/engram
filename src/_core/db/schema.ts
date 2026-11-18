@@ -3,6 +3,7 @@ import * as sqliteVec from "sqlite-vec";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { EngramConfig } from "../types/index.js";
+import { registerHistoryFunctions } from "./history.js";
 
 /**
  * Initialize the Engram database with all tables, indexes, and virtual tables.
@@ -37,6 +38,11 @@ export function initDatabase(config: EngramConfig): Database.Database {
         `see https://github.com/asg017/sqlite-vec/releases. Underlying error: ${detail}`,
     );
   }
+
+  // The history triggers call per-connection custom functions; register them
+  // before any schema work so statements compiled against existing triggers
+  // (e.g. event_ts backfill on a re-opened database) can resolve them.
+  registerHistoryFunctions(db);
 
   // Run schema migrations
   createSchema(db, config);
@@ -402,6 +408,10 @@ function createSchema(db: Database.Database, config: EngramConfig): void {
   // #106: memory_suppressions keyed by (content_hash, scope) so one tenant's
   // forget neither silences nor is lifted by another tenant. After migrateForget.
   migrateSuppressionsScope(db);
+
+  // #145: trigger-based append-only audit trail over memories (after the
+  // forget surface, whose columns the capture triggers read).
+  migrateMemoryHistory(db);
 
   // FTS5 virtual tables (created separately — can't use IF NOT EXISTS)
   createFtsIfNeeded(db, "exchanges_fts", `
@@ -810,6 +820,126 @@ export function migrateSuppressionsScope(db: Database.Database): boolean {
   return rebuilt;
 }
 
+/** Checkpoint name recorded in schema_migrations when the memory_history audit trail is created. */
+export const MEMORY_HISTORY_MIGRATION = "memory_history_v1";
+
+/**
+ * #145: `memory_history` — a trigger-based, append-only audit trail over the
+ * `memories` table, additive to the app-written `memory_changes` log. Where
+ * `memory_changes` records what the forget surface says it did,
+ * `memory_history` records what the database did: every insert, content edit,
+ * soft delete (forget), hard delete (purge) and restore fires a capture
+ * trigger, no matter which code path made the write.
+ *
+ * Retention: history rows are retained indefinitely — no purge, no TTL (they
+ * are tiny, and an audit trail that expires is an audit trail with amnesia).
+ * Devin is the sole override authority for any future retention horizon.
+ *
+ * The trail's guarantees are enforced against application code paths only:
+ * any actor with direct write access to the database file can drop the
+ * triggers or edit rows, so tampering is detectable (content hashes on
+ * before/after values), not prevented, and the custody export hook
+ * (`engram history export`) keeps a durable copy outside the engine's write
+ * reach. See docs/memory-history.md for the full trust boundary.
+ *
+ * Update classification (AFTER UPDATE OF content, is_active on memories, with
+ * a WHEN clause so that value-unchanged statements record nothing): content
+ * changed → 'edit'; is_active 1→0 → 'forget'; is_active 0→1 → 'restore'.
+ * Metadata-only writes — recall reinforcement, FSRS stability, confidence
+ * bumps — do not touch the listed columns, so they neither fire the trigger
+ * nor compile it: connections that never registered the history functions
+ * (foreign tools, worker threads) can still write unrelated metadata.
+ *
+ * Checkpointed in schema_migrations and purely additive (NOT in
+ * BREAKING_MIGRATIONS): a re-open is a provable no-op. Returns `true` only
+ * on the open that created the table and its triggers.
+ */
+export function migrateMemoryHistory(db: Database.Database): boolean {
+  ensureMigrationsTable(db);
+  const checkpointed = db
+    .prepare("SELECT 1 FROM schema_migrations WHERE name = ?")
+    .get(MEMORY_HISTORY_MIGRATION);
+  const tableExists = db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'memory_history'")
+    .get();
+  if (checkpointed && tableExists) return false;
+
+  // Hashes: sha256 hex of the UTF-8 bytes, via the per-connection custom
+  // function (NULL in ⇒ NULL out — an absent side is NULL in both the
+  // content and the hash column, never '' and never a digest of '').
+  // Actor: `engram_actor()` reads the connection-scoped app context bracketed
+  // by withHistoryActor(), falling back to the sentinel 'unknown'; no path
+  // fabricates an actor.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS memory_history (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      memory_id      TEXT NOT NULL,
+      mechanism      TEXT NOT NULL CHECK(mechanism IN ('insert','edit','forget','purge','restore')),
+      before_content TEXT,
+      after_content  TEXT,
+      before_hash    TEXT,
+      after_hash     TEXT,
+      actor          TEXT,
+      at             INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    CREATE TRIGGER IF NOT EXISTS memory_history_on_insert
+    AFTER INSERT ON memories
+    BEGIN
+      INSERT INTO memory_history (memory_id, mechanism, before_content, after_content, before_hash, after_hash, actor)
+      VALUES (NEW.id, 'insert', NULL, NEW.content, NULL, engram_sha256(NEW.content), engram_actor());
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS memory_history_on_update
+    AFTER UPDATE OF content, is_active ON memories
+    WHEN NEW.content IS NOT OLD.content OR NEW.is_active IS NOT OLD.is_active
+    BEGIN
+      INSERT INTO memory_history (memory_id, mechanism, before_content, after_content, before_hash, after_hash, actor)
+      SELECT NEW.id,
+             CASE
+               WHEN NEW.content IS NOT OLD.content THEN 'edit'
+               WHEN OLD.is_active = 1 AND NEW.is_active = 0 THEN 'forget'
+               ELSE 'restore'
+             END,
+             CASE
+               WHEN NEW.content IS NOT OLD.content OR NEW.is_active = 0 THEN OLD.content
+             END,
+             CASE
+               WHEN NEW.content IS NOT OLD.content OR NEW.is_active = 1 THEN NEW.content
+             END,
+             CASE
+               WHEN NEW.content IS NOT OLD.content OR NEW.is_active = 0 THEN engram_sha256(OLD.content)
+             END,
+             CASE
+               WHEN NEW.content IS NOT OLD.content OR NEW.is_active = 1 THEN engram_sha256(NEW.content)
+             END,
+             engram_actor();
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS memory_history_on_delete
+    AFTER DELETE ON memories
+    BEGIN
+      INSERT INTO memory_history (memory_id, mechanism, before_content, after_content, before_hash, after_hash, actor)
+      VALUES (OLD.id, 'purge', OLD.content, NULL, engram_sha256(OLD.content), NULL, engram_actor());
+    END;
+
+    -- Append-only enforcement: no in-band edit or removal path on the trail.
+    CREATE TRIGGER IF NOT EXISTS memory_history_no_update
+    BEFORE UPDATE ON memory_history
+    BEGIN
+      SELECT RAISE(ABORT, 'memory_history is append-only: history rows cannot be modified');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS memory_history_no_delete
+    BEFORE DELETE ON memory_history
+    BEGIN
+      SELECT RAISE(ABORT, 'memory_history is append-only: history rows cannot be removed');
+    END;
+  `);
+  db.prepare("INSERT OR IGNORE INTO schema_migrations (name) VALUES (?)").run(MEMORY_HISTORY_MIGRATION);
+  return true;
+}
+
 // ─── schema version (#65) ────────────────────────────────────────────
 
 /**
@@ -825,9 +955,10 @@ export const SCHEMA_MIGRATIONS = [
   EXCHANGES_AUTHOR_MIGRATION,
   FORGET_MIGRATION,
   SUPPRESSIONS_SCOPE_MIGRATION,
+  MEMORY_HISTORY_MIGRATION,
 ] as const;
 
-/** Number of checkpointed migrations this build applies (6 as of `suppressions_scope_v1`). */
+/** Number of checkpointed migrations this build applies (7 as of `memory_history_v1`). */
 export const SCHEMA_VERSION: number = SCHEMA_MIGRATIONS.length;
 
 /**
