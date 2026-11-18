@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-11-18T22:35:19.862Z",
+  "generatedAt": "2026-11-18T22:37:59.529Z",
   "store": {
     "mode": "hermetic",
-    "path": "/var/folders/86/fg8k7lmx4x70_z4xh5mc_d580000gn/T/engram-eval-lbq3r9/engram.db"
+    "path": "/var/folders/86/fg8k7lmx4x70_z4xh5mc_d580000gn/T/engram-eval-4VgTK3/engram.db"
   },
   "suites": {
     "conflicts": {
@@ -49,5 +49,5 @@
       "recallAt3": 1
     }
   },
-  "durationMs": 35101
+  "durationMs": 33912
 }

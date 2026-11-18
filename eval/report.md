@@ -1,6 +1,6 @@
 # Engram recall eval report
 
-Generated: 2026-11-18T22:35:19.862Z · store mode: hermetic · path: `/var/folders/86/fg8k7lmx4x70_z4xh5mc_d580000gn/T/engram-eval-lbq3r9/engram.db`
+Generated: 2026-11-18T22:37:59.529Z · store mode: hermetic · path: `/var/folders/86/fg8k7lmx4x70_z4xh5mc_d580000gn/T/engram-eval-4VgTK3/engram.db`
 
 ## Conflict verdict
 
@@ -24,4 +24,4 @@ Conflict-axis stale-surfacing rate: **0.0000** (materially-weak threshold ≥ 0.
 | plain | 1 | 0.0000 | 1.0000 |
 | conditioned | 1 | 0.0000 | 1.0000 |
 
-Run duration: 35101 ms. Read-only: the store was opened with `readonly: true`.
+Run duration: 33912 ms. Read-only: the store was opened with `readonly: true`.
