@@ -43,7 +43,8 @@
     "mcp": "tsx src/interfaces/mcp/server.ts",
     "dream": "tsx src/interfaces/cli/index.ts dream",
     "migrate": "tsx src/interfaces/cli/index.ts migrate",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "eval": "tsx eval/src/cli.ts"
   },
   "keywords": [
     "claude-code",
