@@ -39,12 +39,13 @@ export function initDatabase(config: EngramConfig): Database.Database {
     );
   }
 
+  // The history triggers call per-connection custom functions; register them
+  // before any schema work so statements compiled against existing triggers
+  // (e.g. event_ts backfill on a re-opened database) can resolve them.
+  registerHistoryFunctions(db);
+
   // Run schema migrations
   createSchema(db, config);
-
-  // The history triggers call per-connection custom functions; register them
-  // on every connection that opens the database (see src/_core/db/history.ts).
-  registerHistoryFunctions(db);
 
   return db;
 }
@@ -841,10 +842,13 @@ export const MEMORY_HISTORY_MIGRATION = "memory_history_v1";
  * (`engram history export`) keeps a durable copy outside the engine's write
  * reach. See docs/memory-history.md for the full trust boundary.
  *
- * Update classification (AFTER UPDATE on memories, WHEN-scoped so that
- * metadata-only writes — recall reinforcement, FSRS stability, confidence
- * bumps — record nothing): content changed → 'edit'; is_active 1→0 →
- * 'forget'; is_active 0→1 → 'restore'.
+ * Update classification (AFTER UPDATE OF content, is_active on memories, with
+ * a WHEN clause so that value-unchanged statements record nothing): content
+ * changed → 'edit'; is_active 1→0 → 'forget'; is_active 0→1 → 'restore'.
+ * Metadata-only writes — recall reinforcement, FSRS stability, confidence
+ * bumps — do not touch the listed columns, so they neither fire the trigger
+ * nor compile it: connections that never registered the history functions
+ * (foreign tools, worker threads) can still write unrelated metadata.
  *
  * Checkpointed in schema_migrations and purely additive (NOT in
  * BREAKING_MIGRATIONS): a re-open is a provable no-op. Returns `true` only
@@ -887,7 +891,7 @@ export function migrateMemoryHistory(db: Database.Database): boolean {
     END;
 
     CREATE TRIGGER IF NOT EXISTS memory_history_on_update
-    AFTER UPDATE ON memories
+    AFTER UPDATE OF content, is_active ON memories
     WHEN NEW.content IS NOT OLD.content OR NEW.is_active IS NOT OLD.is_active
     BEGIN
       INSERT INTO memory_history (memory_id, mechanism, before_content, after_content, before_hash, after_hash, actor)
