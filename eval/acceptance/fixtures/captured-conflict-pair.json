@@ -1,0 +1,28 @@
+{
+  "provenance": {
+    "capture": "conflicts.id = d385a95a-b13a-40ed-a535-5f723c29539e (live probe 2026-11-18, read-only)",
+    "source": "live store ~/.local/share/engram/engram.db",
+    "redaction": "content values shortened/reworded; no literal user content reproduced verbatim",
+    "citation": "memory ids c95613a4-8b69-476c-b559-245949a926cf (surviving, active) / f5f2e86b-b126-4078-b43b-7d4ffd1c5255 (stale, superseded, is_active=0)"
+  },
+  "conflict": {
+    "id": "d385a95a-b13a-40ed-a535-5f723c29539e",
+    "resolution": "update",
+    "description": "The new memory provides a more nuanced and actionable preference (redacted)"
+  },
+  "surviving": {
+    "id": "c95613a4-8b69-476c-b559-245949a926cf",
+    "type": "preference",
+    "content": "The user treats shared internal modules as first-class modules that should receive the same specification treatment as feature modules.",
+    "is_active": true,
+    "created_at": 1772208088
+  },
+  "stale": {
+    "id": "f5f2e86b-b126-4078-b43b-7d4ffd1c5255",
+    "type": "convention",
+    "content": "Shared modules are categorized as system-level or domain-level and indexed only by directory layout.",
+    "is_active": false,
+    "superseded_by": "c95613a4-8b69-476c-b559-245949a926cf",
+    "created_at": 1772208086
+  }
+}
