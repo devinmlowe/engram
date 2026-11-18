@@ -1,0 +1,35 @@
+{
+  "benchmark": "memoryagentbench",
+  "label": "shape-derived sample — not official benchmark data",
+  "source": { "citation": "arXiv:2507.05257", "note": "MemoryAgentBench delete-supersede axis, per the paper's public task definitions" },
+  "cases": [
+    {
+      "id": "mab-1",
+      "session": [
+        "User: My phone number is 555-0100.",
+        "User: Forget that — the number is unlisted now."
+      ],
+      "operations": [
+        { "op": "add", "content": "User's phone number is 555-0100" },
+        { "op": "delete", "content": "User's phone number is 555-0100" }
+      ],
+      "query": "What is the user's phone number?",
+      "expected": "No recall — the fact was deleted (suppressed)",
+      "axis": "delete-supersede"
+    },
+    {
+      "id": "mab-2",
+      "session": [
+        "User: We use Redis for caching.",
+        "User: We migrated caching to Valkey."
+      ],
+      "operations": [
+        { "op": "add", "content": "Caching uses Redis" },
+        { "op": "update", "before": "Caching uses Redis", "after": "Caching uses Valkey" }
+      ],
+      "query": "What do we use for caching?",
+      "expected": "Valkey — the superseding value",
+      "axis": "delete-supersede"
+    }
+  ]
+}

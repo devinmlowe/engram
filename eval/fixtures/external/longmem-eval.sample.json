@@ -1,0 +1,36 @@
+{
+  "benchmark": "longmem-eval",
+  "label": "shape-derived sample — not official benchmark data",
+  "source": { "citation": "arXiv:2410.10813", "note": "LongMemEval knowledge-update + temporal-reasoning axes, per the paper's public task definitions" },
+  "cases": [
+    {
+      "id": "lme-1",
+      "session": [
+        "User: My office is in Building 12, fourth floor.",
+        "Assistant: Noted — Building 12, fourth floor.",
+        "User: Actually we moved; the office is now in Building 7, second floor."
+      ],
+      "operations": [
+        { "op": "add", "content": "Office is in Building 12, fourth floor" },
+        { "op": "update", "before": "Office is in Building 12", "after": "Office is in Building 7, second floor" }
+      ],
+      "query": "Which floor is the user's office on?",
+      "expected": "Second floor (Building 7) — the updated value",
+      "axis": "knowledge-update"
+    },
+    {
+      "id": "lme-2",
+      "session": [
+        "User: In January the deploy cadence was weekly.",
+        "User: Since March the deploy cadence is daily."
+      ],
+      "operations": [
+        { "op": "add", "content": "Deploy cadence was weekly in January" },
+        { "op": "add", "content": "Deploy cadence is daily since March" }
+      ],
+      "query": "How often did the team deploy in January?",
+      "expected": "Weekly — the January-scoped value, not the current one",
+      "axis": "temporal-reasoning"
+    }
+  ]
+}
