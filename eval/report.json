@@ -1,53 +1,53 @@
 {
-  "generatedAt": "2026-11-18T22:37:59.529Z",
+  "generatedAt": "2026-11-18T22:44:49.100Z",
   "store": {
-    "mode": "hermetic",
-    "path": "/var/folders/86/fg8k7lmx4x70_z4xh5mc_d580000gn/T/engram-eval-4VgTK3/engram.db"
+    "mode": "live",
+    "path": "/Users/devinmlowe/.local/share/engram/engram.db"
   },
   "suites": {
     "conflicts": {
-      "n": 1,
-      "staleSurfacingRate": 0,
+      "n": 50,
+      "staleSurfacingRate": 0.06,
       "recallAtK": [
         {
           "k": 1,
-          "value": 1
+          "value": 0.02
         },
         {
           "k": 3,
-          "value": 1
+          "value": 0.06
         },
         {
           "k": 10,
-          "value": 1
+          "value": 0.38
         }
       ]
     },
     "temporal": {
-      "n": 1,
-      "orderingCorrectRate": 1
+      "n": 18,
+      "orderingCorrectRate": 0.8333333333333334
     },
     "redaction": {
-      "n": 0,
+      "n": 13,
       "leakageRate": 0
     }
   },
   "conflictVerdict": {
-    "staleSurfacingRate": 0,
+    "staleSurfacingRate": 0.06,
     "threshold": 0.3,
     "materiallyWeak": false
   },
   "queryConditionedSlice": {
     "plain": {
-      "n": 1,
-      "staleSurfacingRate": 0,
-      "recallAt3": 1
+      "n": 50,
+      "staleSurfacingRate": 0.06,
+      "recallAt3": 0.06
     },
     "conditioned": {
-      "n": 1,
-      "staleSurfacingRate": 0,
-      "recallAt3": 1
+      "n": 50,
+      "staleSurfacingRate": 0.06,
+      "recallAt3": 0.06
     }
   },
-  "durationMs": 33912
+  "durationMs": 12129
 }
